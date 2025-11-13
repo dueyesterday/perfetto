@@ -132,9 +132,15 @@
   box-shadow: 0 4px 12px var(--pf-color-box-shadow);
   border-radius: 8px;
   width: max-content;
+  transition:
+    left 0.1s ease-out,
+    top 0.1s ease-out;
 
   &--dragging {
     z-index: 1; // Ensure dragging entire chain appears above other nodes.
+
+    // Don't animate transitions while dragging to avoid laggy movement
+    transition: none;
 
     // TODO Might want to add some visual indication of dragging entire chain
     // using box shadow, and maybe make slightly transparent.
@@ -183,12 +189,12 @@
 .pf-node-header {
   /* Default background when hue is not set */
   background: var(--pf-color-background);
-  padding: 4px 6px;
+  padding: 6px 6px;
   border-radius: 6px 6px 0 0;
   display: flex;
   border-bottom: 1px solid var(--pf-color-border);
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
 }
 
