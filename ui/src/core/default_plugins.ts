@@ -67,6 +67,7 @@ export const defaultPlugins = [
   'dev.perfetto.KernelTrackEvent',
   'dev.perfetto.LinuxPerf',
   'dev.perfetto.MetricsPage',
+  'dev.perfetto.NodeQueryBuilder',
   'dev.perfetto.Notes',
   'dev.perfetto.PowerRails',
   'dev.perfetto.AggregateProfiles',

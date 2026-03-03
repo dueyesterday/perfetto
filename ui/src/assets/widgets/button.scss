@@ -24,7 +24,11 @@
 
   &:active,
   &.pf-active {
-    background: color-mix(in srgb, $intent-color, currentColor -8%);
+    background: color-mix(
+      in srgb,
+      $intent-color,
+      var(--pf-color-background) 10%
+    );
     box-shadow: none;
   }
 
@@ -51,16 +55,15 @@
 
 .pf-button {
   font-family: var(--pf-font-compact);
-  // line-height: 1;
   user-select: none;
   border-radius: 3px;
   padding: 2px 8px;
   white-space: nowrap;
   min-width: max-content;
   position: relative;
-
   display: inline-flex;
   align-items: baseline;
+  justify-content: center;
 
   &--loading {
     // The button is unclickable when loading

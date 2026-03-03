@@ -23,8 +23,6 @@
   // Normalize sizing so all items match height and text aligns.
   > :is(#{$items}) {
     border-radius: 0;
-    // line-height: 1;
-    padding: 2px 6px;
 
     &:not(:first-child) {
       margin-left: -1px;
