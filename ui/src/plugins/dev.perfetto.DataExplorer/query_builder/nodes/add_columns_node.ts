@@ -501,31 +501,31 @@ export class AddColumnsNode implements QueryNode {
             onclick: () => this.showJoinModal(),
             variant: hasConnectedNode
               ? ButtonVariant.Filled
-              : ButtonVariant.Outlined,
+              : ButtonVariant.Minimal,
           }),
           m(Button, {
             label: 'Expression',
             icon: 'functions',
             onclick: () => this.showExpressionModal(),
-            variant: ButtonVariant.Outlined,
+            variant: ButtonVariant.Minimal,
           }),
           m(Button, {
             label: 'Switch',
             icon: 'alt_route',
             onclick: () => this.showSwitchModal(),
-            variant: ButtonVariant.Outlined,
+            variant: ButtonVariant.Minimal,
           }),
           m(Button, {
             label: 'If',
             icon: 'rule',
             onclick: () => this.showIfModal(),
-            variant: ButtonVariant.Outlined,
+            variant: ButtonVariant.Minimal,
           }),
           m(Button, {
             label: 'From args',
             icon: 'list',
             onclick: () => this.showArgsModal(),
-            variant: ButtonVariant.Outlined,
+            variant: ButtonVariant.Minimal,
             disabled: !hasArgSetId,
             title: hasArgSetId
               ? 'Add a column from args'
@@ -535,7 +535,7 @@ export class AddColumnsNode implements QueryNode {
             label: 'Apply function',
             icon: 'function',
             onclick: () => this.showFunctionModal(),
-            variant: ButtonVariant.Outlined,
+            variant: ButtonVariant.Minimal,
             title: 'Apply a stdlib function to create a new column',
           }),
         ),
@@ -1184,7 +1184,7 @@ export class AddColumnsNode implements QueryNode {
         m(Button, {
           label: 'Edit',
           icon: 'edit',
-          variant: ButtonVariant.Outlined,
+          variant: ButtonVariant.Minimal,
           compact: true,
           onclick: () => this.showJoinModal(),
         }),
@@ -1250,7 +1250,7 @@ export class AddColumnsNode implements QueryNode {
         m(Button, {
           label: 'Edit',
           icon: 'edit',
-          variant: ButtonVariant.Outlined,
+          variant: ButtonVariant.Minimal,
           compact: true,
           onclick: () => {
             if (col.type === 'switch') {

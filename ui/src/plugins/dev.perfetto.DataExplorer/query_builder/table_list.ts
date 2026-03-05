@@ -511,7 +511,6 @@ export class TableList implements m.ClassComponent<TableListAttrs> {
                 const isDisabled = disabledTags.has(tag);
                 return m(Chip, {
                   label: tag,
-                  rounded: true,
                   intent: isSelected ? Intent.Primary : undefined,
                   className: classNames(
                     'pf-tag-chip',
