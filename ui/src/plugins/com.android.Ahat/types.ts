@@ -36,7 +36,18 @@ export interface OverviewData {
 
 export type PrimOrRef =
   | {kind: 'prim'; v: string}
-  | {kind: 'ref'; id: number; display: string; str: string | null};
+  | {
+      kind: 'ref';
+      id: number;
+      display: string;
+      str: string | null;
+      shallowJava?: number;
+      shallowNative?: number;
+      retainedJava?: number;
+      retainedNative?: number;
+      reachableJava?: number;
+      reachableNative?: number;
+    };
 
 export interface InstanceRow {
   id: number;
@@ -49,6 +60,8 @@ export interface InstanceRow {
   shallowJava: number;
   shallowNative: number;
   retainedTotal: number;
+  reachableSize: number | null;
+  reachableNative: number | null;
   retainedByHeap: {heap: string; java: number; native_: number}[];
   str: string | null;
   referent: InstanceRow | null;
@@ -91,7 +104,11 @@ export interface ClassRow {
   className: string;
   count: number;
   shallowSize: number;
+  nativeSize: number;
   retainedSize: number;
+  retainedNativeSize: number;
+  reachableSize: number | null;
+  reachableNativeSize: number | null;
   heap: string;
 }
 
@@ -110,7 +127,10 @@ export interface StringListRow {
   value: string;
   length: number;
   retainedSize: number;
+  reachableSize: number | null;
+  reachableNativeSize: number | null;
   shallowSize: number;
+  nativeSize: number;
   heap: string;
   className: string;
   display: string;

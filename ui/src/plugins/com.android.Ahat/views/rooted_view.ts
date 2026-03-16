@@ -17,7 +17,17 @@ import type {Engine} from '../../../trace_processor/engine';
 import {Spinner} from '../../../widgets/spinner';
 import type {InstanceRow, HeapInfo} from '../types';
 import {fmtSize} from '../format';
-import {type NavFn, SortableTable, InstanceLink} from '../components';
+import {
+  type NavFn,
+  SortableTable,
+  InstanceLink,
+  shallowSizeCol,
+  nativeSizeCol,
+  retainedSizeCol,
+  retainedNativeSizeCol,
+  reachableSizeCol,
+  reachableNativeSizeCol,
+} from '../components';
 import * as queries from '../queries';
 
 interface RootedViewAttrs {
@@ -38,6 +48,9 @@ function RootedView(): m.Component<RootedViewAttrs> {
           if (!alive) return;
           rows = r;
           m.redraw();
+          queries.enrichWithReachable(vnode.attrs.engine, r).then(() => {
+            if (alive) m.redraw();
+          });
         })
         .catch(console.error);
     },
@@ -57,24 +70,16 @@ function RootedView(): m.Component<RootedViewAttrs> {
         label: string;
         align?: string;
         minWidth?: string;
-        sortKey?: (r: InstanceRow) => number;
+        sortKey?: (r: InstanceRow) => number | string;
         render: (r: InstanceRow, idx: number) => m.Children;
       };
       const cols: Col[] = [
-        {
-          label: 'Retained',
-          align: 'right',
-          minWidth: '5rem',
-          sortKey: (r) => r.retainedTotal,
-          render: (r) =>
-            m(
-              'span',
-              {
-                class: `ah-mono${r.isPlaceHolder ? ' ah-opacity-60' : ''}`,
-              },
-              fmtSize(r.retainedTotal),
-            ),
-        },
+        shallowSizeCol(),
+        nativeSizeCol(),
+        retainedSizeCol(),
+        retainedNativeSizeCol(),
+        reachableSizeCol(),
+        reachableNativeSizeCol(),
       ];
       for (const h of heapCols) {
         cols.push({
@@ -99,6 +104,7 @@ function RootedView(): m.Component<RootedViewAttrs> {
       }
       cols.push({
         label: 'Object',
+        sortKey: (r: InstanceRow) => r.className,
         render: (r) =>
           m(
             'span',

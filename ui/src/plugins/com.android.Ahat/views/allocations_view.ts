@@ -46,6 +46,9 @@ function AllocationsView(): m.Component<AllocationsViewAttrs> {
         if (!alive) return;
         rows = r;
         m.redraw();
+        queries.enrichClassRowsWithReachable(attrs.engine, r, heap).then(() => {
+          if (alive) m.redraw();
+        });
       })
       .catch(console.error);
   }
@@ -118,6 +121,20 @@ function AllocationsView(): m.Component<AllocationsViewAttrs> {
         m(SortableTable, {
           columns: [
             {
+              label: 'Shallow',
+              align: 'right',
+              sortKey: (r: ClassRow) => r.shallowSize,
+              render: (r: ClassRow) =>
+                m('span', {class: 'ah-mono'}, fmtSize(r.shallowSize)),
+            },
+            {
+              label: 'Shallow Native',
+              align: 'right',
+              sortKey: (r: ClassRow) => r.nativeSize,
+              render: (r: ClassRow) =>
+                m('span', {class: 'ah-mono'}, fmtSize(r.nativeSize)),
+            },
+            {
               label: 'Retained',
               align: 'right',
               sortKey: (r: ClassRow) => r.retainedSize,
@@ -125,11 +142,33 @@ function AllocationsView(): m.Component<AllocationsViewAttrs> {
                 m('span', {class: 'ah-mono'}, fmtSize(r.retainedSize)),
             },
             {
-              label: 'Shallow',
+              label: 'Retained Native',
               align: 'right',
-              sortKey: (r: ClassRow) => r.shallowSize,
+              sortKey: (r: ClassRow) => r.retainedNativeSize,
               render: (r: ClassRow) =>
-                m('span', {class: 'ah-mono'}, fmtSize(r.shallowSize)),
+                m('span', {class: 'ah-mono'}, fmtSize(r.retainedNativeSize)),
+            },
+            {
+              label: 'Reachable',
+              align: 'right',
+              sortKey: (r: ClassRow) => r.reachableSize ?? 0,
+              render: (r: ClassRow) =>
+                r.reachableSize === null
+                  ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+                  : m('span', {class: 'ah-mono'}, fmtSize(r.reachableSize)),
+            },
+            {
+              label: 'Reachable Native',
+              align: 'right',
+              sortKey: (r: ClassRow) => r.reachableNativeSize ?? 0,
+              render: (r: ClassRow) =>
+                r.reachableNativeSize === null
+                  ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+                  : m(
+                      'span',
+                      {class: 'ah-mono'},
+                      fmtSize(r.reachableNativeSize),
+                    ),
             },
             {
               label: '#',
@@ -140,10 +179,12 @@ function AllocationsView(): m.Component<AllocationsViewAttrs> {
             },
             {
               label: 'Heap',
+              sortKey: (r: ClassRow) => r.heap,
               render: (r: ClassRow) => m('span', r.heap),
             },
             {
               label: 'Class',
+              sortKey: (r: ClassRow) => r.className,
               render: (r: ClassRow) =>
                 m(
                   'button',

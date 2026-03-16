@@ -18,6 +18,7 @@
 import {Engine} from '../../trace_processor/engine';
 import {
   BLOB_NULL,
+  LONG_NULL,
   NUM,
   NUM_NULL,
   STR,
@@ -96,6 +97,8 @@ function rowFromIter(it: {
     shallowJava: it.self_size,
     shallowNative: it.native_size,
     retainedTotal: retainedJava + retainedNative,
+    reachableSize: null,
+    reachableNative: null,
     retainedByHeap: [{heap, java: retainedJava, native_: retainedNative}],
     str: it.value_string,
     referent: null,
@@ -238,9 +241,11 @@ export async function getAllocations(
     SELECT
       ifnull(c.deobfuscated_name, c.name) AS cls,
       COUNT(*) AS cnt,
-      SUM(o.self_size + o.native_size) AS shallow,
-      SUM(ifnull(d.dominated_size_bytes, o.self_size)
-        + ifnull(d.dominated_native_size_bytes, o.native_size)) AS retained,
+      SUM(o.self_size) AS shallow,
+      SUM(o.native_size) AS native_shallow,
+      SUM(ifnull(d.dominated_size_bytes, o.self_size)) AS retained,
+      SUM(ifnull(d.dominated_native_size_bytes, o.native_size))
+        AS retained_native,
       ifnull(o.heap_type, 'default') AS heap
     FROM heap_graph_object o
     JOIN heap_graph_class c ON o.type_id = c.id
@@ -256,7 +261,9 @@ export async function getAllocations(
       cls: STR,
       cnt: NUM,
       shallow: NUM,
+      native_shallow: NUM,
       retained: NUM,
+      retained_native: NUM,
       heap: STR,
     });
     it.valid();
@@ -266,7 +273,11 @@ export async function getAllocations(
       className: it.cls,
       count: it.cnt,
       shallowSize: it.shallow,
+      nativeSize: it.native_shallow,
       retainedSize: it.retained,
+      retainedNativeSize: it.retained_native,
+      reachableSize: null,
+      reachableNativeSize: null,
       heap: it.heap,
     });
   }
@@ -398,6 +409,8 @@ export async function getInstance(
         shallowJava: 0,
         shallowNative: 0,
         retainedTotal: 0,
+        reachableSize: null,
+        reachableNative: null,
         retainedByHeap: [],
         str: rit.ref_str,
         referent: null,
@@ -446,7 +459,7 @@ export async function getInstance(
         char_value: NUM_NULL,
         short_value: NUM_NULL,
         int_value: NUM_NULL,
-        long_value: NUM_NULL,
+        long_value: LONG_NULL,
         float_value: NUM_NULL,
         double_value: NUM_NULL,
       });
@@ -471,11 +484,16 @@ export async function getInstance(
         r.owned_id,
         c2.name AS ref_cls,
         c2.deobfuscated_name AS ref_deob,
-        od2.value_string AS ref_str
+        od2.value_string AS ref_str,
+        o2.self_size AS ref_self_size,
+        o2.native_size AS ref_native_size,
+        d2.dominated_size_bytes AS ref_dominated_size,
+        d2.dominated_native_size_bytes AS ref_dominated_native
       FROM heap_graph_reference r
       LEFT JOIN heap_graph_object o2 ON r.owned_id = o2.id
       LEFT JOIN heap_graph_class c2 ON o2.type_id = c2.id
       LEFT JOIN heap_graph_object_data od2 ON od2.object_id = o2.id
+      LEFT JOIN heap_graph_dominator_tree d2 ON d2.id = o2.id
       WHERE r.reference_set_id = ${refSetId}
       ORDER BY fname
     `);
@@ -487,6 +505,10 @@ export async function getInstance(
         ref_cls: STR_NULL,
         ref_deob: STR_NULL,
         ref_str: STR_NULL,
+        ref_self_size: NUM_NULL,
+        ref_native_size: NUM_NULL,
+        ref_dominated_size: NUM_NULL,
+        ref_dominated_native: NUM_NULL,
       });
       rit.valid();
       rit.next()
@@ -507,6 +529,11 @@ export async function getInstance(
             id: rit.owned_id,
             display: makeDisplay(refCls, rit.owned_id),
             str: rit.ref_str,
+            shallowJava: rit.ref_self_size ?? 0,
+            shallowNative: rit.ref_native_size ?? 0,
+            retainedJava: rit.ref_dominated_size ?? rit.ref_self_size ?? 0,
+            retainedNative:
+              rit.ref_dominated_native ?? rit.ref_native_size ?? 0,
           },
         });
       }
@@ -536,22 +563,31 @@ export async function getInstance(
       }
     } else if (refSetId !== null) {
       // Object array elements (String[], Object[], etc.)
+      // For HPROF, field_name is "[0]", "[1]", etc.
+      // For perfetto heap graph, field_name may be empty or a plain name.
+      // We use the row order as fallback index.
       const oaRes = await engine.query(`
         SELECT
           r.field_name AS fname,
           r.owned_id,
           c2.name AS ref_cls,
           c2.deobfuscated_name AS ref_deob,
-          od2.value_string AS ref_str
+          od2.value_string AS ref_str,
+          o2.self_size AS ref_shallow,
+          o2.native_size AS ref_native,
+          ifnull(d2.dominated_size_bytes, o2.self_size) AS ref_retained,
+          ifnull(d2.dominated_native_size_bytes, o2.native_size)
+            AS ref_retained_native
         FROM heap_graph_reference r
         LEFT JOIN heap_graph_object o2 ON r.owned_id = o2.id
         LEFT JOIN heap_graph_object_data od2 ON od2.object_id = o2.id
         LEFT JOIN heap_graph_class c2 ON o2.type_id = c2.id
+        LEFT JOIN heap_graph_dominator_tree d2 ON d2.id = o2.id
         WHERE r.reference_set_id = ${refSetId}
-        ORDER BY CAST(SUBSTR(r.field_name, 2,
-          LENGTH(r.field_name) - 2) AS INTEGER)
+        ORDER BY r.id
         LIMIT 10000
       `);
+      let seqIdx = 0;
       for (
         const oait = oaRes.iter({
           fname: STR,
@@ -559,11 +595,23 @@ export async function getInstance(
           ref_cls: STR_NULL,
           ref_deob: STR_NULL,
           ref_str: STR_NULL,
+          ref_shallow: NUM_NULL,
+          ref_native: NUM_NULL,
+          ref_retained: NUM_NULL,
+          ref_retained_native: NUM_NULL,
         });
         oait.valid();
         oait.next()
       ) {
-        const idx = parseInt(oait.fname.slice(1, oait.fname.length - 1), 10);
+        const raw = oait.fname;
+        let idx: number;
+        if (raw.startsWith('[') && raw.endsWith(']')) {
+          idx = parseInt(raw.slice(1, raw.length - 1), 10);
+        } else {
+          const parsed = parseInt(raw, 10);
+          idx = Number.isNaN(parsed) ? seqIdx : parsed;
+        }
+        seqIdx++;
         let value: PrimOrRef;
         if (oait.owned_id === null || oait.owned_id === 0) {
           value = {kind: 'prim', v: 'null'};
@@ -574,6 +622,10 @@ export async function getInstance(
             id: oait.owned_id,
             display: makeDisplay(refCls, oait.owned_id),
             str: oait.ref_str,
+            shallowJava: oait.ref_shallow ?? 0,
+            shallowNative: oait.ref_native ?? 0,
+            retainedJava: oait.ref_retained ?? 0,
+            retainedNative: oait.ref_retained_native ?? 0,
           };
         }
         arrayElems.push({idx, value});
@@ -707,7 +759,7 @@ export async function getInstance(
         char_value: NUM_NULL,
         short_value: NUM_NULL,
         int_value: NUM_NULL,
-        long_value: NUM_NULL,
+        long_value: LONG_NULL,
         float_value: NUM_NULL,
         double_value: NUM_NULL,
       });
@@ -729,11 +781,16 @@ export async function getInstance(
           r.owned_id,
           c2.name AS ref_cls,
           c2.deobfuscated_name AS ref_deob,
-          od2.value_string AS ref_str
+          od2.value_string AS ref_str,
+          o2.self_size AS ref_self_size,
+          o2.native_size AS ref_native_size,
+          d2.dominated_size_bytes AS ref_dominated_size,
+          d2.dominated_native_size_bytes AS ref_dominated_native
         FROM heap_graph_reference r
         LEFT JOIN heap_graph_object o2 ON r.owned_id = o2.id
         LEFT JOIN heap_graph_object_data od2 ON od2.object_id = o2.id
         LEFT JOIN heap_graph_class c2 ON o2.type_id = c2.id
+        LEFT JOIN heap_graph_dominator_tree d2 ON d2.id = o2.id
         WHERE r.reference_set_id = ${refSetId}
         ORDER BY fname
       `);
@@ -745,6 +802,10 @@ export async function getInstance(
           ref_cls: STR_NULL,
           ref_deob: STR_NULL,
           ref_str: STR_NULL,
+          ref_self_size: NUM_NULL,
+          ref_native_size: NUM_NULL,
+          ref_dominated_size: NUM_NULL,
+          ref_dominated_native: NUM_NULL,
         });
         srit.valid();
         srit.next()
@@ -765,6 +826,11 @@ export async function getInstance(
               id: srit.owned_id,
               display: makeDisplay(refCls, srit.owned_id),
               str: srit.ref_str,
+              shallowJava: srit.ref_self_size ?? 0,
+              shallowNative: srit.ref_native_size ?? 0,
+              retainedJava: srit.ref_dominated_size ?? srit.ref_self_size ?? 0,
+              retainedNative:
+                srit.ref_dominated_native ?? srit.ref_native_size ?? 0,
             },
           });
         }
@@ -859,9 +925,9 @@ export async function getRawBitmapBlob(
     WHERE od.object_id = ${objectId}
       AND f.field_name GLOB '*mNativePtr'
   `);
-  const fit = fieldRes.iter({long_value: NUM_NULL});
+  const fit = fieldRes.iter({long_value: LONG_NULL});
   if (!fit.valid() || fit.long_value === null) return null;
-  const nativePtr = BigInt(fit.long_value);
+  const nativePtr = fit.long_value;
 
   const dumpData = await loadBitmapDumpData(engine);
   if (!dumpData) return null;
@@ -1092,7 +1158,7 @@ async function extractBitmapPixels(
     const it = dimRes.iter({
       field_name: STR,
       int_value: NUM_NULL,
-      long_value: NUM_NULL,
+      long_value: LONG_NULL,
     });
     it.valid();
     it.next()
@@ -1100,7 +1166,7 @@ async function extractBitmapPixels(
     if (it.field_name.endsWith('mWidth')) width = it.int_value ?? 0;
     if (it.field_name.endsWith('mHeight')) height = it.int_value ?? 0;
     if (it.field_name.endsWith('mNativePtr')) {
-      nativePtr = BigInt(it.long_value ?? 0);
+      nativePtr = it.long_value ?? 0n;
     }
   }
   if (width <= 0 || height <= 0 || nativePtr === 0n) return null;
@@ -1122,6 +1188,21 @@ async function extractBitmapPixels(
 
   const format = DUMP_DATA_FORMAT_NAMES[dumpData.format] ?? 'png';
   return {width, height, format, data: bufIt.data};
+}
+
+/** Load bitmap pixel data for a single object by ID. */
+export async function getBitmapPixels(
+  engine: Engine,
+  objectId: number,
+): Promise<InstanceDetail['bitmap']> {
+  const res = await engine.query(`
+    SELECT od.field_set_id
+    FROM heap_graph_object_data od
+    WHERE od.object_id = ${objectId}
+    LIMIT 1
+  `);
+  const row = res.maybeFirstRow({field_set_id: NUM_NULL});
+  return extractBitmapPixels(engine, row?.field_set_id ?? null);
 }
 
 // ─── Search ───────────────────────────────────────────────────────────────────
@@ -1190,6 +1271,98 @@ export async function getObjects(
   return collectRows(res);
 }
 
+// ─── getObjectsByFlamegraphSelection ──────────────────────────────────────────
+
+export async function getObjectsByFlamegraphSelection(
+  engine: Engine,
+  pathHashes: string,
+  isDominator: boolean,
+): Promise<InstanceRow[]> {
+  // Query objects matching the given path hashes from the flamegraph.
+  // Path hashes are comma-separated integers identifying class tree nodes.
+  const hashTable = isDominator
+    ? '_heap_graph_dominator_path_hashes'
+    : '_heap_graph_path_hashes';
+  const values = pathHashes
+    .split(',')
+    .map((v) => `(${v.trim()})`)
+    .join(', ');
+  const res = await engine.query(`
+    WITH _ahat_sel(path_hash) AS (VALUES ${values})
+    SELECT ${INSTANCE_COLS}
+    FROM _ahat_sel f
+    JOIN ${hashTable} h ON h.path_hash = f.path_hash
+    JOIN heap_graph_object o ON o.id = h.id
+    JOIN heap_graph_class c ON o.type_id = c.id
+    LEFT JOIN heap_graph_dominator_tree d ON d.id = o.id
+    LEFT JOIN heap_graph_object_data od ON od.object_id = o.id
+    ORDER BY o.self_size + o.native_size DESC
+    LIMIT 5000
+  `);
+  return collectRows(res);
+}
+
+// ─── getHeapGraphTrackInfo ─────────────────────────────────────────────────────
+
+export async function getHeapGraphTrackInfo(
+  engine: Engine,
+  objectId: number,
+): Promise<{
+  upid: number;
+  eventId: number;
+  className: string | null;
+  pathHash: string | null;
+} | null> {
+  const res = await engine.query(`
+    SELECT
+      o.upid,
+      c.name AS class_name,
+      (SELECT MIN(e.id)
+       FROM heap_graph_object e
+       WHERE e.upid = o.upid
+         AND e.graph_sample_ts = o.graph_sample_ts) AS event_id
+    FROM heap_graph_object o
+    JOIN heap_graph_class c ON o.type_id = c.id
+    WHERE o.id = ${objectId}
+  `);
+  const row = res.maybeFirstRow({
+    upid: NUM,
+    event_id: NUM,
+    class_name: STR_NULL,
+  });
+  if (!row) return null;
+
+  // Look up the object's path hash in both class tree and dominator tree.
+  // The dominator tree is always materialized by the Ahat plugin; the class
+  // tree tables exist if the HeapProfile plugin rendered a flamegraph.
+  let pathHash: string | null = null;
+  for (const table of [
+    '_heap_graph_dominator_path_hashes',
+    '_heap_graph_path_hashes',
+  ]) {
+    try {
+      const ph = await engine.query(`
+        SELECT CAST(path_hash AS TEXT) AS ph
+        FROM ${table} WHERE id = ${objectId} LIMIT 1
+      `);
+      const phRow = ph.maybeFirstRow({ph: STR_NULL});
+      if (phRow?.ph) {
+        pathHash = phRow.ph;
+        break;
+      }
+    } catch (_) {
+      // Table may not exist if the module hasn't been loaded yet.
+    }
+  }
+
+  return {
+    upid: row.upid,
+    eventId: row.event_id,
+    className: row.class_name,
+    pathHash,
+  };
+}
+
 // ─── getStringList ────────────────────────────────────────────────────────────
 
 export async function getStringList(engine: Engine): Promise<StringListRow[]> {
@@ -1198,6 +1371,7 @@ export async function getStringList(engine: Engine): Promise<StringListRow[]> {
       o.id,
       od.value_string AS value,
       o.self_size,
+      o.native_size,
       o.heap_type,
       c.name AS cls,
       c.deobfuscated_name AS deob,
@@ -1221,6 +1395,7 @@ export async function getStringList(engine: Engine): Promise<StringListRow[]> {
       id: NUM,
       value: STR,
       self_size: NUM,
+      native_size: NUM,
       heap_type: STR_NULL,
       cls: STR,
       deob: STR_NULL,
@@ -1231,14 +1406,15 @@ export async function getStringList(engine: Engine): Promise<StringListRow[]> {
     it.next()
   ) {
     const fullCls = className(it.cls, it.deob);
-    const retained =
-      (it.dominated_size ?? it.self_size) + (it.dominated_native ?? 0);
     rows.push({
       id: it.id,
       value: it.value,
       length: it.value.length,
-      retainedSize: retained,
+      retainedSize: it.dominated_size ?? it.self_size,
+      reachableSize: null,
+      reachableNativeSize: null,
       shallowSize: it.self_size,
+      nativeSize: it.native_size,
       heap: it.heap_type ?? 'default',
       className: fullCls,
       display: makeDisplay(fullCls, it.id),
@@ -1301,7 +1477,7 @@ export async function getBitmapList(engine: Engine): Promise<BitmapListRow[]> {
       width: NUM_NULL,
       height: NUM_NULL,
       density: NUM_NULL,
-      native_ptr: NUM_NULL,
+      native_ptr: LONG_NULL,
     });
     it.valid();
     it.next()
@@ -1311,7 +1487,7 @@ export async function getBitmapList(engine: Engine): Promise<BitmapListRow[]> {
     // Check if DumpData has a buffer for this bitmap's native pointer.
     let hasPixelData = false;
     if (dumpData !== null && it.native_ptr !== null && w > 0 && h > 0) {
-      hasPixelData = dumpData.bufferMap.has(BigInt(it.native_ptr));
+      hasPixelData = dumpData.bufferMap.has(it.native_ptr);
     }
     rows.push({
       row: rowFromIter(it),
@@ -1335,7 +1511,7 @@ function primFieldValue(it: {
   char_value: number | null;
   short_value: number | null;
   int_value: number | null;
-  long_value: number | null;
+  long_value: bigint | null;
   float_value: number | null;
   double_value: number | null;
 }): PrimOrRef {
@@ -1367,5 +1543,173 @@ function primFieldValue(it: {
       return {kind: 'prim', v: String(it.double_value ?? 0)};
     default:
       return {kind: 'prim', v: '???'};
+  }
+}
+
+// ─── Reachable sizes (object tree cumulative) ────────────────────────────────
+//
+// The _heap_graph_object_tree_aggregation table computes cumulative reachable
+// sizes via a BFS tree.  The table materialisation is expensive on first access,
+// so we load it asynchronously and fill in reachable columns after the initial
+// render.  The module INCLUDE is cached per-engine via a WeakMap.
+
+const objectTreeReady = new WeakMap<Engine, Promise<void>>();
+
+function ensureObjectTree(engine: Engine): Promise<void> {
+  let p = objectTreeReady.get(engine);
+  if (!p) {
+    p = engine
+      .query(`INCLUDE PERFETTO MODULE android.memory.heap_graph.object_tree`)
+      .then(() => {});
+    objectTreeReady.set(engine, p);
+  }
+  return p;
+}
+
+/** Fetch reachable (cumulative) sizes for a set of object IDs. */
+async function getReachableSizes(
+  engine: Engine,
+  ids: number[],
+): Promise<Map<number, {size: number; native: number}>> {
+  await ensureObjectTree(engine);
+  if (ids.length === 0) return new Map();
+  const res = await engine.query(`
+    SELECT id,
+      cumulative_size AS size,
+      cumulative_native_size AS native_size
+    FROM _heap_graph_object_tree_aggregation
+    WHERE id IN (${ids.join(',')})
+  `);
+  const map = new Map<number, {size: number; native: number}>();
+  for (
+    const it = res.iter({id: NUM, size: NUM, native_size: NUM});
+    it.valid();
+    it.next()
+  ) {
+    map.set(it.id, {size: it.size, native: it.native_size});
+  }
+  return map;
+}
+
+/**
+ * Enrich InstanceRow[] with reachable sizes.  Call after initial data load;
+ * the caller should trigger a re-render when the returned promise resolves.
+ */
+export async function enrichWithReachable(
+  engine: Engine,
+  rows: InstanceRow[],
+): Promise<void> {
+  const ids = rows.map((r) => r.id);
+  const map = await getReachableSizes(engine, ids);
+  for (const row of rows) {
+    const s = map.get(row.id);
+    row.reachableSize = s?.size ?? 0;
+    row.reachableNative = s?.native ?? 0;
+  }
+}
+
+/**
+ * Enrich ClassRow[] with reachable sizes (summed per class+heap group).
+ */
+export async function enrichClassRowsWithReachable(
+  engine: Engine,
+  rows: ClassRow[],
+  heap: string | null,
+): Promise<void> {
+  await ensureObjectTree(engine);
+  const heapFilter = heap
+    ? `AND o.heap_type = '${heap.replace(/'/g, "''")}'`
+    : '';
+  const res = await engine.query(`
+    SELECT
+      ifnull(c.deobfuscated_name, c.name) AS cls,
+      SUM(a.cumulative_size) AS reachable,
+      SUM(a.cumulative_native_size) AS reachable_native,
+      ifnull(o.heap_type, 'default') AS heap
+    FROM heap_graph_object o
+    JOIN heap_graph_class c ON o.type_id = c.id
+    JOIN _heap_graph_object_tree_aggregation a ON a.id = o.id
+    WHERE o.reachable != 0
+      ${heapFilter}
+    GROUP BY cls, heap
+  `);
+  const map = new Map<string, {reachable: number; reachableNative: number}>();
+  for (
+    const it = res.iter({
+      cls: STR,
+      reachable: NUM,
+      reachable_native: NUM,
+      heap: STR,
+    });
+    it.valid();
+    it.next()
+  ) {
+    map.set(`${it.cls}\0${it.heap}`, {
+      reachable: it.reachable,
+      reachableNative: it.reachable_native,
+    });
+  }
+  for (const row of rows) {
+    const s = map.get(`${row.className}\0${row.heap}`);
+    row.reachableSize = s?.reachable ?? 0;
+    row.reachableNativeSize = s?.reachableNative ?? 0;
+  }
+}
+
+/**
+ * Enrich StringListRow[] with reachable sizes.
+ */
+export async function enrichStringRowsWithReachable(
+  engine: Engine,
+  rows: StringListRow[],
+): Promise<void> {
+  const ids = rows.map((r) => r.id);
+  const map = await getReachableSizes(engine, ids);
+  for (const row of rows) {
+    const s = map.get(row.id);
+    row.reachableSize = s?.size ?? 0;
+    row.reachableNativeSize = s?.native ?? 0;
+  }
+}
+
+/**
+ * Enrich PrimOrRef fields with reachable sizes (for ref-kind fields only).
+ */
+export async function enrichFieldsWithReachable(
+  engine: Engine,
+  fields: {name: string; typeName: string; value: PrimOrRef}[],
+): Promise<void> {
+  const ids: number[] = [];
+  for (const f of fields) {
+    if (f.value.kind === 'ref') ids.push(f.value.id);
+  }
+  const map = await getReachableSizes(engine, ids);
+  for (const f of fields) {
+    if (f.value.kind === 'ref') {
+      const s = map.get(f.value.id);
+      f.value.reachableJava = s?.size ?? 0;
+      f.value.reachableNative = s?.native ?? 0;
+    }
+  }
+}
+
+/**
+ * Enrich array elements with reachable sizes (for ref-kind values only).
+ */
+export async function enrichArrayElemsWithReachable(
+  engine: Engine,
+  elems: {idx: number; value: PrimOrRef}[],
+): Promise<void> {
+  const ids: number[] = [];
+  for (const e of elems) {
+    if (e.value.kind === 'ref') ids.push(e.value.id);
+  }
+  const map = await getReachableSizes(engine, ids);
+  for (const e of elems) {
+    if (e.value.kind === 'ref') {
+      const s = map.get(e.value.id);
+      e.value.reachableJava = s?.size ?? 0;
+      e.value.reachableNative = s?.native ?? 0;
+    }
   }
 }

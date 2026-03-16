@@ -16,8 +16,17 @@ import m from 'mithril';
 import type {Engine} from '../../../trace_processor/engine';
 import {EmptyState} from '../../../widgets/empty_state';
 import type {InstanceRow} from '../types';
-import {fmtSize} from '../format';
-import {type NavFn, SortableTable, InstanceLink} from '../components';
+import {
+  type NavFn,
+  SortableTable,
+  InstanceLink,
+  shallowSizeCol,
+  nativeSizeCol,
+  retainedSizeCol,
+  retainedNativeSizeCol,
+  reachableSizeCol,
+  reachableNativeSizeCol,
+} from '../components';
 import * as queries from '../queries';
 
 interface SearchViewAttrs {
@@ -45,6 +54,9 @@ function SearchView(): m.Component<SearchViewAttrs> {
         if (seq !== searchSeq) return;
         results = r;
         m.redraw();
+        queries.enrichWithReachable(engine, r).then(() => {
+          if (seq === searchSeq) m.redraw();
+        });
       })
       .catch(console.error);
   }
@@ -88,15 +100,15 @@ function SearchView(): m.Component<SearchViewAttrs> {
         results.length > 0
           ? m(SortableTable, {
               columns: [
-                {
-                  label: 'Retained',
-                  align: 'right',
-                  sortKey: (r: InstanceRow) => r.retainedTotal,
-                  render: (r: InstanceRow) =>
-                    m('span', {class: 'ah-mono'}, fmtSize(r.retainedTotal)),
-                },
+                shallowSizeCol(),
+                nativeSizeCol(),
+                retainedSizeCol(),
+                retainedNativeSizeCol(),
+                reachableSizeCol(),
+                reachableNativeSizeCol(),
                 {
                   label: 'Object',
+                  sortKey: (r: InstanceRow) => r.className,
                   render: (r: InstanceRow) =>
                     m(InstanceLink, {row: r, navigate}),
                 },

@@ -14,6 +14,7 @@
 
 import m from 'mithril';
 import type {InstanceRow, PrimOrRef} from './types';
+import {fmtSize} from './format';
 import type {BreadcrumbEntry, NavState} from './nav_state';
 export type {BreadcrumbEntry};
 
@@ -138,11 +139,11 @@ export function Section(): m.Component<SectionAttrs> {
 
 // ─── SortableTable ────────────────────────────────────────────────────────────
 
-interface SortableTableColumn<T> {
+export interface SortableTableColumn<T> {
   label: string;
   align?: string;
   minWidth?: string;
-  sortKey?: (row: T) => number;
+  sortKey?: (row: T) => number | string;
   render: (row: T, idx: number) => m.Children;
 }
 
@@ -181,9 +182,17 @@ export function SortableTable(): m.Component<SortableTableAttrs<any>> {
         sorted = data;
       } else {
         const key = columns[sortCol].sortKey!;
-        sorted = [...data].sort((a, b) =>
-          sortAsc ? key(a) - key(b) : key(b) - key(a),
-        );
+        sorted = [...data].sort((a, b) => {
+          const ka = key(a);
+          const kb = key(b);
+          let cmp: number;
+          if (typeof ka === 'string' && typeof kb === 'string') {
+            cmp = ka.localeCompare(kb);
+          } else {
+            cmp = (ka as number) - (kb as number);
+          }
+          return sortAsc ? cmp : -cmp;
+        });
       }
 
       const visible = sorted.slice(0, showCount);
@@ -359,6 +368,84 @@ export function BitmapImage(): m.Component<BitmapImageAttrs> {
       // Before the blob URL is ready, src is empty (blank image).
       return m('img', {src: blobUrl ?? '', style: imgStyle});
     },
+  };
+}
+
+// ─── Reusable size columns for InstanceRow tables ────────────────────────────
+
+export function shallowSizeCol(): SortableTableColumn<InstanceRow> {
+  return {
+    label: 'Shallow',
+    align: 'right',
+    sortKey: (r) => r.shallowJava,
+    render: (r) => m('span', {class: 'ah-mono'}, fmtSize(r.shallowJava)),
+  };
+}
+
+export function nativeSizeCol(): SortableTableColumn<InstanceRow> {
+  return {
+    label: 'Shallow Native',
+    align: 'right',
+    sortKey: (r) => r.shallowNative,
+    render: (r) => m('span', {class: 'ah-mono'}, fmtSize(r.shallowNative)),
+  };
+}
+
+export function retainedSizeCol(): SortableTableColumn<InstanceRow> {
+  return {
+    label: 'Retained',
+    align: 'right',
+    sortKey: (r) => {
+      let j = 0;
+      for (const h of r.retainedByHeap) j += h.java;
+      return j;
+    },
+    render: (r) => {
+      let j = 0;
+      for (const h of r.retainedByHeap) j += h.java;
+      return m('span', {class: 'ah-mono'}, fmtSize(j));
+    },
+  };
+}
+
+export function retainedNativeSizeCol(): SortableTableColumn<InstanceRow> {
+  return {
+    label: 'Retained Native',
+    align: 'right',
+    sortKey: (r) => {
+      let n = 0;
+      for (const h of r.retainedByHeap) n += h.native_;
+      return n;
+    },
+    render: (r) => {
+      let n = 0;
+      for (const h of r.retainedByHeap) n += h.native_;
+      return m('span', {class: 'ah-mono'}, fmtSize(n));
+    },
+  };
+}
+
+export function reachableSizeCol(): SortableTableColumn<InstanceRow> {
+  return {
+    label: 'Reachable',
+    align: 'right',
+    sortKey: (r) => r.reachableSize ?? 0,
+    render: (r) =>
+      r.reachableSize === null
+        ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+        : m('span', {class: 'ah-mono'}, fmtSize(r.reachableSize)),
+  };
+}
+
+export function reachableNativeSizeCol(): SortableTableColumn<InstanceRow> {
+  return {
+    label: 'Reachable Native',
+    align: 'right',
+    sortKey: (r) => r.reachableNative ?? 0,
+    render: (r) =>
+      r.reachableNative === null
+        ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+        : m('span', {class: 'ah-mono'}, fmtSize(r.reachableNative)),
   };
 }
 

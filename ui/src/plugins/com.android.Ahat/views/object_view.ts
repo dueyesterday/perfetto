@@ -25,6 +25,12 @@ import {
   SortableTable,
   PrimOrRefCell,
   BitmapImage,
+  shallowSizeCol,
+  nativeSizeCol,
+  retainedSizeCol,
+  retainedNativeSizeCol,
+  reachableSizeCol,
+  reachableNativeSizeCol,
 } from '../components';
 import * as queries from '../queries';
 
@@ -37,6 +43,7 @@ interface ObjectViewAttrs {
   heaps: HeapInfo[];
   navigate: NavFn;
   params: ObjectParams;
+  onViewInTimeline?: (objectId: number) => void;
 }
 
 function ObjectView(): m.Component<ObjectViewAttrs> {
@@ -55,6 +62,37 @@ function ObjectView(): m.Component<ObjectViewAttrs> {
         if (!alive || seq !== fetchSeq) return;
         detail = d;
         m.redraw();
+        if (d) {
+          // Enrich with reachable sizes asynchronously.
+          const enrichPromises: Promise<void>[] = [];
+          enrichPromises.push(
+            queries.enrichWithReachable(attrs.engine, [d.row]),
+          );
+          enrichPromises.push(
+            queries.enrichWithReachable(attrs.engine, d.reverseRefs),
+          );
+          enrichPromises.push(
+            queries.enrichWithReachable(attrs.engine, d.dominated),
+          );
+          if (d.instanceFields.length > 0) {
+            enrichPromises.push(
+              queries.enrichFieldsWithReachable(attrs.engine, d.instanceFields),
+            );
+          }
+          if (d.staticFields.length > 0) {
+            enrichPromises.push(
+              queries.enrichFieldsWithReachable(attrs.engine, d.staticFields),
+            );
+          }
+          if (d.arrayElems.length > 0) {
+            enrichPromises.push(
+              queries.enrichArrayElemsWithReachable(attrs.engine, d.arrayElems),
+            );
+          }
+          Promise.all(enrichPromises).then(() => {
+            if (alive && seq === fetchSeq) m.redraw();
+          });
+        }
       })
       .catch((err) => {
         console.error(err);
@@ -77,7 +115,7 @@ function ObjectView(): m.Component<ObjectViewAttrs> {
       alive = false;
     },
     view(vnode) {
-      const {heaps, navigate, params} = vnode.attrs;
+      const {heaps, navigate, params, onViewInTimeline} = vnode.attrs;
 
       if (detail === 'loading') {
         return m('div', {class: 'ah-loading'}, m(Spinner, {easing: true}));
@@ -102,7 +140,23 @@ function ObjectView(): m.Component<ObjectViewAttrs> {
             },
             'Object ' + fmtHex(row.id),
           ),
-          m('div', m(InstanceLink, {row, navigate})),
+          m(
+            'div',
+            {style: {display: 'flex', alignItems: 'center', gap: '0.75rem'}},
+            [
+              m(InstanceLink, {row, navigate}),
+              onViewInTimeline
+                ? m(
+                    'button',
+                    {
+                      class: 'ah-download-link',
+                      onclick: () => onViewInTimeline(row.id),
+                    },
+                    'View in Timeline',
+                  )
+                : null,
+            ],
+          ),
         ]),
 
         detail.bitmap
@@ -228,27 +282,38 @@ function ObjectView(): m.Component<ObjectViewAttrs> {
 
         m(Section, {title: 'Object Size'}, [
           m('div', {class: 'ah-info-grid'}, [
-            m('span', {class: 'ah-info-grid__label'}, 'Shallow Size:'),
-            m('span', {class: 'ah-mono'}, [
-              fmtSize(row.shallowJava + row.shallowNative),
-              row.shallowNative > 0
-                ? m(
-                    'span',
-                    {style: {color: 'var(--ah-text-faint)'}},
-                    ' (java: ' +
-                      fmtSize(row.shallowJava) +
-                      ', native: ' +
-                      fmtSize(row.shallowNative) +
-                      ')',
-                  )
-                : null,
-            ]),
-            m('span', {class: 'ah-info-grid__label'}, 'Retained Size:'),
+            m('span', {class: 'ah-info-grid__label'}, 'Shallow:'),
+            m('span', {class: 'ah-mono'}, fmtSize(row.shallowJava)),
+            m('span', {class: 'ah-info-grid__label'}, 'Shallow Native:'),
+            m('span', {class: 'ah-mono'}, fmtSize(row.shallowNative)),
+            m('span', {class: 'ah-info-grid__label'}, 'Retained:'),
             m(
               'span',
-              {class: 'ah-mono ah-semibold'},
-              fmtSize(row.retainedTotal),
+              {class: 'ah-mono'},
+              (() => {
+                let j = 0;
+                for (const h of row.retainedByHeap) j += h.java;
+                return fmtSize(j);
+              })(),
             ),
+            m('span', {class: 'ah-info-grid__label'}, 'Retained Native:'),
+            m(
+              'span',
+              {class: 'ah-mono'},
+              (() => {
+                let n = 0;
+                for (const h of row.retainedByHeap) n += h.native_;
+                return fmtSize(n);
+              })(),
+            ),
+            m('span', {class: 'ah-info-grid__label'}, 'Reachable:'),
+            row.reachableSize === null
+              ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+              : m('span', {class: 'ah-mono'}, fmtSize(row.reachableSize)),
+            m('span', {class: 'ah-info-grid__label'}, 'Reachable Native:'),
+            row.reachableNative === null
+              ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+              : m('span', {class: 'ah-mono'}, fmtSize(row.reachableNative)),
           ]),
         ]),
 
@@ -334,8 +399,15 @@ function ObjectView(): m.Component<ObjectViewAttrs> {
               },
               m(SortableTable, {
                 columns: [
+                  shallowSizeCol(),
+                  nativeSizeCol(),
+                  retainedSizeCol(),
+                  retainedNativeSizeCol(),
+                  reachableSizeCol(),
+                  reachableNativeSizeCol(),
                   {
                     label: 'Object',
+                    sortKey: (r: InstanceRow) => r.className,
                     render: (r: InstanceRow) =>
                       m(InstanceLink, {row: r, navigate}),
                   },
@@ -355,13 +427,12 @@ function ObjectView(): m.Component<ObjectViewAttrs> {
               },
               m(SortableTable, {
                 columns: [
-                  {
-                    label: 'Retained',
-                    align: 'right',
-                    sortKey: (r: InstanceRow) => r.retainedTotal,
-                    render: (r: InstanceRow) =>
-                      m('span', {class: 'ah-mono'}, fmtSize(r.retainedTotal)),
-                  },
+                  shallowSizeCol(),
+                  nativeSizeCol(),
+                  retainedSizeCol(),
+                  retainedNativeSizeCol(),
+                  reachableSizeCol(),
+                  reachableNativeSizeCol(),
                   ...heaps
                     .filter((h) => h.java + h.native_ > 0)
                     .map((h) => ({
@@ -386,6 +457,7 @@ function ObjectView(): m.Component<ObjectViewAttrs> {
                     })),
                   {
                     label: 'Object',
+                    sortKey: (r: InstanceRow) => r.className,
                     render: (r: InstanceRow) =>
                       m(InstanceLink, {row: r, navigate}),
                   },
@@ -400,8 +472,73 @@ function ObjectView(): m.Component<ObjectViewAttrs> {
   };
 }
 
+// Java primitive type sizes in bytes.
+const JAVA_PRIM_SIZE: Record<string, number> = {
+  boolean: 1,
+  byte: 1,
+  char: 2,
+  short: 2,
+  int: 4,
+  float: 4,
+  long: 8,
+  double: 8,
+};
+
+type FieldRow = {name: string; typeName: string; value: PrimOrRef};
+
+function fieldShallowJava(f: FieldRow): number {
+  const v = f.value;
+  if (v.kind === 'ref') return v.shallowJava ?? 0;
+  return JAVA_PRIM_SIZE[f.typeName] ?? 0;
+}
+
+function fieldShallowNative(f: FieldRow): number {
+  const v = f.value;
+  return v.kind === 'ref' ? v.shallowNative ?? 0 : 0;
+}
+
+function fieldRetainedJava(f: FieldRow): number {
+  const v = f.value;
+  return v.kind === 'ref' ? v.retainedJava ?? 0 : 0;
+}
+
+function fieldRetainedNative(f: FieldRow): number {
+  const v = f.value;
+  return v.kind === 'ref' ? v.retainedNative ?? 0 : 0;
+}
+
+function fieldReachableJava(f: FieldRow): number {
+  const v = f.value;
+  return v.kind === 'ref' ? v.reachableJava ?? 0 : 0;
+}
+
+function fieldReachableNative(f: FieldRow): number {
+  const v = f.value;
+  return v.kind === 'ref' ? v.reachableNative ?? 0 : 0;
+}
+
+function renderFieldSize(
+  f: FieldRow,
+  getter: (f: FieldRow) => number,
+  isReachable?: boolean,
+): m.Children {
+  const v = f.value;
+  const ref = v.kind === 'ref' ? v : undefined;
+  const primSize = JAVA_PRIM_SIZE[f.typeName];
+  if (ref) {
+    if (isReachable && ref.reachableJava === undefined) {
+      return m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026');
+    }
+    return m('span', {class: 'ah-mono'}, fmtSize(getter(f)));
+  }
+  if (primSize !== undefined) {
+    return m('span', {class: 'ah-mono'}, fmtSize(getter(f)));
+  }
+  return null;
+}
+
 interface FieldsTableAttrs {
-  fields: {name: string; typeName: string; value: PrimOrRef}[];
+  fields: FieldRow[];
   navigate: NavFn;
 }
 
@@ -409,39 +546,101 @@ function FieldsTable(): m.Component<FieldsTableAttrs> {
   return {
     view(vnode) {
       const {fields, navigate} = vnode.attrs;
-      return m('div', {class: 'ah-table-wrap'}, [
-        m('table', {style: {width: '100%'}}, [
-          m('thead', [
-            m('tr', [
-              m('th', {class: 'ah-fields-th'}, 'Type'),
-              m('th', {class: 'ah-fields-th'}, 'Name'),
-              m('th', {class: 'ah-fields-th'}, 'Value'),
-            ]),
-          ]),
-          m(
-            'tbody',
-            fields.map((f, i) =>
-              m('tr', {key: i, class: 'ah-fields-tr'}, [
-                m('td', {class: 'ah-fields-td--type'}, f.typeName),
-                m('td', {class: 'ah-fields-td--name'}, f.name),
-                m(
-                  'td',
-                  {class: 'ah-fields-td'},
-                  m(PrimOrRefCell, {v: f.value, navigate}),
-                ),
-              ]),
-            ),
-          ),
-        ]),
-      ]);
+      return m(SortableTable, {
+        columns: [
+          {
+            label: 'Type',
+            sortKey: (f: FieldRow) => f.typeName,
+            render: (f: FieldRow) => m('span', f.typeName),
+          },
+          {
+            label: 'Name',
+            sortKey: (f: FieldRow) => f.name,
+            render: (f: FieldRow) => m('span', f.name),
+          },
+          {
+            label: 'Value',
+            sortKey: (f: FieldRow) =>
+              f.value.kind === 'ref' ? f.value.display : f.value.v,
+            render: (f: FieldRow) => m(PrimOrRefCell, {v: f.value, navigate}),
+          },
+          {
+            label: 'Shallow',
+            align: 'right',
+            sortKey: fieldShallowJava,
+            render: (f: FieldRow) => renderFieldSize(f, fieldShallowJava),
+          },
+          {
+            label: 'Shallow Native',
+            align: 'right',
+            sortKey: fieldShallowNative,
+            render: (f: FieldRow) => renderFieldSize(f, fieldShallowNative),
+          },
+          {
+            label: 'Retained',
+            align: 'right',
+            sortKey: fieldRetainedJava,
+            render: (f: FieldRow) => renderFieldSize(f, fieldRetainedJava),
+          },
+          {
+            label: 'Retained Native',
+            align: 'right',
+            sortKey: fieldRetainedNative,
+            render: (f: FieldRow) => renderFieldSize(f, fieldRetainedNative),
+          },
+          {
+            label: 'Reachable',
+            align: 'right',
+            sortKey: fieldReachableJava,
+            render: (f: FieldRow) =>
+              renderFieldSize(f, fieldReachableJava, true),
+          },
+          {
+            label: 'Reachable Native',
+            align: 'right',
+            sortKey: fieldReachableNative,
+            render: (f: FieldRow) =>
+              renderFieldSize(f, fieldReachableNative, true),
+          },
+        ],
+        data: fields,
+        rowKey: (_f: FieldRow, i: number) => i,
+      });
     },
   };
 }
 
 const ARRAY_SHOW_LIMIT = 5_000;
 
+type ArrayElemRow = {idx: number; value: PrimOrRef};
+
+function elemShallowJava(e: ArrayElemRow, elemTypeName: string): number {
+  if (e.value.kind === 'ref') return e.value.shallowJava ?? 0;
+  return JAVA_PRIM_SIZE[elemTypeName] ?? 0;
+}
+
+function elemShallowNative(e: ArrayElemRow): number {
+  return e.value.kind === 'ref' ? e.value.shallowNative ?? 0 : 0;
+}
+
+function elemRetainedJava(e: ArrayElemRow): number {
+  return e.value.kind === 'ref' ? e.value.retainedJava ?? 0 : 0;
+}
+
+function elemRetainedNative(e: ArrayElemRow): number {
+  return e.value.kind === 'ref' ? e.value.retainedNative ?? 0 : 0;
+}
+
+function elemReachableJava(e: ArrayElemRow): number {
+  return e.value.kind === 'ref' ? e.value.reachableJava ?? 0 : 0;
+}
+
+function elemReachableNative(e: ArrayElemRow): number {
+  return e.value.kind === 'ref' ? e.value.reachableNative ?? 0 : 0;
+}
+
 interface ArrayViewAttrs {
-  elems: {idx: number; value: PrimOrRef}[];
+  elems: ArrayElemRow[];
   elemTypeName: string;
   total: number;
   navigate: NavFn;
@@ -492,34 +691,85 @@ function ArrayView(): m.Component<ArrayViewAttrs> {
               ],
             )
           : null,
-        m('table', {style: {width: '100%'}}, [
-          m('thead', [
-            m('tr', [
-              m(
-                'th',
-                {
-                  class: 'ah-fields-th',
-                  style: {textAlign: 'right', width: '4rem'},
-                },
-                'Index',
-              ),
-              m('th', {class: 'ah-fields-th'}, 'Value (' + elemTypeName + ')'),
-            ]),
-          ]),
-          m(
-            'tbody',
-            visible.map((e) =>
-              m('tr', {key: e.idx, class: 'ah-fields-tr'}, [
-                m('td', {class: 'ah-fields-td--index'}, String(e.idx)),
+        m(SortableTable, {
+          columns: [
+            {
+              label: 'Index',
+              align: 'right',
+              sortKey: (e: ArrayElemRow) => e.idx,
+              render: (e: ArrayElemRow) =>
+                m('span', {class: 'ah-mono'}, String(e.idx)),
+            },
+            {
+              label: 'Value (' + elemTypeName + ')',
+              sortKey: (e: ArrayElemRow) =>
+                e.value.kind === 'ref' ? e.value.display : e.value.v,
+              render: (e: ArrayElemRow) =>
+                m(PrimOrRefCell, {v: e.value, navigate}),
+            },
+            {
+              label: 'Shallow',
+              align: 'right',
+              sortKey: (e: ArrayElemRow) => elemShallowJava(e, elemTypeName),
+              render: (e: ArrayElemRow) =>
                 m(
-                  'td',
-                  {class: 'ah-fields-td'},
-                  m(PrimOrRefCell, {v: e.value, navigate}),
+                  'span',
+                  {class: 'ah-mono'},
+                  fmtSize(elemShallowJava(e, elemTypeName)),
                 ),
-              ]),
-            ),
-          ),
-        ]),
+            },
+            {
+              label: 'Shallow Native',
+              align: 'right',
+              sortKey: elemShallowNative,
+              render: (e: ArrayElemRow) =>
+                m('span', {class: 'ah-mono'}, fmtSize(elemShallowNative(e))),
+            },
+            {
+              label: 'Retained',
+              align: 'right',
+              sortKey: elemRetainedJava,
+              render: (e: ArrayElemRow) =>
+                m('span', {class: 'ah-mono'}, fmtSize(elemRetainedJava(e))),
+            },
+            {
+              label: 'Retained Native',
+              align: 'right',
+              sortKey: elemRetainedNative,
+              render: (e: ArrayElemRow) =>
+                m('span', {class: 'ah-mono'}, fmtSize(elemRetainedNative(e))),
+            },
+            {
+              label: 'Reachable',
+              align: 'right',
+              sortKey: elemReachableJava,
+              render: (e: ArrayElemRow) =>
+                e.value.kind === 'ref' && e.value.reachableJava === undefined
+                  ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+                  : m(
+                      'span',
+                      {class: 'ah-mono'},
+                      fmtSize(elemReachableJava(e)),
+                    ),
+            },
+            {
+              label: 'Reachable Native',
+              align: 'right',
+              sortKey: elemReachableNative,
+              render: (e: ArrayElemRow) =>
+                e.value.kind === 'ref' && e.value.reachableNative === undefined
+                  ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+                  : m(
+                      'span',
+                      {class: 'ah-mono'},
+                      fmtSize(elemReachableNative(e)),
+                    ),
+            },
+          ],
+          data: visible,
+          rowKey: (e: ArrayElemRow, i: number) =>
+            Number.isNaN(e.idx) ? `i${i}` : e.idx,
+        }),
         elems.length > showCount
           ? m('div', {class: 'ah-table__more'}, [
               'Showing ' +

@@ -29,31 +29,37 @@ import {
 } from '../components';
 import * as queries from '../queries';
 
-export interface ObjectsParams {
-  className: string;
-  heap: string | null;
-}
-
-interface ObjectsViewAttrs {
+interface FlamegraphObjectsViewAttrs {
   engine: Engine;
   navigate: NavFn;
-  params: ObjectsParams;
+  onBackToTimeline?: () => void;
+  nodeName?: string;
+  /** Comma-separated path hashes from the flamegraph selection. */
+  pathHashes?: string;
+  /** Whether the path hashes are from the dominator tree. */
+  isDominator?: boolean;
 }
 
-function ObjectsView(): m.Component<ObjectsViewAttrs> {
+function FlamegraphObjectsView(): m.Component<FlamegraphObjectsViewAttrs> {
   let rows: InstanceRow[] | null = null;
-  let prevClassName: string | undefined;
-  let prevHeap: string | null | undefined;
+  let error: string | null = null;
   let alive = true;
 
-  function fetchData(attrs: ObjectsViewAttrs) {
-    const cls = attrs.params.className ?? '';
-    const heap = attrs.params.heap ?? null;
-    prevClassName = cls;
-    prevHeap = heap;
+  function fetchData(attrs: FlamegraphObjectsViewAttrs) {
     rows = null;
+    error = null;
+
+    if (!attrs.pathHashes) {
+      error = 'no-selection';
+      return;
+    }
+
     queries
-      .getObjects(attrs.engine, cls, heap)
+      .getObjectsByFlamegraphSelection(
+        attrs.engine,
+        attrs.pathHashes,
+        attrs.isDominator ?? true,
+      )
       .then((r) => {
         if (!alive) return;
         rows = r;
@@ -62,7 +68,11 @@ function ObjectsView(): m.Component<ObjectsViewAttrs> {
           if (alive) m.redraw();
         });
       })
-      .catch(console.error);
+      .catch((e) => {
+        if (!alive) return;
+        error = String(e);
+        m.redraw();
+      });
   }
 
   return {
@@ -72,34 +82,74 @@ function ObjectsView(): m.Component<ObjectsViewAttrs> {
     onremove() {
       alive = false;
     },
-    onupdate(vnode) {
-      const cls = vnode.attrs.params.className ?? '';
-      const heap = vnode.attrs.params.heap ?? null;
-      if (cls !== prevClassName || heap !== prevHeap) {
-        fetchData(vnode.attrs);
-      }
-    },
     view(vnode) {
-      const className: string = vnode.attrs.params.className ?? '';
-      const heap: string | null = vnode.attrs.params.heap ?? null;
-      const navigate = vnode.attrs.navigate;
+      const {navigate, nodeName, onBackToTimeline} = vnode.attrs;
+
+      if (error) {
+        return m('div', [
+          nodeName
+            ? m(
+                'h2',
+                {class: 'ah-view-heading'},
+                'Flamegraph: ',
+                m('span', {class: 'ah-mono'}, nodeName),
+              )
+            : null,
+          m(
+            'div',
+            {class: 'ah-card ah-mb-3'},
+            m(
+              'p',
+              'No flamegraph selection found. Select a node in the ',
+              'flamegraph and choose "Open in Ahat" to see objects here.',
+            ),
+          ),
+        ]);
+      }
 
       if (!rows) {
         return m('div', {class: 'ah-loading'}, m(Spinner, {easing: true}));
       }
 
+      if (rows.length === 0) {
+        return m(
+          'div',
+          {class: 'ah-card ah-mb-3'},
+          m('p', 'No objects found for this flamegraph selection.'),
+        );
+      }
+
+      // Derive class name from first row for display.
+      const className = rows[0].className;
+      const uniqueClasses = new Set(rows.map((r) => r.className));
+
       return m('div', [
-        m('h2', {class: 'ah-view-heading'}, 'Instances'),
+        m('div', {class: 'ah-heading-row'}, [
+          m(
+            'h2',
+            {class: 'ah-view-heading'},
+            nodeName
+              ? ['Flamegraph: ', m('span', {class: 'ah-mono'}, nodeName)]
+              : 'Flamegraph Objects',
+          ),
+          onBackToTimeline
+            ? m(
+                'button',
+                {class: 'ah-download-link', onclick: onBackToTimeline},
+                'Back to Timeline',
+              )
+            : null,
+        ]),
         m('div', {class: 'ah-card--compact ah-mb-3'}, [
           m('div', {class: 'ah-info-grid--compact'}, [
             m('span', {class: 'ah-info-grid__label'}, 'Class:'),
-            m('span', {class: 'ah-mono'}, className),
-            ...(heap
-              ? [
-                  m('span', {class: 'ah-info-grid__label'}, 'Heap:'),
-                  m('span', heap),
-                ]
-              : []),
+            m(
+              'span',
+              {class: 'ah-mono'},
+              uniqueClasses.size === 1
+                ? className
+                : `${uniqueClasses.size} classes`,
+            ),
             m('span', {class: 'ah-info-grid__label'}, 'Count:'),
             m('span', {class: 'ah-mono'}, rows.length.toLocaleString()),
           ]),
@@ -131,4 +181,4 @@ function ObjectsView(): m.Component<ObjectsViewAttrs> {
   };
 }
 
-export default ObjectsView;
+export default FlamegraphObjectsView;

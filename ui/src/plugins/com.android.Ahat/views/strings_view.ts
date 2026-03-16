@@ -51,6 +51,11 @@ function StringsView(): m.Component<StringsViewAttrs> {
           if (!alive) return;
           allRows = r;
           m.redraw();
+          queries
+            .enrichStringRowsWithReachable(vnode.attrs.engine, r)
+            .then(() => {
+              if (alive) m.redraw();
+            });
         })
         .catch(console.error);
     },
@@ -218,6 +223,7 @@ function StringsView(): m.Component<StringsViewAttrs> {
                     },
                     {
                       label: 'Value',
+                      sortKey: (r: DuplicateGroup) => r.value,
                       render: (r: DuplicateGroup) =>
                         m(
                           'span',
@@ -269,11 +275,51 @@ function StringsView(): m.Component<StringsViewAttrs> {
               m(SortableTable, {
                 columns: [
                   {
+                    label: 'Shallow',
+                    align: 'right',
+                    sortKey: (r: StringListRow) => r.shallowSize,
+                    render: (r: StringListRow) =>
+                      m('span', {class: 'ah-mono'}, fmtSize(r.shallowSize)),
+                  },
+                  {
+                    label: 'Shallow Native',
+                    align: 'right',
+                    sortKey: (r: StringListRow) => r.nativeSize,
+                    render: (r: StringListRow) =>
+                      m('span', {class: 'ah-mono'}, fmtSize(r.nativeSize)),
+                  },
+                  {
                     label: 'Retained',
                     align: 'right',
                     sortKey: (r: StringListRow) => r.retainedSize,
                     render: (r: StringListRow) =>
                       m('span', {class: 'ah-mono'}, fmtSize(r.retainedSize)),
+                  },
+                  {
+                    label: 'Reachable',
+                    align: 'right',
+                    sortKey: (r: StringListRow) => r.reachableSize ?? 0,
+                    render: (r: StringListRow) =>
+                      r.reachableSize === null
+                        ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+                        : m(
+                            'span',
+                            {class: 'ah-mono'},
+                            fmtSize(r.reachableSize),
+                          ),
+                  },
+                  {
+                    label: 'Reachable Native',
+                    align: 'right',
+                    sortKey: (r: StringListRow) => r.reachableNativeSize ?? 0,
+                    render: (r: StringListRow) =>
+                      r.reachableNativeSize === null
+                        ? m('span', {class: 'ah-mono ah-opacity-60'}, '\u2026')
+                        : m(
+                            'span',
+                            {class: 'ah-mono'},
+                            fmtSize(r.reachableNativeSize),
+                          ),
                   },
                   {
                     label: 'Length',
@@ -284,11 +330,13 @@ function StringsView(): m.Component<StringsViewAttrs> {
                   },
                   {
                     label: 'Heap',
+                    sortKey: (r: StringListRow) => r.heap,
                     render: (r: StringListRow) =>
                       m('span', {class: 'ah-info-grid__label'}, r.heap),
                   },
                   {
                     label: 'Value',
+                    sortKey: (r: StringListRow) => r.value,
                     render: (r: StringListRow) =>
                       m('span', [
                         m(
