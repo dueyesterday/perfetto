@@ -29,6 +29,13 @@ import {
 } from './nav_state';
 import * as queries from './queries';
 import OverviewView from './views/overview_view';
+import RootedView from './views/rooted_view';
+import ObjectView from './views/object_view';
+import SearchView from './views/search_view';
+import ObjectsView from './views/objects_view';
+import BitmapGalleryView from './views/bitmap_gallery_view';
+import AllocationsView from './views/allocations_view';
+import StringsView from './views/strings_view';
 
 // ─── Content View Router ──────────────────────────────────────────────────────
 
@@ -40,8 +47,38 @@ function renderContentView(
   switch (state.view) {
     case 'overview':
       return m(OverviewView, {overview, name: 'Heap Dump', navigate});
-    default:
-      return m(OverviewView, {overview, name: 'Heap Dump', navigate});
+    case 'allocations':
+      return m(AllocationsView, {
+        engine,
+        navigate,
+        heaps: overview.heaps,
+        params: state.params,
+      });
+    case 'rooted':
+      return m(RootedView, {engine, heaps: overview.heaps, navigate});
+    case 'object':
+      return m(ObjectView, {
+        engine,
+        heaps: overview.heaps,
+        navigate,
+        params: state.params,
+      });
+    case 'objects':
+      return m(ObjectsView, {engine, navigate, params: state.params});
+    case 'search':
+      return m(SearchView, {
+        engine,
+        navigate,
+        initialQuery: state.params.q,
+      });
+    case 'bitmaps':
+      return m(BitmapGalleryView, {engine, navigate});
+    case 'strings':
+      return m(StringsView, {
+        engine,
+        navigate,
+        initialQuery: state.params.q,
+      });
   }
 }
 

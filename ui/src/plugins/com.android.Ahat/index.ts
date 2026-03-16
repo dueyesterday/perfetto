@@ -20,6 +20,7 @@ import {SidebarManager} from '../../public/sidebar';
 import {NUM} from '../../trace_processor/query_result';
 import {HeapDumpPage} from './heap_dump_page';
 import {nav} from './nav_state';
+import {resetBitmapDumpDataCache} from './queries';
 
 let sidebarManager: SidebarManager;
 
@@ -52,16 +53,42 @@ export default class implements PerfettoPlugin {
     // Make the engine available to the page component.
     HeapDumpPage.engine = ctx.engine;
     HeapDumpPage.hasHeapData = true;
+    resetBitmapDumpDataCache();
 
     // Register sidebar items under the Ahat section. Disposed on trace unload.
-    ctx.trash.use(
-      sidebarManager.addMenuItem({
-        section: 'ahat',
-        text: 'Overview',
-        href: '#!/ahat',
-        icon: 'dashboard',
-        cssClass: () => (nav.view === 'overview' ? 'ah-sidebar-active' : ''),
-      }),
-    );
+    const viewItems = [
+      {label: 'Overview', subpage: '', view: 'overview', icon: 'dashboard'},
+      {
+        label: 'Allocations',
+        subpage: 'allocations',
+        view: 'allocations',
+        icon: 'bar_chart',
+      },
+      {
+        label: 'Rooted',
+        subpage: 'rooted',
+        view: 'rooted',
+        icon: 'account_tree',
+      },
+      {label: 'Bitmaps', subpage: 'bitmaps', view: 'bitmaps', icon: 'image'},
+      {
+        label: 'Strings',
+        subpage: 'strings',
+        view: 'strings',
+        icon: 'text_fields',
+      },
+      {label: 'Search', subpage: 'search', view: 'search', icon: 'search'},
+    ];
+    for (const v of viewItems) {
+      ctx.trash.use(
+        sidebarManager.addMenuItem({
+          section: 'ahat',
+          text: v.label,
+          href: v.subpage ? `#!/ahat/${v.subpage}` : '#!/ahat',
+          icon: v.icon,
+          cssClass: () => (nav.view === v.view ? 'ah-sidebar-active' : ''),
+        }),
+      );
+    }
   }
 }
