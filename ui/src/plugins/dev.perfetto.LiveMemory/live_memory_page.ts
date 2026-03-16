@@ -72,6 +72,7 @@ const SYSTEM_MEMINFO_COUNTERS = [
   'Cached',
   'SwapTotal',
   'SwapFree',
+  'SwapCached',
   'Shmem',
   'Active(anon)',
   'Inactive(anon)',
@@ -190,6 +191,7 @@ function createMonitoringConfig(
           sysStatsConfig: {
             meminfoPeriodMs: 250,
             psiPeriodMs: 250,
+            vmstatPeriodMs: 250,
             meminfoCounters: [
               protos.MeminfoCounters.MEMINFO_MEM_TOTAL,
               protos.MeminfoCounters.MEMINFO_MEM_FREE,
@@ -198,6 +200,7 @@ function createMonitoringConfig(
               protos.MeminfoCounters.MEMINFO_CACHED,
               protos.MeminfoCounters.MEMINFO_SWAP_TOTAL,
               protos.MeminfoCounters.MEMINFO_SWAP_FREE,
+              protos.MeminfoCounters.MEMINFO_SWAP_CACHED,
               protos.MeminfoCounters.MEMINFO_SHMEM,
               protos.MeminfoCounters.MEMINFO_ACTIVE_ANON,
               protos.MeminfoCounters.MEMINFO_INACTIVE_ANON,
@@ -208,6 +211,10 @@ function createMonitoringConfig(
               protos.MeminfoCounters.MEMINFO_KERNEL_STACK,
               protos.MeminfoCounters.MEMINFO_PAGE_TABLES,
               protos.MeminfoCounters.MEMINFO_ZRAM,
+            ],
+            vmstatCounters: [
+              protos.VmstatCounters.VMSTAT_PSWPIN,
+              protos.VmstatCounters.VMSTAT_PSWPOUT,
             ],
           },
         },
@@ -263,6 +270,8 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
   private categoryChartData?: LineChartData;
   private sankeyData?: SankeyData;
   private psiChartData?: LineChartData;
+  private swapChartData?: LineChartData;
+  private vmstatChartData?: LineChartData;
   // Latest process table (most recent values only).
   private latestProcesses?: ProcessMemoryRow[];
 
@@ -565,6 +574,41 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
           : m('.pf-live-memory-placeholder', 'Waiting for data\u2026'),
       ),
 
+      this.swapChartData &&
+        panel(
+          'Swap Usage',
+          'Dirty = pages modified in swap, Cached = clean swap pages still in RAM. Growing dirty indicates pressure.',
+          m(LineChart, {
+            data: this.swapChartData,
+            height: 200,
+            xAxisLabel: 'Time (s)',
+            yAxisLabel: 'Swap',
+            showLegend: true,
+            showPoints: false,
+            stacked: true,
+            gridLines: 'horizontal',
+            formatXValue: (v: number) => `${v.toFixed(0)}s`,
+            formatYValue: (v: number) => formatKb(v),
+          }),
+        ),
+
+      this.vmstatChartData &&
+        panel(
+          'Swap I/O (pswpin / pswpout)',
+          'Pages swapped in/out per second. High rates indicate the system is actively thrashing.',
+          m(LineChart, {
+            data: this.vmstatChartData,
+            height: 200,
+            xAxisLabel: 'Time (s)',
+            yAxisLabel: 'Pages/s',
+            showLegend: true,
+            showPoints: false,
+            gridLines: 'horizontal',
+            formatXValue: (v: number) => `${v.toFixed(0)}s`,
+            formatYValue: (v: number) => `${v.toFixed(0)} pg/s`,
+          }),
+        ),
+
       panel(
         'Page Cache',
         'File cache = reclaimable file-backed pages. Shmem = tmpfs/shared memory.',
@@ -684,10 +728,12 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
     this.drilldownChartData = undefined;
     // Recompute drill-down chart from existing engine data.
     if (this.engine) {
-      this.queryDrilldownTimeSeries(this.engine, id, this.traceT0 ?? 0).then((data) => {
-        this.drilldownChartData = data;
-        m.redraw();
-      });
+      this.queryDrilldownTimeSeries(this.engine, id, this.traceT0 ?? 0).then(
+        (data) => {
+          this.drilldownChartData = data;
+          m.redraw();
+        },
+      );
     }
   }
 
@@ -1025,6 +1071,8 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
     this.categoryChartData = undefined;
     this.sankeyData = undefined;
     this.psiChartData = undefined;
+    this.swapChartData = undefined;
+    this.vmstatChartData = undefined;
     this.latestProcesses = undefined;
     this.selectedCategory = undefined;
     this.drilldownChartData = undefined;
@@ -1082,6 +1130,8 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
     this.categoryChartData = undefined;
     this.sankeyData = undefined;
     this.psiChartData = undefined;
+    this.swapChartData = undefined;
+    this.vmstatChartData = undefined;
     this.latestProcesses = undefined;
     this.selectedCategory = undefined;
     this.drilldownChartData = undefined;
@@ -1170,6 +1220,8 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
         categoryData,
         sankeyData,
         psiData,
+        swapData,
+        vmstatData,
         drilldownData,
         latestProcesses,
       ] = await Promise.all([
@@ -1179,6 +1231,8 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
         this.queryCategoryTimeSeries(engine, t0),
         this.querySankeyData(engine),
         this.queryPsiTimeSeries(engine, t0),
+        this.querySwapTimeSeries(engine, t0),
+        this.queryVmstatTimeSeries(engine, t0),
         this.selectedCategory
           ? this.queryDrilldownTimeSeries(engine, this.selectedCategory, t0)
           : Promise.resolve(undefined),
@@ -1191,6 +1245,8 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
       this.categoryChartData = categoryData;
       this.sankeyData = sankeyData;
       this.psiChartData = psiData;
+      this.swapChartData = swapData;
+      this.vmstatChartData = vmstatData;
       if (this.selectedCategory) {
         this.drilldownChartData = drilldownData;
       }
@@ -1743,6 +1799,147 @@ export class LiveMemoryPage implements m.ClassComponent<LiveMemoryPageAttrs> {
     }
 
     if (series.length === 0) return undefined;
+    return {series};
+  }
+
+  // ---------------------------------------------------------------------------
+  // Swap usage time-series.
+  // ---------------------------------------------------------------------------
+
+  private async querySwapTimeSeries(
+    engine: WasmEngineProxy,
+    t0: number,
+  ): Promise<LineChartData | undefined> {
+    const queryResult = await engine.query(`
+      SELECT
+        t.name AS counter_name,
+        c.ts AS ts,
+        c.value AS value_bytes
+      FROM counter c
+      JOIN counter_track t ON c.track_id = t.id
+      WHERE t.name IN ('SwapTotal', 'SwapFree', 'SwapCached')
+      ORDER BY c.ts
+    `);
+
+    const byTs = new Map<number, Map<string, number>>();
+    const iter = queryResult.iter({
+      counter_name: STR,
+      ts: NUM,
+      value_bytes: NUM,
+    });
+    for (; iter.valid(); iter.next()) {
+      let row = byTs.get(iter.ts);
+      if (row === undefined) {
+        row = new Map();
+        byTs.set(iter.ts, row);
+      }
+      row.set(iter.counter_name, Math.round(iter.value_bytes / 1024));
+    }
+
+    if (byTs.size < 2) return undefined;
+
+    const timestamps = [...byTs.keys()].sort((a, b) => a - b);
+
+    // Check if swap is enabled (SwapTotal > 0).
+    const firstRow = byTs.get(timestamps[0]);
+    const swapTotal = firstRow?.get('SwapTotal') ?? 0;
+    if (swapTotal === 0) return undefined;
+
+    const dirtyPts: {x: number; y: number}[] = [];
+    const cachedPts: {x: number; y: number}[] = [];
+    const freePts: {x: number; y: number}[] = [];
+
+    for (const ts of timestamps) {
+      const row = byTs.get(ts)!;
+      const total = row.get('SwapTotal') ?? 0;
+      const free = row.get('SwapFree') ?? 0;
+      const cached = row.get('SwapCached') ?? 0;
+      const x = (ts - t0) / 1e9;
+      // SwapUsed = SwapTotal - SwapFree; split into cached (clean) and dirty.
+      const used = Math.max(0, total - free);
+      const dirty = Math.max(0, used - cached);
+      dirtyPts.push({x, y: dirty});
+      cachedPts.push({x, y: cached});
+      freePts.push({x, y: free});
+    }
+
+    if (dirtyPts.length < 2) return undefined;
+
+    return {
+      series: [
+        {name: 'Swap dirty', points: dirtyPts, color: '#e74c3c'},
+        {name: 'SwapCached', points: cachedPts, color: '#f39c12'},
+        {name: 'SwapFree', points: freePts, color: '#2ecc71'},
+      ],
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // vmstat: pswpin/pswpout rate (pages/s).
+  // ---------------------------------------------------------------------------
+
+  private async queryVmstatTimeSeries(
+    engine: WasmEngineProxy,
+    t0: number,
+  ): Promise<LineChartData | undefined> {
+    const queryResult = await engine.query(`
+      SELECT
+        t.name AS counter_name,
+        c.ts AS ts,
+        c.value AS value
+      FROM counter c
+      JOIN counter_track t ON c.track_id = t.id
+      WHERE t.name IN ('pswpin', 'pswpout')
+      ORDER BY c.ts
+    `);
+
+    // Group raw cumulative values by counter name.
+    const byName = new Map<string, {ts: number; value: number}[]>();
+    const iter = queryResult.iter({
+      counter_name: STR,
+      ts: NUM,
+      value: NUM,
+    });
+    for (; iter.valid(); iter.next()) {
+      let arr = byName.get(iter.counter_name);
+      if (arr === undefined) {
+        arr = [];
+        byName.set(iter.counter_name, arr);
+      }
+      arr.push({ts: iter.ts, value: iter.value});
+    }
+
+    const pswpinRaw = byName.get('pswpin');
+    if (pswpinRaw === undefined || pswpinRaw.length < 2) return undefined;
+
+    // Convert cumulative page counts to rate (pages/second).
+    const toRatePoints = (
+      raw: {ts: number; value: number}[],
+    ): {x: number; y: number}[] => {
+      const points: {x: number; y: number}[] = [];
+      for (let i = 1; i < raw.length; i++) {
+        const dtS = (raw[i].ts - raw[i - 1].ts) / 1e9;
+        if (dtS <= 0) continue;
+        const delta = raw[i].value - raw[i - 1].value;
+        const rate = delta / dtS;
+        points.push({x: (raw[i].ts - t0) / 1e9, y: Math.max(0, rate)});
+      }
+      return points;
+    };
+
+    const series: LineChartSeries[] = [
+      {name: 'pswpin', points: toRatePoints(pswpinRaw), color: '#3498db'},
+    ];
+    const pswpoutRaw = byName.get('pswpout');
+    if (pswpoutRaw !== undefined && pswpoutRaw.length >= 2) {
+      series.push({
+        name: 'pswpout',
+        points: toRatePoints(pswpoutRaw),
+        color: '#e74c3c',
+      });
+    }
+
+    if (series.every((s) => s.points.length === 0)) return undefined;
     return {series};
   }
 
