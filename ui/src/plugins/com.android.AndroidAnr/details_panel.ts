@@ -23,9 +23,9 @@ import {Button} from '../../widgets/button';
 import {Timestamp} from '../../components/widgets/timestamp';
 import {DurationWidget} from '../../components/widgets/duration';
 import {exists} from '../../base/utils';
-import {Time} from '../../base/time';
 import {NUM_NULL} from '../../trace_processor/query_result';
 import ProcessThreadGroupsPlugin from '../dev.perfetto.ProcessThreadGroups';
+import {findMainThreadTrackUri, scrollToTrackAndSelect} from './navigate';
 
 interface AnrInfo {
   processName: string;
@@ -147,58 +147,26 @@ export class AnrDetailsPanel implements TrackEventDetailsPanel {
 
     group.expand();
 
-    // Find the main thread track node by its track ID via the track tags.
-    let mainThreadTrackUri: string | undefined;
+    // Find main thread track, falling back to the process group track.
+    const tracksToSelect: string[] = [];
+    let trackToScroll = group.uri;
     if (this.anr.mainThreadTrackId != null) {
-      const mainThreadTrackNode = this.trace.currentWorkspace.flatTracks.find(
-        (track) => {
-          if (!track.uri) return false;
-          const trackDesc = this.trace.tracks.getTrack(track.uri);
-          return trackDesc?.tags?.trackIds?.includes(
-            this.anr!.mainThreadTrackId!,
-          );
-        },
+      const uri = findMainThreadTrackUri(
+        this.trace,
+        this.anr.mainThreadTrackId,
       );
-      mainThreadTrackUri = mainThreadTrackNode?.uri;
+      if (uri) {
+        trackToScroll = uri;
+        tracksToSelect.push(uri);
+      }
     }
 
-    const trackToScroll = mainThreadTrackUri ?? group.uri;
-    const sel = this.selection;
-    const dur = sel.dur ?? 0n;
-    const startTime = Time.fromRaw(sel.ts);
-    const endTime = Time.fromRaw(sel.ts + dur);
-
-    // Scroll to the time region and the process/main thread track.
-    this.trace.scrollTo({
-      track: {
-        uri: trackToScroll,
-        expandGroup: true,
-      },
-      time:
-        dur > 0n
-          ? {
-              start: startTime,
-              end: endTime,
-              behavior: {viewPercentage: 0.8},
-            }
-          : {
-              start: startTime,
-              behavior: 'focus',
-            },
-    });
-
-    // Select the area on the main thread track (if found).
-    if (mainThreadTrackUri) {
-      this.trace.selection.selectArea(
-        {
-          start: startTime,
-          end: endTime,
-          trackUris: [mainThreadTrackUri],
-        },
-        {
-          switchToCurrentSelectionTab: true,
-        },
-      );
-    }
+    scrollToTrackAndSelect(
+      this.trace,
+      trackToScroll,
+      tracksToSelect,
+      this.selection.ts,
+      this.selection.dur ?? 0n,
+    );
   }
 }
