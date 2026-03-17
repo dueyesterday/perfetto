@@ -31,6 +31,7 @@ import {App} from '../../public/app';
 import {RouteArgs} from '../../public/route_schema';
 import ProcessThreadGroupsPlugin from '../dev.perfetto.ProcessThreadGroups';
 import {StartupDetailsPanel} from './details_panel';
+import {findMainThreadTrackUri, scrollToTrackAndSelect} from './navigate';
 
 const STARTUP_TRACK_URI = '/android_startups';
 const BREAKDOWN_TRACK_URI = '/android_startups_breakdown';
@@ -241,56 +242,19 @@ export default class AndroidStartup implements PerfettoPlugin {
     }
 
     const startTime = Time.fromRaw(BigInt(startupInfo.ts));
-    const endTime = Time.fromRaw(BigInt(startupInfo.ts + startupInfo.dur));
 
     ctx.onTraceReady.addListener(async () => {
-      // Find the main thread track by its track ID via the track tags.
-      const mainThreadTrackNode = ctx.currentWorkspace.flatTracks.find(
-        (track) => {
-          if (!track.uri) {
-            return false;
-          }
-          const trackDesc = ctx.tracks.getTrack(track.uri);
-          return trackDesc?.tags?.trackIds?.includes(
-            startupInfo.mainThreadTrackId,
-          );
-        },
+      const mainThreadTrackUri = findMainThreadTrackUri(
+        ctx,
+        startupInfo.mainThreadTrackId,
       );
+      if (!mainThreadTrackUri) return;
 
-      if (!mainThreadTrackNode?.uri) {
-        return;
-      }
-      const mainThreadTrackUri = mainThreadTrackNode.uri;
-
-      // 2. Scroll to the main thread track and focus into view
-      ctx.scrollTo({
-        track: {
-          uri: mainThreadTrackUri,
-          expandGroup: true,
-        },
-        time:
-          startupInfo.dur > 0n
-            ? {
-                start: startTime,
-                end: endTime,
-                behavior: {viewPercentage: 0.8},
-              }
-            : {
-                start: startTime,
-                behavior: 'focus',
-              },
-      });
-
-      // 3. Select the area on the main thread track
-      ctx.selection.selectArea(
-        {
-          start: startTime,
-          end: endTime,
-          trackUris: [mainThreadTrackUri],
-        },
-        {
-          switchToCurrentSelectionTab: true,
-        },
+      scrollToTrackAndSelect(
+        ctx,
+        mainThreadTrackUri,
+        startTime,
+        startupInfo.dur,
       );
     });
   }
