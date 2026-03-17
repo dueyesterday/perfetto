@@ -29,10 +29,12 @@ export function findMainThreadTrackUri(
   return node?.uri;
 }
 
-// Scrolls to a track at a specific time region and selects the area.
+// Scrolls to a track at a specific time region and selects the area on
+// the given tracks.
 export function scrollToTrackAndSelect(
   trace: Trace,
-  trackUri: string,
+  trackToScroll: string,
+  tracksToSelect: string[],
   startTime: time,
   dur: bigint,
 ): void {
@@ -40,7 +42,7 @@ export function scrollToTrackAndSelect(
 
   trace.scrollTo({
     track: {
-      uri: trackUri,
+      uri: trackToScroll,
       expandGroup: true,
     },
     time:
@@ -60,7 +62,7 @@ export function scrollToTrackAndSelect(
     {
       start: startTime,
       end: endTime,
-      trackUris: [trackUri],
+      trackUris: tracksToSelect,
     },
     {
       switchToCurrentSelectionTab: true,

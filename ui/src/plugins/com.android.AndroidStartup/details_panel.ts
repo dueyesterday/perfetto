@@ -138,17 +138,21 @@ export class StartupDetailsPanel implements TrackEventDetailsPanel {
 
     group.expand();
 
-    // Find main thread track, falling back to the process group track.
-    let trackUri = group.uri;
+    const tracksToSelect: string[] = [];
     if (this.startup.mainThreadTrackId != null) {
-      trackUri =
-        findMainThreadTrackUri(this.trace, this.startup.mainThreadTrackId) ??
-        trackUri;
+      const mainThreadUri = findMainThreadTrackUri(
+        this.trace,
+        this.startup.mainThreadTrackId,
+      );
+      if (mainThreadUri) {
+        tracksToSelect.push(mainThreadUri);
+      }
     }
 
     scrollToTrackAndSelect(
       this.trace,
-      trackUri,
+      group.uri,
+      tracksToSelect,
       this.selection.ts,
       this.selection.dur ?? 0n,
     );

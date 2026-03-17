@@ -205,6 +205,7 @@ export default class AndroidStartup implements PerfettoPlugin {
       SELECT
         s.ts,
         s.dur,
+        p.upid,
         tt.id AS main_thread_track_id
       FROM
         android_startups s
@@ -223,6 +224,7 @@ export default class AndroidStartup implements PerfettoPlugin {
     const it = result.iter({
       ts: LONG,
       dur: LONG_NULL,
+      upid: NUM,
       main_thread_track_id: NUM,
     });
     if (!it.valid()) {
@@ -231,11 +233,12 @@ export default class AndroidStartup implements PerfettoPlugin {
 
     const startupInfo = {
       ts: it.ts,
-      dur: it.dur ?? 0n, // Default duration to 0 if null
+      dur: it.dur ?? 0n,
+      upid: it.upid,
       mainThreadTrackId: it.main_thread_track_id,
     };
 
-    // 1. Pin the Android Startups track first.
+    // Pin the Android Startups track first.
     const trackNode = ctx.currentWorkspace.getTrackByUri(STARTUP_TRACK_URI);
     if (trackNode) {
       trackNode.pin();
@@ -244,15 +247,28 @@ export default class AndroidStartup implements PerfettoPlugin {
     const startTime = Time.fromRaw(BigInt(startupInfo.ts));
 
     ctx.onTraceReady.addListener(async () => {
+      const group = (
+        ctx.plugins.getPlugin(
+          ProcessThreadGroupsPlugin,
+        ) as ProcessThreadGroupsPlugin
+      ).getGroupForProcess(startupInfo.upid);
+
+      if (!group?.uri) return;
+      group.expand();
+
+      const tracksToSelect: string[] = [];
       const mainThreadTrackUri = findMainThreadTrackUri(
         ctx,
         startupInfo.mainThreadTrackId,
       );
-      if (!mainThreadTrackUri) return;
+      if (mainThreadTrackUri) {
+        tracksToSelect.push(mainThreadTrackUri);
+      }
 
       scrollToTrackAndSelect(
         ctx,
-        mainThreadTrackUri,
+        group.uri,
+        tracksToSelect,
         startTime,
         startupInfo.dur,
       );
