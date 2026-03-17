@@ -12,7 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {LONG, LONG_NULL, NUM, STR} from '../../trace_processor/query_result';
+import {
+  LONG,
+  LONG_NULL,
+  NUM,
+  NUM_NULL,
+  STR,
+  STR_NULL,
+} from '../../trace_processor/query_result';
 import {Trace} from '../../public/trace';
 import {PerfettoPlugin} from '../../public/plugin';
 import {SliceTrack} from '../../components/tracks/slice_track';
@@ -22,6 +29,8 @@ import {optimizationsTrack} from './optimizations';
 import {Time} from '../../base/time';
 import {App} from '../../public/app';
 import {RouteArgs} from '../../public/route_schema';
+import ProcessThreadGroupsPlugin from '../dev.perfetto.ProcessThreadGroups';
+import {StartupDetailsPanel} from './details_panel';
 
 const STARTUP_TRACK_URI = '/android_startups';
 const BREAKDOWN_TRACK_URI = '/android_startups_breakdown';
@@ -65,6 +74,7 @@ let startupArgs: StartupArgs;
 
 export default class AndroidStartup implements PerfettoPlugin {
   static readonly id = 'com.android.AndroidStartup';
+  static readonly dependencies = [ProcessThreadGroupsPlugin];
 
   static onActivate(app: App): void {
     const args: RouteArgs = app.initialRouteArgs;
@@ -97,16 +107,26 @@ export default class AndroidStartup implements PerfettoPlugin {
             ts: LONG,
             dur: LONG_NULL,
             name: STR,
+            startup_type: STR_NULL,
+            upid: NUM_NULL,
           },
           src: `
             SELECT
-              startup_id AS id,
-              ts,
-              dur,
-              package AS name
-            FROM android_startups
+              s.startup_id AS id,
+              s.ts,
+              s.dur,
+              s.package AS name,
+              s.startup_type,
+              (
+                SELECT p.upid
+                FROM android_startup_processes p
+                WHERE p.startup_id = s.startup_id
+                LIMIT 1
+              ) AS upid
+            FROM android_startups s
           `,
         }),
+        detailsPanel: () => new StartupDetailsPanel(ctx),
       }),
     });
 
