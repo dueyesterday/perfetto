@@ -148,7 +148,7 @@ export class BinderSliceDetailsPanel implements TrackEventDetailsPanel {
                 left: 'AIDL',
                 right: this.binderTxnDetails.aidlName,
               }),
-            this.binderTxnDetails.counterpartId &&
+            this.binderTxnDetails.counterpartId !== undefined &&
               m(TreeNode, {
                 left: `${counterpartRole} slice`,
                 right: m(TrackEventRef, {

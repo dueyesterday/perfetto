@@ -102,7 +102,9 @@ export function filtersToSql(filters: ReadonlyArray<TrackTreeFilter>): string {
   return filters
     .map(({column, value}) => {
       if (value === null) return `${column} IS NULL`;
-      if (typeof value === 'string') return `${column} = ${sqliteString(value)}`;
+      if (typeof value === 'string') {
+        return `${column} = ${sqliteString(value)}`;
+      }
       return `${column} = ${value}`;
     })
     .join(' AND ');
