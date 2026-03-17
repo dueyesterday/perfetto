@@ -14,10 +14,11 @@
 
 import {PerfettoPlugin} from '../../public/plugin';
 import {Trace} from '../../public/trace';
+import {TrackNode} from '../../public/workspace';
 import {SourceDataset} from '../../trace_processor/dataset';
 import {LONG, LONG_NULL, NUM, STR} from '../../trace_processor/query_result';
 import {
-  buildTrackTree,
+  TrackTreeFilter,
   createAndRegisterCounterTrack,
   createAndRegisterSliceTrack,
   filtersToSql,
@@ -28,6 +29,14 @@ export default class implements PerfettoPlugin {
   static readonly id = 'com.android.AndroidBinderVizV2';
 
   async onTraceLoad(ctx: Trace): Promise<void> {
+    ctx.commands.registerCommand({
+      id: 'com.android.AndroidBinderVizV2.visualize',
+      name: 'Binder: Visualize transaction counts',
+      callback: () => this.visualize(ctx),
+    });
+  }
+
+  private async visualize(ctx: Trace): Promise<void> {
     await ctx.engine.query(`
       INCLUDE PERFETTO MODULE android.binder;
       INCLUDE PERFETTO MODULE intervals.overlap;
@@ -66,37 +75,120 @@ export default class implements PerfettoPlugin {
       `;
     };
 
-    // Query all distinct value combinations for building the hierarchy.
-    const query = await ctx.engine.query(`
-      SELECT ${allColumns.join(', ')}
-      FROM android_binder_txns
-      GROUP BY ${allColumns.join(', ')}
-    `);
+    // Human-readable description for each hierarchy level, given the
+    // name of the node at that level.
+    const levelDescriptions: Array<(name: string) => string> = [
+      // Level 0: perspective process
+      (name) =>
+        `Concurrent binder transactions ${perspective === 'server' ? 'handled by' : 'sent from'} ${name}.`,
+      // Level 1: interface
+      (name) => `Concurrent transactions on the ${name} interface.`,
+      // Level 2: method
+      (name) => `Concurrent calls to ${name}.`,
+      // Level 3: opposite process
+      (name) =>
+        `Concurrent calls ${perspective === 'server' ? 'from client' : 'to server'} ${name}.`,
+      // Level 4: opposite thread
+      (name) => `Concurrent calls on ${opposite} thread ${name}.`,
+      // Level 5: aidl slice
+      (name) => `Individual binder transactions for AIDL method ${name}.`,
+    ];
 
-    // Root counter track shows total overlap count.
     const rootNode = await createAndRegisterCounterTrack({
       trace: ctx,
       name: `Binder ${perspective} Transaction Counts`,
+      description:
+        `Number of concurrent binder transactions ` +
+        `${perspective === 'server' ? 'being handled by servers' : 'waiting for replies from servers'} ` +
+        `across all processes.`,
       sqlSource: overlapSql(),
+      onExpand: () => {
+        this.expandLevel(
+          ctx,
+          rootNode,
+          allColumns,
+          aggColumns,
+          sliceColumn,
+          opposite,
+          sliceIdCol,
+          overlapSql,
+          levelDescriptions,
+          [],
+          0,
+        );
+      },
     });
 
-    // Build the hierarchy: levels 0–4 are counter tracks, level 5 is slices.
-    await buildTrackTree({
-      query,
-      columns: allColumns,
-      rootNode,
-      createNode: async ({name, level, filters}) => {
-        const where = filtersToSql(filters);
-        if (level < aggColumns.length) {
-          return createAndRegisterCounterTrack({
-            trace: ctx,
-            name,
-            sqlSource: overlapSql(where),
-          });
-        }
-        return createAndRegisterSliceTrack({
+    ctx.defaultWorkspace.pinnedTracksNode.addChildLast(rootNode);
+  }
+
+  private async expandLevel(
+    ctx: Trace,
+    parentNode: TrackNode,
+    allColumns: string[],
+    aggColumns: string[],
+    sliceColumn: string,
+    opposite: string,
+    sliceIdCol: string,
+    overlapSql: (where?: string) => string,
+    levelDescriptions: Array<(name: string) => string>,
+    parentFilters: TrackTreeFilter[],
+    level: number,
+  ): Promise<void> {
+    const column = allColumns[level];
+    const whereClause =
+      parentFilters.length > 0 ? `WHERE ${filtersToSql(parentFilters)}` : '';
+
+    const result = await ctx.engine.query(`
+      SELECT DISTINCT ${column}
+      FROM android_binder_txns
+      ${whereClause}
+      ORDER BY ${column}
+    `);
+
+    const iter = result.iter({});
+    for (; iter.valid(); iter.next()) {
+      const rawValue = iter.get(column);
+      const name = rawValue === null ? 'NULL' : rawValue.toString();
+      const filters: TrackTreeFilter[] = [
+        ...parentFilters,
+        {column, value: rawValue},
+      ];
+      const where = filtersToSql(filters);
+      const description = levelDescriptions[level](name);
+
+      if (level < aggColumns.length) {
+        const isLastAggLevel = level === aggColumns.length - 1;
+        const nextLevel = level + 1;
+
+        const childNode = await createAndRegisterCounterTrack({
           trace: ctx,
           name,
+          description,
+          sqlSource: overlapSql(where),
+          onExpand: () => {
+            this.expandLevel(
+              ctx,
+              childNode,
+              allColumns,
+              aggColumns,
+              sliceColumn,
+              opposite,
+              sliceIdCol,
+              overlapSql,
+              levelDescriptions,
+              filters,
+              isLastAggLevel ? aggColumns.length : nextLevel,
+            );
+          },
+        });
+        parentNode.addChildInOrder(childNode);
+      } else {
+        // Leaf level: create a slice track (no further expansion).
+        const childNode = createAndRegisterSliceTrack({
+          trace: ctx,
+          name,
+          description,
           dataset: new SourceDataset({
             schema: {id: NUM, ts: LONG, dur: LONG_NULL, name: STR},
             src: `
@@ -111,9 +203,8 @@ export default class implements PerfettoPlugin {
           }),
           detailsPanel: () => new BinderSliceDetailsPanel(ctx),
         });
-      },
-    });
-
-    ctx.defaultWorkspace.addChildInOrder(rootNode);
+        parentNode.addChildInOrder(childNode);
+      }
+    }
   }
 }

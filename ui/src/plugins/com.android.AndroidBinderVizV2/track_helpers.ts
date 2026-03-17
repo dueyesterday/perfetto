@@ -18,7 +18,7 @@ import {TrackEventDetailsPanel} from '../../public/details_panel';
 import {Trace} from '../../public/trace';
 import {TrackNode} from '../../public/workspace';
 import {SourceDataset} from '../../trace_processor/dataset';
-import {QueryResult, SqlValue} from '../../trace_processor/query_result';
+import {SqlValue} from '../../trace_processor/query_result';
 import {createQueryCounterTrack} from '../../components/tracks/query_counter_track';
 import {SliceTrack, RowSchema} from '../../components/tracks/slice_track';
 
@@ -34,6 +34,7 @@ export async function createAndRegisterCounterTrack(args: {
   readonly description?: string;
   readonly sortOrder?: number;
   readonly removable?: boolean;
+  readonly onExpand?: () => void;
 }): Promise<TrackNode> {
   const uri = `/track_helpers_counter_${uuidv4()}`;
   const renderer = await createQueryCounterTrack({
@@ -53,6 +54,7 @@ export async function createAndRegisterCounterTrack(args: {
     name: args.name,
     sortOrder: args.sortOrder,
     removable: args.removable,
+    onExpand: args.onExpand,
   });
 }
 
@@ -108,60 +110,4 @@ export function filtersToSql(filters: ReadonlyArray<TrackTreeFilter>): string {
       return `${column} = ${value}`;
     })
     .join(' AND ');
-}
-
-/**
- * Builds a TrackNode tree from query results. For each row, walks through
- * the columns and creates a nested hierarchy of nodes, deduplicating at
- * each level.
- *
- * The caller provides a factory callback to create the right kind of
- * track at each level — this separates tree construction from track
- * creation logic.
- */
-export async function buildTrackTree(args: {
-  readonly query: QueryResult;
-  readonly columns: string[];
-  readonly rootNode: TrackNode;
-  readonly createNode: (info: {
-    name: string;
-    level: number;
-    filters: ReadonlyArray<TrackTreeFilter>;
-  }) => Promise<TrackNode>;
-}): Promise<void> {
-  // Cache: parent URI → (child name → child TrackNode)
-  const cache = new Map<string, Map<string, TrackNode>>();
-  cache.set(args.rootNode.uri!, new Map());
-
-  const iter = args.query.iter({});
-  for (; iter.valid(); iter.next()) {
-    let currentNode = args.rootNode;
-    const filters: TrackTreeFilter[] = [];
-
-    for (let level = 0; level < args.columns.length; level++) {
-      const column = args.columns[level];
-      const rawValue = iter.get(column);
-      const childName = rawValue === null ? 'NULL' : rawValue.toString();
-
-      filters.push({column, value: rawValue});
-
-      let children = cache.get(currentNode.uri!);
-      if (!children) {
-        children = new Map();
-        cache.set(currentNode.uri!, children);
-      }
-
-      let childNode = children.get(childName);
-      if (!childNode) {
-        childNode = await args.createNode({
-          name: childName,
-          level,
-          filters: [...filters],
-        });
-        currentNode.addChildInOrder(childNode);
-        children.set(childName, childNode);
-      }
-      currentNode = childNode;
-    }
-  }
 }
