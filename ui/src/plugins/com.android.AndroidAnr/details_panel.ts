@@ -109,8 +109,7 @@ export class AnrDetailsPanel implements TrackEventDetailsPanel {
             right: pid != null ? `${processName} (${pid})` : processName,
           }),
           m(TreeNode, {left: 'ANR Type', right: anrType}),
-          exists(subject) &&
-            m(TreeNode, {left: 'Subject', right: subject}),
+          exists(subject) && m(TreeNode, {left: 'Subject', right: subject}),
           m(TreeNode, {
             left: 'Start time',
             right: m(Timestamp, {trace: this.trace, ts: sel.ts}),
@@ -151,14 +150,15 @@ export class AnrDetailsPanel implements TrackEventDetailsPanel {
     // Find the main thread track node by its track ID via the track tags.
     let mainThreadTrackUri: string | undefined;
     if (this.anr.mainThreadTrackId != null) {
-      const mainThreadTrackNode =
-        this.trace.currentWorkspace.flatTracks.find((track) => {
+      const mainThreadTrackNode = this.trace.currentWorkspace.flatTracks.find(
+        (track) => {
           if (!track.uri) return false;
           const trackDesc = this.trace.tracks.getTrack(track.uri);
           return trackDesc?.tags?.trackIds?.includes(
             this.anr!.mainThreadTrackId!,
           );
-        });
+        },
+      );
       mainThreadTrackUri = mainThreadTrackNode?.uri;
     }
 
