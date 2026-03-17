@@ -18,6 +18,7 @@ import {
   NUM,
   NUM_NULL,
   STR,
+  STR_NULL,
 } from '../../trace_processor/query_result';
 import {Trace} from '../../public/trace';
 import {PerfettoPlugin} from '../../public/plugin';
@@ -28,6 +29,7 @@ import {Time} from '../../base/time';
 import {App} from '../../public/app';
 import {RouteArgs} from '../../public/route_schema';
 import ProcessThreadGroupsPlugin from '../dev.perfetto.ProcessThreadGroups';
+import {AnrDetailsPanel} from './details_panel';
 
 const ANR_TRACK_URI = '/android_anrs';
 
@@ -102,15 +104,26 @@ export default class AndroidAnr implements PerfettoPlugin {
             ts: LONG,
             dur: LONG_NULL,
             name: STR,
+            upid: NUM_NULL,
+            process_name: STR,
+            pid: NUM_NULL,
+            anr_type: STR,
+            subject: STR_NULL,
           },
           src: `
             SELECT
               ts - coalesce(anr_dur_ms, default_anr_dur_ms, 0) * 1000000 AS ts,
               coalesce(anr_dur_ms, default_anr_dur_ms, 0) * 1000000 AS dur,
-              process_name || ' ' || pid || ' : ' || anr_type AS name
+              process_name || ' ' || pid || ' : ' || anr_type AS name,
+              upid,
+              process_name,
+              pid,
+              anr_type,
+              subject
             FROM android_anrs
           `,
         }),
+        detailsPanel: () => new AnrDetailsPanel(ctx),
       }),
     });
 
