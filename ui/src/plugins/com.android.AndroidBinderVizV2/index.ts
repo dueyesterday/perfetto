@@ -42,6 +42,13 @@ export default class implements PerfettoPlugin {
       INCLUDE PERFETTO MODULE intervals.overlap;
     `);
 
+    const count = await ctx.engine.query(
+      'SELECT COUNT(*) AS cnt FROM android_binder_txns',
+    );
+    if (count.firstRow({cnt: LONG}).cnt === 0n) {
+      return;
+    }
+
     await Promise.all([
       this.createPerspectiveTrack(ctx, 'server', 'client', 'binder_txn_id'),
       this.createPerspectiveTrack(ctx, 'client', 'server', 'binder_reply_id'),
