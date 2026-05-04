@@ -259,14 +259,6 @@
 // the layout. Other columns are unaffected and size to their natural
 // content. Hovering the cell shows the full value via the title attr;
 // the column resize handle and "Fit to content" menu still work.
-.pf-query-page__link-cell {
-  display: inline-block;
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
-}
 
 .pf-query-page__pagination-center {
   position: absolute;

@@ -138,7 +138,7 @@ function renderEditorPanel(
           // here previously held a tiny indeterminate bar that was
           // easy to miss.
           m(Switch, {
-            label: 'Materialize',
+            label: 'Persistent',
             // Native browser tooltip on hover — explains both states
             // without needing a separate help icon. Kept terse so the
             // tooltip surface stays readable.
@@ -453,7 +453,7 @@ function renderErrorBanner(tab: BigTraceEditorTab): m.Children {
     ? 'Results no longer available'
     : 'Query failed';
   const headline = isPreconditionFailure
-    ? 'The materialized table for this query has expired. You may need to ' +
+    ? 'The persistent results table for this query has expired. You may need to ' +
       'run the query again.'
     : extractErrorHeadline(errorStr);
   const fullText = errorStr
@@ -653,14 +653,7 @@ function renderDataGrid(
       columnSchema[column] = {
         cellRenderer: (value) => {
           if (value === null || value === undefined) return '';
-          // Wrap in a span scoped class so only this column's cells get
-          // the truncation cap — other columns size to their natural
-          // content width. Full value is in `title=` for hover.
-          return m(
-            'span.pf-query-page__link-cell',
-            {title: String(value)},
-            linkify(String(value)),
-          );
+          return linkify(String(value));
         },
       };
     } else {

@@ -188,8 +188,8 @@ export class QueryHistoryComponent
           'div',
           {style: {marginTop: '8px', opacity: 0.7}},
           isMaterialized
-            ? 'Run a query with Materialize on to see it here.'
-            : 'Run a query with Materialize off to see it here.',
+            ? 'Run a query with Persistent on to see it here.'
+            : 'Run a query with Persistent off to see it here.',
         ),
       );
     }
