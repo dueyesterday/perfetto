@@ -257,13 +257,14 @@ export class QueryHistoryComponent
             m(
               'span.pf-query-history__item-status',
               {
-                class: `pf-status-${entry.status.toLowerCase()}`,
+                class: `pf-status-${entry.status.toLowerCase().replace(/_/g, '-')}`,
                 // The colored left bar + the colored text already make
                 // it clear this is a status label; the literal "Status:"
                 // prefix would be noise.
                 title: `Status: ${entry.status}`,
               },
-              entry.status,
+              // Display: "IN_PROGRESS" → "IN PROGRESS".
+              entry.status.replace(/_/g, ' '),
             ),
             m('span', {title: `UTC: ${utcString}`}, `Started: ${localString}`),
             isMaterialized &&

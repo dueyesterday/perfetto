@@ -298,8 +298,10 @@ function renderStatusBox(tab: BigTraceEditorTab): m.Children {
       ),
       m(
         'span.pf-query-page__status-bar-pill',
-        {className: `pf-status-${status.toLowerCase()}`},
-        status,
+        {className: `pf-status-${status.toLowerCase().replace(/_/g, '-')}`},
+        // Wire value uses underscores ("IN_PROGRESS"); display swaps
+        // them for spaces so the pill reads naturally.
+        status.replace(/_/g, ' '),
       ),
       // Duration leads the stats with its own dedicated chip: a clock
       // icon + larger, monospaced value. It's the metric users care

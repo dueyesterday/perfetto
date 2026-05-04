@@ -124,7 +124,8 @@
   border-left-color: #fbbc04;
 }
 
-.pf-query-history__item:has(.pf-status-running) .pf-query-history__item-meta {
+.pf-query-history__item:has(.pf-status-in-progress)
+  .pf-query-history__item-meta {
   border-left-color: #1a73e8;
 }
 
@@ -171,7 +172,7 @@
   z-index: 10;
 }
 
-// Status text (SUCCESS / FAILED / RUNNING / etc.). The colour comes from
+// Status text (SUCCESS / FAILED / IN_PROGRESS / etc.). The colour comes from
 // the existing `.pf-status-*` rules above; we just bump weight + tracking
 // so it reads as the headline of the bar.
 .pf-query-page__status-bar-pill {
@@ -269,23 +270,23 @@
 // While the query is running, gently pulse the duration so the user
 // sees that elapsed time is ticking even when the bar repaints
 // infrequently.
-.pf-query-page__status-bar-pill.pf-status-running
+.pf-query-page__status-bar-pill.pf-status-in-progress
   ~ .pf-query-page__status-bar-duration {
   // No animation — pulse on the pill is enough; keep duration steady so
   // the number stays easy to read.
 }
 
 // Sub-span used inside a stat value to mark a number as "live / will
-// update on the next poll" (e.g. the Traces numerator while RUNNING).
+// update on the next poll" (e.g. the Traces numerator while IN_PROGRESS).
 // Half-opacity is enough; we don't pulse — the status pill already does.
 .pf-query-page__status-bar-live {
   opacity: 0.55;
 }
 
-// While the query is RUNNING, gently pulse the status pill so the user
+// While the query is IN_PROGRESS, gently pulse the status pill so the user
 // has a visual cue that work is in flight even if no rows have come back
 // yet. Subtle: 0.55..1.0 opacity, 1.6s cycle, soft easing.
-.pf-query-page__status-bar-pill.pf-status-running {
+.pf-query-page__status-bar-pill.pf-status-in-progress {
   animation: pf-bigtrace-pulse 1.6s ease-in-out infinite;
 }
 
@@ -455,7 +456,7 @@
   font-weight: 500;
 }
 
-.pf-status-running {
+.pf-status-in-progress {
   color: #1a73e8;
   font-weight: 500;
 }

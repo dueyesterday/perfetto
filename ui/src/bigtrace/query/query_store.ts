@@ -40,7 +40,7 @@ export interface QueryExecution {
 //   2. The history list (`listQueryExecutions`), which is fetched in bulk
 //      and may carry STALE counters for queries that have since advanced.
 //
-// Without a merge rule, a history refresh landing while a query is RUNNING
+// Without a merge rule, a history refresh landing while a query is IN_PROGRESS
 // would silently wind back `processedRows` and confuse the UI. The rule
 // below preserves live progress unless the incoming snapshot is itself
 // terminal or carries a higher row count.
@@ -93,7 +93,7 @@ export class QueryStore {
       incoming.status === 'SUCCESS' ||
       incoming.status === 'FAILED' ||
       incoming.status === 'CANCELLED';
-    const objIsLive = obj.status === 'RUNNING' || obj.status === 'UNKNOWN';
+    const objIsLive = obj.status === 'IN_PROGRESS' || obj.status === 'UNKNOWN';
     const rowCountIncreased =
       (incoming.processedRows ?? 0) >= obj.processedRows;
 
