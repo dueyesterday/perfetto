@@ -261,7 +261,14 @@ export class QueryRunner {
       this.startPolling(tab);
     } else if (
       (exec.status === 'SUCCESS' || exec.status === 'CANCELLED') &&
-      tab.dataSource instanceof BigtraceAsyncDataSource
+      tab.dataSource instanceof BigtraceAsyncDataSource &&
+      // No materialized table → nothing to fetch. This happens when a
+      // query terminates with 0 rows (the backend skips creating the
+      // table) or was cancelled before any rows were produced.
+      // ensureResultsLoaded would still issue :fetch_results and the
+      // backend would return empty / 404; skip the round-trip.
+      (details.tableName ?? '') !== '' &&
+      exec.processedRows > 0
     ) {
       await tab.dataSource.ensureResultsLoaded(tab);
     } else if (exec.status === 'FAILED') {

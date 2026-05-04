@@ -211,7 +211,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--pf-color-surface-variant, rgba(255, 255, 255, 0.06));
   font-variant-numeric: tabular-nums;
 }
@@ -223,7 +223,6 @@
 
 .pf-query-page__status-bar-duration-value {
   font-weight: 600;
-  font-size: 1.05em;
   letter-spacing: 0.2px;
 }
 
@@ -253,6 +252,20 @@
 // anchored right.
 .pf-query-page__results .pf-data-grid__toolbar-content {
   position: relative;
+}
+
+// Cap the "link" column's content width — URLs/paths in this column
+// would otherwise auto-size up to the Grid's 600px cap and dominate
+// the layout. Other columns are unaffected and size to their natural
+// content. Hovering the cell shows the full value via the title attr;
+// the column resize handle and "Fit to content" menu still work.
+.pf-query-page__link-cell {
+  display: inline-block;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .pf-query-page__pagination-center {
@@ -302,70 +315,28 @@
   }
 }
 
-// Full-width progress bar shown above the materialized status bar while
-// the query is running. Two modes:
-// - Determinate: width = processedTraces / totalTraces, set as inline
-//   style on .pf-query-page__progress-fill. Smooth transition so the
-//   bar advances visibly when a poll lands.
-// - Indeterminate: same animation as the shared LinearProgress widget,
-//   modeled after src/assets/widgets/linear_progress.scss.
-.pf-query-page__progress {
+// Inline mini progress bar shown next to the N/M number in each
+// status-bar stat (Traces, Rows). Width = done/total. Renders as a
+// thin horizontal track with a coloured fill; the live class adds a
+// subtle smooth transition so the fill visibly advances as polls land.
+.pf-query-page__inline-progress {
+  display: inline-block;
+  width: 60px;
   height: 6px;
-  position: relative;
+  margin-left: 6px;
+  border-radius: 2px;
+  border: 1px solid var(--pf-color-border, #3c4048);
+  background-color: rgba(255, 255, 255, 0.04);
   overflow: hidden;
-  background-color: transparent;
+  vertical-align: middle;
 }
 
-.pf-query-page__progress-fill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
+.pf-query-page__inline-progress-fill {
+  display: block;
+  height: 100%;
   background-color: var(--pf-color-accent, #1a73e8);
   transition: width 0.3s ease-out;
   will-change: width;
-}
-
-.pf-query-page__progress--indeterminate {
-  &::before {
-    content: "";
-    position: absolute;
-    background-color: var(--pf-color-accent, #1a73e8);
-    top: 0;
-    left: 0;
-    bottom: 0;
-    will-change: left, right;
-    animation: pf-bigtrace-progress-indeterminate 2.1s
-      cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite;
-  }
-
-  &::after {
-    content: "";
-    position: absolute;
-    background-color: var(--pf-color-accent, #1a73e8);
-    top: 0;
-    left: 0;
-    bottom: 0;
-    will-change: left, right;
-    animation: pf-bigtrace-progress-indeterminate 2.1s
-      cubic-bezier(0.165, 0.84, 0.44, 1) infinite;
-    animation-delay: 1.05s;
-  }
-}
-
-@keyframes pf-bigtrace-progress-indeterminate {
-  0% {
-    left: -35%;
-    right: 100%;
-  }
-  60% {
-    left: 100%;
-    right: -90%;
-  }
-  100% {
-    left: 100%;
-    right: -90%;
-  }
 }
 
 .pf-query-history__item-meta {

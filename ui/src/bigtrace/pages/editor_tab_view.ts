@@ -22,6 +22,7 @@ import {Editor} from '../../widgets/editor';
 import {EmptyState} from '../../widgets/empty_state';
 import {HotkeyGlyphs} from '../../widgets/hotkey_glyphs';
 import {Icon} from '../../widgets/icon';
+import {linkify} from '../../widgets/anchor';
 import {Select} from '../../widgets/select';
 import {Spinner} from '../../widgets/spinner';
 import {SplitPanel} from '../../widgets/split_panel';
@@ -29,7 +30,6 @@ import {Stack, StackAuto} from '../../widgets/stack';
 import {Switch} from '../../widgets/switch';
 import {Tabs} from '../../widgets/tabs';
 import {TextInput} from '../../widgets/text_input';
-import {linkify} from '../../widgets/anchor';
 import {DataGrid} from '../../components/widgets/datagrid/datagrid';
 import {DataSource} from '../../components/widgets/datagrid/data_source';
 import {
@@ -205,12 +205,10 @@ function renderResultsPanel(
   runner: QueryRunner,
 ): m.Children {
   const status = renderStatusBox(tab);
-  const progress = renderProgressBar(tab);
 
   if (!tab.dataSource || !tab.queryResult) {
     return m(
       '.pf-query-page__results-panel',
-      progress,
       status,
       tab.isLoading
         ? m('div')
@@ -227,7 +225,6 @@ function renderResultsPanel(
 
   return m(
     '.pf-query-page__results-panel',
-    progress,
     status,
     m('.pf-query-page__results-container', [
       errorBanner,
@@ -345,45 +342,57 @@ function renderStatusBox(tab: BigTraceEditorTab): m.Children {
           '/',
           String(totalTraces),
         ),
+        renderInlineProgressBar(processedTraces, totalTraces, !isTerminal),
       ),
-      renderStat('Rows', processedRows.toLocaleString(), processedRows === 0),
+      // Vertical rule between the Traces and Rows groups — they are
+      // independent metrics (one is over the trace pool, one is over
+      // the user's result limit), so a divider helps them read as
+      // separate stats rather than one continuous string of numbers.
+      m('span.pf-query-page__toolbar-divider', {'aria-hidden': 'true'}),
+      m(
+        'span.pf-query-page__status-bar-stat',
+        {
+          className:
+            processedRows === 0
+              ? 'pf-query-page__status-bar-stat--empty'
+              : undefined,
+        },
+        m('span.pf-query-page__status-bar-stat-label', 'Rows'),
+        m(
+          'span.pf-query-page__status-bar-stat-value',
+          {
+            title: `${processedRows.toLocaleString()} of result limit ${tab.limit.toLocaleString()}`,
+          },
+          processedRows.toLocaleString(),
+        ),
+        // Denominator here is the user-set result limit (a soft cap, not
+        // a target). The bar fills as the query approaches the limit;
+        // for queries that naturally produce fewer rows, it stays low —
+        // that's expected, the limit is informational.
+        renderInlineProgressBar(processedRows, tab.limit, !isTerminal),
+      ),
     ),
   );
 }
 
-// Compact label/value pair shown inside the materialized status bar. The
-// label is uppercased and dimmed; the value is bold and uses tabular
-// numerals so widths stay stable as numbers grow during polling.
-function renderStat(
-  label: string,
-  value: string,
-  dim: boolean = false,
+// Inline mini progress bar shown after the N/M numbers in the status
+// bar. Only rendered while the query is running — once the query has
+// reached a terminal state (SUCCESS / FAILED / CANCELLED) the bar is
+// hidden, since it would just be a static fraction.
+function renderInlineProgressBar(
+  done: number,
+  total: number,
+  live: boolean,
 ): m.Children {
+  if (!live) return null;
+  if (total <= 0) return null;
+  const pct = Math.max(0, Math.min(100, (done / total) * 100));
   return m(
-    'span.pf-query-page__status-bar-stat',
-    {className: dim ? 'pf-query-page__status-bar-stat--empty' : undefined},
-    m('span.pf-query-page__status-bar-stat-label', label),
-    m('span.pf-query-page__status-bar-stat-value', value),
+    'span.pf-query-page__inline-progress',
+    m('span.pf-query-page__inline-progress-fill', {
+      style: {width: `${pct}%`},
+    }),
   );
-}
-
-// Full-width progress bar shown above the status bar while the query is
-// running. Determinate when `totalTraces > 0` (fraction =
-// processedTraces / totalTraces); indeterminate fallback while we're
-// waiting for the first poll. Hidden entirely once the query reaches a
-// terminal state.
-function renderProgressBar(tab: BigTraceEditorTab): m.Children {
-  if (!tab.isLoading) return null;
-  const total = tab.execution?.totalTraces ?? 0;
-  const done = tab.execution?.processedTraces ?? 0;
-  if (total > 0) {
-    const pct = Math.max(0, Math.min(100, (done / total) * 100));
-    return m(
-      '.pf-query-page__progress.pf-query-page__progress--determinate',
-      m('.pf-query-page__progress-fill', {style: {width: `${pct}%`}}),
-    );
-  }
-  return m('.pf-query-page__progress.pf-query-page__progress--indeterminate');
 }
 
 async function refreshAsyncStatus(tab: BigTraceEditorTab): Promise<void> {
@@ -462,16 +471,18 @@ function renderErrorBanner(tab: BigTraceEditorTab): m.Children {
     }),
     m('.pf-results-table__error-body', [
       m('.pf-results-table__error-title', displayTitle),
-      m('.pf-results-table__error-headline', headline),
-      showDetailsToggle &&
+      // Title + collapsed details only — no inline headline outside the
+      // <details>. Long tracebacks were eating most of the results
+      // pane; users expand when they want the detail.
+      m(
+        'details',
         m(
-          'details',
-          {open: (tab.execution?.processedRows ?? 0) === 0},
-          m(
-            'summary',
-            {style: {cursor: 'pointer', opacity: 0.7, fontSize: '0.85em'}},
-            'Show full traceback',
-          ),
+          'summary',
+          {style: {cursor: 'pointer', opacity: 0.7, fontSize: '0.85em'}},
+          'Show more',
+        ),
+        m('.pf-results-table__error-headline', headline),
+        showDetailsToggle &&
           m(
             'pre.pf-results-table__error-message',
             {
@@ -486,7 +497,7 @@ function renderErrorBanner(tab: BigTraceEditorTab): m.Children {
             },
             fullText,
           ),
-        ),
+      ),
     ]),
   );
 }
@@ -642,7 +653,14 @@ function renderDataGrid(
       columnSchema[column] = {
         cellRenderer: (value) => {
           if (value === null || value === undefined) return '';
-          return linkify(String(value));
+          // Wrap in a span scoped class so only this column's cells get
+          // the truncation cap — other columns size to their natural
+          // content width. Full value is in `title=` for hover.
+          return m(
+            'span.pf-query-page__link-cell',
+            {title: String(value)},
+            linkify(String(value)),
+          );
         },
       };
     } else {
