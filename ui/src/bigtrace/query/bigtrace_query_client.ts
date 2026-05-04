@@ -1,0 +1,260 @@
+// Copyright (C) 2026 The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import {Row as DataGridRow} from '../../trace_processor/query_result';
+import {SettingFilter} from '../settings/settings_types';
+import {RawQueryExecution} from './query_history_storage';
+
+// Wire-shape of a tabular response. The backend serializes each row as a
+// `values` array aligned with `columnNames`. Cell values are whatever the
+// backend can express in JSON; we don't translate them here — the renderer
+// receives them as-is and decides how to display.
+interface QueryResponsePayload {
+  columnNames?: string[];
+  rows?: Array<{values: Array<string | number | null>}>;
+}
+
+export interface QueryResultPage {
+  readonly rows: ReadonlyArray<DataGridRow>;
+  readonly columns: ReadonlyArray<string>;
+}
+
+// Thrown when a request is aborted via its AbortSignal. Callers should treat
+// this as a user-initiated cancellation, not an error worth surfacing.
+export class QueryCancelledError extends Error {
+  constructor() {
+    super('Query was cancelled.');
+    this.name = 'QueryCancelledError';
+  }
+}
+
+// Thrown when the backend reports 404 for a query UUID — typically because
+// the entry was deleted from history or the backend was restarted while the
+// UI still held the stale UUID in localStorage. Distinguished from generic
+// HTTP errors so callers can drop the dead reference instead of polling
+// forever.
+export class QueryNotFoundError extends Error {
+  constructor(uuid: string) {
+    super(`Query ${uuid} not found on the backend.`);
+    this.name = 'QueryNotFoundError';
+  }
+}
+
+// Single client for the BigTrace HTTP API. All endpoints listed in
+// `~/Projects/CLAUDE.md` (BigTrace Backend API section) flow through here so
+// auth, error handling, and response shape lives in exactly one place.
+export class BigtraceQueryClient {
+  constructor(private readonly endpoint: string) {}
+
+  // ----- Query execution -----
+
+  async executeSync(
+    query: string,
+    limit: number,
+    settings: ReadonlyArray<SettingFilter>,
+    signal?: AbortSignal,
+  ): Promise<QueryResultPage> {
+    return this.executeAt(
+      '/execute_bigtrace_query',
+      query,
+      limit,
+      settings,
+      signal,
+    );
+  }
+
+  async executeAsync(
+    query: string,
+    limit: number,
+    settings: ReadonlyArray<SettingFilter>,
+    signal?: AbortSignal,
+  ): Promise<QueryResultPage> {
+    return this.executeAt(
+      '/execute_bigtrace_query_async',
+      query,
+      limit,
+      settings,
+      signal,
+    );
+  }
+
+  async getStatus(
+    uuid: string,
+    signal?: AbortSignal,
+  ): Promise<RawQueryExecution> {
+    return this.requestJson<RawQueryExecution>(
+      `/query_executions/${uuid}:status`,
+      {signal},
+    );
+  }
+
+  async getQueryExecution(
+    uuid: string,
+    signal?: AbortSignal,
+  ): Promise<RawQueryExecution> {
+    return this.requestJson<RawQueryExecution>(`/query_executions/${uuid}`, {
+      signal,
+    });
+  }
+
+  async fetchResults(
+    uuid: string,
+    limit: number,
+    offset: number,
+    signal?: AbortSignal,
+  ): Promise<QueryResultPage> {
+    const result = await this.requestJson<QueryResponsePayload>(
+      `/query_executions/${uuid}:fetch_results?limit=${limit}&offset=${offset}`,
+      {signal},
+    );
+    return parseQueryResponse(result);
+  }
+
+  async cancelQuery(uuid: string, signal?: AbortSignal): Promise<void> {
+    await this.request(`/query_executions/${uuid}:cancel`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({}),
+      signal,
+    });
+  }
+
+  async listQueryExecutions(
+    signal?: AbortSignal,
+  ): Promise<ReadonlyArray<RawQueryExecution>> {
+    const result = await this.requestJson<{
+      queryExecutions?: RawQueryExecution[];
+    }>('/query_executions', {signal});
+    return result.queryExecutions ?? [];
+  }
+
+  async deleteQueryExecution(
+    uuid: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request(`/query_executions/${uuid}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  // ----- Internals -----
+
+  private async executeAt(
+    path: string,
+    query: string,
+    limit: number,
+    settings: ReadonlyArray<SettingFilter>,
+    signal: AbortSignal | undefined,
+  ): Promise<QueryResultPage> {
+    const body = JSON.stringify({
+      limit,
+      perfetto_sql: query,
+      settings: settings.map((s) => ({
+        setting_id: s.settingId,
+        values: s.values,
+        category: s.category,
+      })),
+    });
+    const result = await this.requestJson<QueryResponsePayload>(path, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body,
+      signal,
+    });
+    return parseQueryResponse(result);
+  }
+
+  private async request(path: string, init?: RequestInit): Promise<Response> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.endpoint}${path}`, {
+        credentials: 'include',
+        mode: 'cors',
+        ...init,
+      });
+    } catch (e) {
+      // fetch() rejects with AbortError when the signal fires.
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        throw new QueryCancelledError();
+      }
+      throw e;
+    }
+    if (!response.ok) {
+      const errorText = await response
+        .text()
+        .catch(() => 'Failed to read response body');
+      if (response.status === 404) {
+        // Best-effort UUID extraction from /query_executions/{uuid} or
+        // /query_executions/{uuid}:status etc. Falls back to the path if
+        // the route doesn't match.
+        const m = path.match(/\/query_executions\/([^/:?#]+)/);
+        throw new QueryNotFoundError(m ? m[1] : path);
+      }
+      if (response.status === 403) {
+        throw new Error(
+          `HTTP error! status: ${response.status}. This might be an ` +
+            `authentication issue. Please ensure you are logged in with ` +
+            `the correct credentials. Backend says: ${errorText}`,
+        );
+      }
+      throw new Error(
+        `HTTP error! status: ${response.status}, message: ${errorText}`,
+      );
+    }
+    return response;
+  }
+
+  private async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await this.request(path, init);
+    return (await response.json()) as T;
+  }
+}
+
+// Parse a tabular response into typed rows, preserving the wire types. We do
+// NOT coerce numeric-looking strings into numbers: the backend may return
+// 64-bit integers (timestamps, ids) as strings to avoid JS Number precision
+// loss, and silently widening them would corrupt the data.
+//
+// The single translation we do is the SQL-NULL marker: the backend uses the
+// string 'NULL' to represent SQL NULL in JSON, which we surface as a real
+// JS null so renderers can branch on `value === null`.
+//
+// Exported for unit tests.
+export function parseQueryResponse(
+  result: QueryResponsePayload,
+): QueryResultPage {
+  const colNames = result.columnNames;
+  if (
+    colNames === undefined ||
+    colNames === null ||
+    result.rows === undefined ||
+    result.rows === null
+  ) {
+    return {rows: [], columns: []};
+  }
+
+  const columns = colNames.filter((h): h is string => h !== null);
+  const rows = result.rows.map((row) => {
+    const out: DataGridRow = {};
+    for (let i = 0; i < colNames.length; i++) {
+      const header = colNames[i];
+      if (header === null) continue;
+      const value = row.values[i];
+      out[header] = value === 'NULL' ? null : value;
+    }
+    return out;
+  });
+  return {rows, columns};
+}

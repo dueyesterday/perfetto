@@ -230,6 +230,7 @@ export class Omnibox implements m.ClassComponent {
           omnibox.setMode(OmniboxMode.Command);
           return;
         }
+        // Check registered mode triggers.
         if (value.length === 1 && omnibox.registeredModes.has(value)) {
           omnibox.activateRegisteredMode(value);
           return;
@@ -242,6 +243,8 @@ export class Omnibox implements m.ClassComponent {
         }
       },
       onSubmit: (_value, _mod, _shift) => {
+        // BigTrace has no trace-level search; submitting from the search
+        // omnibox is a no-op other than blurring the input.
         if (this.omniboxInputEl) {
           this.omniboxInputEl.blur();
         }

@@ -33,9 +33,24 @@ interface QueryHistoryComponentAttrs {
     materialize: boolean,
     forceNew?: boolean,
     limit?: number,
-    startTime?: string,
+    startTime?: number,
   ) => void;
   readonly refreshSignal?: number;
+}
+
+// Compact format for sidebar history rows. Examples:
+//   - same year: "5/4 3:47 PM"
+//   - other year: "5/4/25 3:47 PM"
+function formatCompactDate(d: Date): string {
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const date = sameYear
+    ? `${d.getMonth() + 1}/${d.getDate()}`
+    : `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`;
+  let h = d.getHours();
+  const m12 = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${date} ${h}:${mm} ${m12}`;
 }
 
 export class QueryHistoryComponent
@@ -156,14 +171,27 @@ export class QueryHistoryComponent
       materialize: boolean,
       forceNew?: boolean,
       limit?: number,
+      startTime?: number,
     ) => void,
   ): m.Children {
     if (queries.length === 0) {
-      return m(EmptyState, {
-        title: 'No history found',
-        icon: 'search',
-        fillHeight: true,
-      });
+      return m(
+        EmptyState,
+        {
+          title: isMaterialized
+            ? 'No persistent queries yet'
+            : 'No ephemeral queries yet',
+          icon: 'search',
+          fillHeight: true,
+        },
+        m(
+          'div',
+          {style: {marginTop: '8px', opacity: 0.7}},
+          isMaterialized
+            ? 'Run a query with Materialize on to see it here.'
+            : 'Run a query with Materialize off to see it here.',
+        ),
+      );
     }
 
     return queries.map((entry, index) => {
@@ -173,7 +201,11 @@ export class QueryHistoryComponent
       const rows = entry.processedRows;
       const link = entry.tableLink;
       const dateObj = startTime !== undefined ? new Date(startTime) : null;
-      const localString = dateObj ? dateObj.toLocaleString() : 'N/A';
+      // Compact date for the narrow sidebar — full toLocaleString() like
+      // "5/4/2026, 3:47:46 PM" wrapped onto 4 lines once the sidebar
+      // shrunk. Drop seconds always; drop year when it matches the
+      // current year. Hover reveals the full UTC timestamp.
+      const localString = dateObj ? formatCompactDate(dateObj) : 'N/A';
       const utcString =
         startTime !== undefined
           ? formatDate(new Date(startTime), {printTimezone: false})
@@ -192,22 +224,13 @@ export class QueryHistoryComponent
             m(Button, {
               onclick: () => {
                 if (openQuery && uuid) {
-                  (
-                    openQuery as (
-                      q: string,
-                      u: string,
-                      m: boolean,
-                      f?: boolean,
-                      l?: number,
-                      s?: string,
-                    ) => void
-                  )(
+                  openQuery(
                     queryText,
                     uuid,
                     isMaterialized,
                     false,
                     entry.limit,
-                    startTime !== undefined ? String(startTime) : undefined,
+                    startTime,
                   );
                 }
               },
@@ -228,78 +251,65 @@ export class QueryHistoryComponent
           ],
         ),
         m('.pf-query-history__item-meta', [
-          m(
-            'div',
-            {
-              style: {
-                display: 'flex',
-                justifyContent: 'space-between',
-                width: '100%',
+          m('div.pf-query-history__item-header', [
+            // Status leads — it mirrors the colored left bar and is the
+            // most scannable element. Date and rows follow.
+            m(
+              'span.pf-query-history__item-status',
+              {
+                class: `pf-status-${entry.status.toLowerCase()}`,
+                // The colored left bar + the colored text already make
+                // it clear this is a status label; the literal "Status:"
+                // prefix would be noise.
+                title: `Status: ${entry.status}`,
               },
-            },
-            [
+              entry.status,
+            ),
+            m('span', {title: `UTC: ${utcString}`}, `Started: ${localString}`),
+            isMaterialized &&
               m(
-                'span',
-                {title: `UTC: ${utcString}`},
-                `Started: ${localString}`,
-              ),
-              m(
-                'span.pf-query-history__item-status',
+                'span.pf-query-history__item-rows',
                 {
-                  class: `pf-status-${entry.status.toLowerCase()}`,
+                  // Dim the row count when it's zero so empty results
+                  // recede; non-zero counts stay at full opacity. The
+                  // colored left bar + status pill already do the
+                  // "succeeded" signalling.
+                  className:
+                    rows === 0
+                      ? 'pf-query-history__item-rows--empty'
+                      : undefined,
                 },
-                `Status: ${entry.status}`,
+                // Split label + value so "Rows:" sits at a consistent x
+                // across rows; the value right-aligns in its own slot
+                // so trailing edges align too.
+                m('span.pf-query-history__item-rows-label', 'Rows:'),
+                m(
+                  'span.pf-query-history__item-rows-value',
+                  rows.toLocaleString(),
+                ),
               ),
-              isMaterialized && m('span', `Rows: ${rows}`),
-            ],
-          ),
+          ]),
           isMaterialized &&
-            m('div', {style: {marginTop: '4px'}}, [
-              m(
-                'span',
-                {
-                  style: {
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '2px',
-                    maxWidth: '100%',
+            m('div.pf-query-history__item-details', [
+              m('span.pf-query-history__item-table-row', [
+                m('span', 'Table:'),
+                m(
+                  'a.pf-query-history__item-table-link',
+                  {
+                    class:
+                      rows === 0 || link === undefined || link === ''
+                        ? 'pf-query-history__item-table-link--disabled'
+                        : 'pf-query-history__item-table-link--active',
+                    href: link || '#',
+                    target: '_blank',
+                    title:
+                      rows === 0
+                        ? 'No table created for empty results'
+                        : 'View Table',
                   },
-                },
-                [
-                  m('span', 'Table:'),
-                  m(
-                    'a',
-                    {
-                      href: link || '#',
-                      target: '_blank',
-                      style: {
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        flex: 1,
-                        color:
-                          rows === 0 || link === undefined || link === ''
-                            ? 'var(--pf-color-foreground-secondary, #9aa0a6)'
-                            : 'var(--pf-color-primary, #1a73e8)',
-                        pointerEvents:
-                          rows === 0 || link === undefined || link === ''
-                            ? 'none'
-                            : 'auto',
-                        cursor:
-                          rows === 0 || link === undefined || link === ''
-                            ? 'default'
-                            : 'pointer',
-                        textDecoration: 'none',
-                      },
-                      title:
-                        rows === 0
-                          ? 'No table created for empty results'
-                          : 'View Table',
-                    },
-                    entry.tableName || 'N/A',
-                  ),
-                ],
-              ),
+                  entry.tableName || 'N/A',
+                ),
+              ]),
             ]),
         ]),
         m('pre', queryText),

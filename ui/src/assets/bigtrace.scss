@@ -73,10 +73,298 @@
   }
 }
 
+// Editor tab strip: horizontally scroll once the user accumulates many
+// tabs. Without this the flex children get squeezed below their min-width
+// and the close X collapses behind the tab title.
+.pf-query-page__editor-tabs > .pf-tabs__tabs {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pf-color-border-secondary, #3c4048) transparent;
+
+  // Cap individual tab width — very long stdlib table names ("foobar_a_long_
+  // stdlib_table") can otherwise push the new-tab "+" button off-screen.
+  > .pf-tabs__tab {
+    max-width: 220px;
+  }
+}
+
 .pf-query-history__item {
   margin-bottom: 10px;
   max-height: none !important;
   overflow-y: visible !important;
+}
+
+// The shared query_history.scss hides the open/delete buttons until
+// hover. In the bigtrace sidebar that hurts discoverability and breaks
+// on touch — make them always visible. Small icon buttons pinned to the
+// top-right of each row don't add meaningful noise.
+.pf-query-history__item-buttons {
+  visibility: visible !important;
+}
+
+// Tint the left edge of every history item's *header* with its status
+// colour so the status is scannable at a glance. We put the bar on the
+// meta card (header) only — running it down the SQL preview underneath
+// makes the rail look uncomfortably tall and conflicts with the pre's
+// own border. The header already has rounded top corners; the bar picks
+// those up via border-radius so it tucks into the corner cleanly.
+.pf-query-history__item-meta {
+  border-left: 3px solid transparent;
+}
+
+.pf-query-history__item:has(.pf-status-success) .pf-query-history__item-meta {
+  border-left-color: #1e8e3e;
+}
+
+.pf-query-history__item:has(.pf-status-failed) .pf-query-history__item-meta {
+  border-left-color: #d93025;
+}
+
+.pf-query-history__item:has(.pf-status-cancelled) .pf-query-history__item-meta {
+  border-left-color: #fbbc04;
+}
+
+.pf-query-history__item:has(.pf-status-running) .pf-query-history__item-meta {
+  border-left-color: #1a73e8;
+}
+
+.pf-query-history__item:has(.pf-status-queued) .pf-query-history__item-meta,
+.pf-query-history__item:has(.pf-status-unknown) .pf-query-history__item-meta {
+  border-left-color: #9aa0a6;
+}
+
+// Rows = 0 entries are the boring case — dim them so the eye skips past
+// to the entries that actually have data. Non-zero counts stay at full
+// opacity; their colored left bar + status pill already announce them.
+.pf-query-history__item-rows--empty {
+  opacity: 0.55;
+}
+
+// ---------------------------------------------------------------------------
+// Materialized async-query status bar (under the editor)
+// ---------------------------------------------------------------------------
+//
+// Shown above the results panel for any tab tracking an async (materialized)
+// query. The layout: [Refresh button] [Status pill] [Traces n/m]
+// [Rows N] [Duration X]. Each stat is a label/value pair so the eye groups
+// label-with-its-number cleanly. Pipe separators dropped — gap + label
+// styling is enough.
+.pf-query-page__status-bar {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pf-color-border, #3c4048);
+}
+
+// Refresh button + new-data notification dot wrapper.
+.pf-query-page__status-bar-refresh {
+  position: relative;
+  display: inline-block;
+}
+
+.pf-query-page__status-bar-notif {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #1e8e3e;
+  z-index: 10;
+}
+
+// Status text (SUCCESS / FAILED / RUNNING / etc.). The colour comes from
+// the existing `.pf-status-*` rules above; we just bump weight + tracking
+// so it reads as the headline of the bar.
+.pf-query-page__status-bar-pill {
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+.pf-query-page__status-bar-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-query-page__status-bar-stat-label {
+  opacity: 0.6;
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pf-query-page__status-bar-stat-value {
+  font-weight: 500;
+}
+
+.pf-query-page__status-bar-stat--empty {
+  opacity: 0.55;
+}
+
+// Dedicated duration chip — promoted out of the regular stat row because
+// "how long" is the most-asked question while a query is running. Clock
+// icon + larger tabular value, framed with a subtle pill background so
+// the eye lands on it before scanning the other stats.
+.pf-query-page__status-bar-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--pf-color-surface-variant, rgba(255, 255, 255, 0.06));
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-query-page__status-bar-duration-icon {
+  font-size: 16px;
+  opacity: 0.7;
+}
+
+.pf-query-page__status-bar-duration-value {
+  font-weight: 600;
+  font-size: 1.05em;
+  letter-spacing: 0.2px;
+}
+
+// Vertical rule between toolbar param groups (Materialize vs
+// Result limit). 1px line, dim, with breathing room either side.
+.pf-query-page__toolbar-divider {
+  display: inline-block;
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 4px;
+  background-color: var(--pf-color-border-secondary, #3c4048);
+}
+
+// Label preceding the rows-per-page selector. Dim + slightly smaller so
+// it reads as a caption, not a control.
+.pf-query-page__page-size-label {
+  opacity: 0.7;
+  font-size: 0.9em;
+  margin-right: 4px;
+}
+
+// The DataGrid toolbar is a flex with a left and a right child. We hook
+// the pagination block into the left slot (the only available
+// extension point), then absolute-position it at the centre of the
+// toolbar bar — anchored vertically and horizontally to the toolbar
+// content. The summary stays anchored left, Copy Query / Export stay
+// anchored right.
+.pf-query-page__results .pf-data-grid__toolbar-content {
+  position: relative;
+}
+
+.pf-query-page__pagination-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+// While the query is running, gently pulse the duration so the user
+// sees that elapsed time is ticking even when the bar repaints
+// infrequently.
+.pf-query-page__status-bar-pill.pf-status-running
+  ~ .pf-query-page__status-bar-duration {
+  // No animation — pulse on the pill is enough; keep duration steady so
+  // the number stays easy to read.
+}
+
+// Sub-span used inside a stat value to mark a number as "live / will
+// update on the next poll" (e.g. the Traces numerator while RUNNING).
+// Half-opacity is enough; we don't pulse — the status pill already does.
+.pf-query-page__status-bar-live {
+  opacity: 0.55;
+}
+
+// While the query is RUNNING, gently pulse the status pill so the user
+// has a visual cue that work is in flight even if no rows have come back
+// yet. Subtle: 0.55..1.0 opacity, 1.6s cycle, soft easing.
+.pf-query-page__status-bar-pill.pf-status-running {
+  animation: pf-bigtrace-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pf-bigtrace-pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+// Full-width progress bar shown above the materialized status bar while
+// the query is running. Two modes:
+// - Determinate: width = processedTraces / totalTraces, set as inline
+//   style on .pf-query-page__progress-fill. Smooth transition so the
+//   bar advances visibly when a poll lands.
+// - Indeterminate: same animation as the shared LinearProgress widget,
+//   modeled after src/assets/widgets/linear_progress.scss.
+.pf-query-page__progress {
+  height: 6px;
+  position: relative;
+  overflow: hidden;
+  background-color: transparent;
+}
+
+.pf-query-page__progress-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background-color: var(--pf-color-accent, #1a73e8);
+  transition: width 0.3s ease-out;
+  will-change: width;
+}
+
+.pf-query-page__progress--indeterminate {
+  &::before {
+    content: "";
+    position: absolute;
+    background-color: var(--pf-color-accent, #1a73e8);
+    top: 0;
+    left: 0;
+    bottom: 0;
+    will-change: left, right;
+    animation: pf-bigtrace-progress-indeterminate 2.1s
+      cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite;
+  }
+
+  &::after {
+    content: "";
+    position: absolute;
+    background-color: var(--pf-color-accent, #1a73e8);
+    top: 0;
+    left: 0;
+    bottom: 0;
+    will-change: left, right;
+    animation: pf-bigtrace-progress-indeterminate 2.1s
+      cubic-bezier(0.165, 0.84, 0.44, 1) infinite;
+    animation-delay: 1.05s;
+  }
+}
+
+@keyframes pf-bigtrace-progress-indeterminate {
+  0% {
+    left: -35%;
+    right: 100%;
+  }
+  60% {
+    left: 100%;
+    right: -90%;
+  }
+  100% {
+    left: 100%;
+    right: -90%;
+  }
 }
 
 .pf-query-history__item-meta {
@@ -108,12 +396,146 @@
   content: none !important;
 }
 
-.pf-results-table__error details summary::after {
-  content: " (Click to view details)";
-  font-weight: normal;
-  color: var(--pf-color-foreground-secondary, #9aa0a6);
+// Results panel layout — propagate height + min-height:0 down so the
+// DataGrid's `fillHeight` actually has a parent to fill, and only the
+// table body scrolls (toolbar + sticky column header stay pinned).
+.pf-query-page__results-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
-.pf-results-table__error details[open] summary::after {
-  content: "";
+.pf-query-page__results-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.pf-query-page__results-container > .pf-data-grid {
+  flex: 1;
+  min-height: 0;
+}
+
+// Error banner inside the query results pane. The component renders a
+// danger icon next to a body containing: a short title, a one-line
+// "headline" (last line of the TP traceback or whatever the server
+// returned), and an optional collapsible <details> with the full text.
+.pf-results-table__error-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0; // let <pre> wrap inside flexbox
+}
+
+.pf-results-table__error-title {
+  font-weight: 600;
+}
+
+.pf-results-table__error-headline {
+  font-family: var(--pf-font-monospace, monospace);
+  font-size: 0.9em;
+  word-break: break-word;
+}
+
+.pf-status-success {
+  color: #1e8e3e;
+  font-weight: 500;
+}
+
+.pf-status-failed {
+  color: #d93025;
+  font-weight: 500;
+}
+
+.pf-status-cancelled {
+  color: #fbbc04;
+  font-weight: 500;
+}
+
+.pf-status-running {
+  color: #1a73e8;
+  font-weight: 500;
+}
+
+.pf-status-queued,
+.pf-status-unknown {
+  color: #9aa0a6;
+  font-style: italic;
+}
+
+// Three-column tabular layout: Status leads in a fixed-width left slot
+// (mirrors the colored left bar of the card), Started flexes in the
+// middle, Rows pins to the right with label + value sub-cells. The naive
+// flex-with-space-between approach made the status pill and the "Rows:"
+// label slide around as their values' text widths varied
+// (SUCCESS vs CANCELLED, Rows: 0 vs Rows: 100). Pinning each cell to a
+// fixed slot keeps left AND right edges aligned across rows.
+.pf-query-history__item-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+
+  // When the sidebar is narrow the middle (date) cell would wrap onto
+  // 3-4 lines and the right (rows) cell would wrap mid-number. Force a
+  // single line per cell and let the date truncate with ellipsis; the
+  // full timestamp is in the title attribute.
+  > span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+}
+
+// Rows cell: nested grid so the "Rows:" label is left-anchored at a
+// consistent x and the numeric value sits in its own slot. Use auto for
+// the value column — a fixed width like 4ch silently overflows once the
+// row count exceeds 9999, which spills the formatted number ("3,383,384")
+// leftward over the label. Tabular numerals keep digit widths identical
+// so values still right-align cleanly across rows.
+.pf-query-history__item-rows {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  gap: 4px;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-query-history__item-rows-value {
+  text-align: right;
+}
+
+.pf-query-history__item-details {
+  margin-top: 4px;
+}
+
+.pf-query-history__item-table-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+}
+
+.pf-query-history__item-table-link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.pf-query-history__item-table-link--disabled {
+  color: var(--pf-color-foreground-secondary, #9aa0a6);
+  pointer-events: none;
+  text-decoration: none;
+}
+
+.pf-query-history__item-table-link--active {
+  color: var(--pf-color-primary, #1a73e8);
+  pointer-events: auto;
+  text-decoration: underline;
 }

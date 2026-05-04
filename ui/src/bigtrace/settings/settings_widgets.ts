@@ -57,6 +57,13 @@ export function renderSetting(setting: Setting<unknown>): m.Children {
         value: String(currentValue),
         placeholder: setting.placeholder,
         disabled,
+        // Commit on every keystroke (in addition to blur) so users don't
+        // have to remember to tab/click out of the field before running
+        // a query. Without this, typing "~/Downloads" + Run-button-click
+        // sometimes raced and the previous value was sent.
+        onInput: (value: string) => {
+          setting.set(value);
+        },
         onChange: (value: string) => {
           setting.set(value);
         },

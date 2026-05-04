@@ -64,6 +64,9 @@ class BigTraceSettingsCard
             className: 'pf-settings-card__toggle',
             style: {marginRight: '8px'},
             checked: !disabled,
+            title:
+              'Turn off to skip this filter — its value will not be ' +
+              'sent to the backend with subsequent queries.',
             onchange: (e: Event) => {
               const target = e.target as HTMLInputElement;
               onChange?.(!target.checked);
@@ -71,7 +74,6 @@ class BigTraceSettingsCard
           }),
         title,
       ]),
-      id && m('.pf-settings-card__id', id),
       description !== undefined &&
         m('.pf-settings-card__description', description),
     );
@@ -157,10 +159,16 @@ export class SettingsPage implements m.ClassComponent {
       categories.get(categoryName)!.push(setting);
     }
 
+    // Only force-create an empty Trace Metadata section when there's
+    // something to show inside it (a loading spinner or an error callout).
+    // If the backend simply returns no metadata settings, the section
+    // collapses entirely instead of rendering an empty header.
     if (
       this.searchQuery === '' &&
       !categories.has('Trace Metadata') &&
-      !bigTraceSettingsStorage.execConfigLoadError
+      !bigTraceSettingsStorage.execConfigLoadError &&
+      (bigTraceSettingsStorage.isMetadataLoading ||
+        bigTraceSettingsStorage.metadataLoadError)
     ) {
       categories.set('Trace Metadata', []);
     }

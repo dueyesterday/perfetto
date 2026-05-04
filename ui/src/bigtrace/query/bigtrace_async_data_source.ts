@@ -19,7 +19,10 @@ import {
 } from '../../components/widgets/datagrid/data_source';
 import {Row, SqlValue} from '../../trace_processor/query_result';
 import {QueryResult} from '../../base/query_slot';
-import {HttpDataSource} from './http_data_source';
+import {
+  BigtraceQueryClient,
+  QueryCancelledError,
+} from './bigtrace_query_client';
 import m from 'mithril';
 
 type ModelWithColumns = DataSourceModel & {
@@ -27,75 +30,27 @@ type ModelWithColumns = DataSourceModel & {
 };
 
 export class BigtraceAsyncDataSource implements DataSource {
-  private queryUuid: string;
-  private httpDataSource: HttpDataSource;
   private loadedRows: Row[] = [];
   private isFetching = false;
-  private getTotalRows: () => number;
-  private getOffset: () => number;
   private columns: string[] = [];
   private error: string | null = null;
-  private currentOffset = -1;
-  private currentLimit = 0;
-  private currentColumnsStr = '';
-  private discoveredTotalRows = 0;
   private hasInitialFetchCompleted = false;
 
-  private getPageSize: () => number;
-
+  // The signal is plumbed through to every fetchResults call. Owners
+  // (typically a tab) abort it on close so we don't write into a destroyed
+  // data source.
   constructor(
-    queryUuid: string,
-    httpDataSource: HttpDataSource,
-    getTotalRows: () => number,
-    getOffset: () => number,
-    getPageSize: () => number,
+    private readonly queryUuid: string,
+    private readonly queryClient: BigtraceQueryClient,
+    private readonly getPageSize: () => number,
+    private readonly signal?: AbortSignal,
   ) {
-    this.queryUuid = queryUuid;
-    this.httpDataSource = httpDataSource;
-    this.getTotalRows = getTotalRows;
-    this.getOffset = getOffset;
-    this.getPageSize = getPageSize;
-
     // Trigger initial fetch to get schema and first batch of data
     this.fetchMoreRows(0, this.getPageSize());
   }
 
   useRows(_model: DataSourceModel): DataSourceRows {
-    const limit = this.getPageSize();
-    const offset = this.getOffset();
-    const totalRows = Math.max(this.discoveredTotalRows, this.getTotalRows());
-    console.log(
-      'useRows: offset',
-      offset,
-      'limit forced to 20',
-      'totalRows',
-      totalRows,
-    );
-
     const model = _model as ModelWithColumns;
-    const columnsStr = JSON.stringify(
-      model.columns !== undefined ? model.columns : [],
-    );
-    const columnsChanged = columnsStr !== this.currentColumnsStr;
-
-    if (columnsChanged) {
-      this.currentColumnsStr = columnsStr;
-    }
-
-    // Auto-fetch if requested page is different from current cache or columns changed
-    if (
-      (offset !== this.currentOffset ||
-        limit !== this.currentLimit ||
-        columnsChanged) &&
-      !this.isFetching &&
-      offset < totalRows
-    ) {
-      console.log(
-        'useRows: page changed, columns changed or missing, triggering fetch',
-      );
-      this.fetchMoreRows(offset, limit);
-    }
-
     // Map rows to aliases on the fly!
     const mappedRows = this.loadedRows.map((row) => {
       const mappedRow: Row = {};
@@ -121,7 +76,6 @@ export class BigtraceAsyncDataSource implements DataSource {
   }
 
   triggerFetch(offset: number, limit: number) {
-    console.log('triggerFetch called for offset', offset, 'limit', limit);
     if (offset === 0) {
       // For first page refresh, we clear the first page rows to force reload
       for (let i = 0; i < limit; i++) {
@@ -132,41 +86,26 @@ export class BigtraceAsyncDataSource implements DataSource {
   }
 
   private async fetchMoreRows(offset: number, limit: number) {
-    console.log('fetchMoreRows: starting for offset', offset, 'limit', limit);
+    if (this.signal?.aborted) return;
     this.error = null;
     this.isFetching = true;
     m.redraw();
     try {
-      const result = await this.httpDataSource.fetchResults(
+      const result = await this.queryClient.fetchResults(
         this.queryUuid,
         limit,
         offset,
+        this.signal,
       );
-      console.log('fetchMoreRows: received result', JSON.stringify(result));
-
-      this.loadedRows = result.rows;
-      this.currentOffset = offset;
-      this.currentLimit = limit;
+      this.loadedRows = [...result.rows];
       this.hasInitialFetchCompleted = true;
 
-      // Discover total rows if we received fewer than requested!
-      if (result.rows.length < limit) {
-        this.discoveredTotalRows = offset + result.rows.length;
-        console.log(
-          'fetchMoreRows: reached end of results, set discoveredTotalRows to',
-          this.discoveredTotalRows,
-        );
-      }
-
-      console.log(
-        'fetchMoreRows: loadedRows length now',
-        this.loadedRows.length,
-      );
       if (this.columns.length === 0 && result.columns.length > 0) {
-        this.columns = result.columns;
-        console.log('fetchMoreRows: set columns to', this.columns);
+        this.columns = [...result.columns];
       }
     } catch (e) {
+      // Abort is expected when the owning tab closes; don't surface it.
+      if (e instanceof QueryCancelledError) return;
       console.error('Failed to fetch more rows:', e);
       this.error = e instanceof Error ? e.message : String(e);
     } finally {

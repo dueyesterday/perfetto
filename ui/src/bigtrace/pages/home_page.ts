@@ -15,7 +15,6 @@
 import m from 'mithril';
 import {assetSrc} from '../../base/assets';
 import {Icon} from '../../widgets/icon';
-import {HotkeyGlyphs} from '../../widgets/hotkey_glyphs';
 import {Switch} from '../../widgets/switch';
 import {queryState} from '../query/query_state';
 import {settingsStorage} from '../settings/settings_storage';
@@ -69,7 +68,7 @@ export class HomePage implements m.ClassComponent {
                   '.pf-home-page__button',
                   {onclick: () => setRoute(Routes.SETTINGS)},
                   m(Icon, {icon: 'settings', className: 'pf-left-icon'}),
-                  m('span.pf-button__label', 'Configure targets'),
+                  m('span.pf-button__label', 'Configure backend'),
                 ),
                 m(
                   '.pf-home-page__button',
@@ -113,25 +112,9 @@ export class HomePage implements m.ClassComponent {
               ),
             ),
           ),
-          // Shortcuts section
-          m(
-            '.pf-home-page__section',
-            m('.pf-home-page__section-title', 'Shortcuts'),
-            m(
-              '.pf-home-page__section-content',
-              m(
-                '.pf-home-page__shortcut',
-                m('span.pf-home-page__shortcut-label', 'Commands'),
-                m(HotkeyGlyphs, {hotkey: '!Mod+Shift+P'}),
-              ),
-              m(
-                '.pf-home-page__shortcut',
-                m('span.pf-home-page__shortcut-label', 'Toggle sidebar'),
-                m(HotkeyGlyphs, {hotkey: '!Mod+B'}),
-              ),
-            ),
-          ),
-          // Links below the cards
+          // Footer row: theme toggle. The full shortcut list lives in
+          // the help modal (?), which auto-builds from registered
+          // commands.
           m(
             '.pf-home-page__links',
             m(Switch, {
