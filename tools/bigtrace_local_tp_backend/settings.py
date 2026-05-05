@@ -11,33 +11,25 @@ The shape mirrors what the mock at tools/bigtrace_ref_backend/server.py returns
 from /bigtrace_execution_config and /trace_metadata_settings, so the same UI
 client can speak to both backends without modification.
 
-`trace_filter` (regex over filenames) and `trace_directory` (the on-disk dir
-to read trace files from) are honored by the executor; the rest are surfaced
-for parity but are otherwise no-ops in this backend. See the comments
-alongside each entry for why.
+The traces directory is supplied by the client on every request via the
+`trace_directory` setting (set in the BigTrace UI Settings page). The
+server has no startup-time fallback. `trace_filter` (regex over
+filenames) and `trace_limit` are also honored by the executor.
 
-NOTE: `trace_directory` is a local-dev-only convenience that lets a user pick
-a different directory at runtime via the BigTrace settings UI. Exposing
-arbitrary filesystem paths through an HTTP setting would be UNSAFE in any
-multi-tenant deployment — never port this verbatim into a real BigTrace
-backend. It's safe here because this server is intended to be run against
-localhost by a single developer.
+NOTE: `trace_directory` exposes an arbitrary filesystem path through an
+HTTP setting, which is UNSAFE in any multi-tenant deployment. This
+backend is local-dev-only — single developer, localhost — and must
+never be ported verbatim into a real BigTrace backend.
 """
 
 from typing import Any
 
-# Mutable holder populated by server.py at startup so the EXECUTION_SETTINGS
-# defaultValue for `trace_directory` reflects the user's --traces-dir CLI
-# value, and so trace_directory() can fall back to it when the request omits
-# the setting or sends an empty string.
-_state: dict[str, str] = {'default_trace_directory': ''}
-
 
 EXECUTION_SETTINGS: list[dict[str, Any]] = [
     {
-        # The only setting that actually does work in this backend.
-        # query_executor.py applies it as a regex filter against filenames in
-        # the configured --traces-dir.
+        # Regex over filenames in the chosen `trace_directory`.
+        # query_executor.list_matching_traces narrows the candidate
+        # set with this before fanning out.
         'id': 'trace_filter',
         'name': 'Trace Filter',
         'description': 'Filter traces by regex pattern (matched against filename)',
@@ -46,10 +38,9 @@ EXECUTION_SETTINGS: list[dict[str, Any]] = [
         'plainString': {'defaultValue': '.*'},
     },
     {
-        # Local-dev-only: lets a user point the backend at a different
-        # directory on the same machine without restarting the server. The
-        # default value is the CLI --traces-dir; server.py overwrites it at
-        # startup via set_default_trace_directory().
+        # On-disk directory the backend reads trace files from. Picked
+        # by the user in the BigTrace UI; sent verbatim on every
+        # request. Not persisted server-side.
         'id': 'trace_directory',
         'name': 'Trace Directory',
         'description': (
@@ -85,24 +76,6 @@ EXECUTION_SETTINGS: list[dict[str, Any]] = [
 # (the UI calls it unconditionally) but returns no settings, and the UI
 # collapses the "Trace Metadata" section accordingly.
 TRACE_METADATA_SETTINGS: list[dict[str, Any]] = []
-
-
-def set_default_trace_directory(path: str) -> None:
-    """Record the CLI-supplied trace directory as the runtime default.
-
-    Called by server.py once argparse is done. Also updates the
-    `trace_directory` entry in EXECUTION_SETTINGS so the UI's settings page
-    shows the CLI value as the pre-populated default.
-    """
-    _state['default_trace_directory'] = path
-    for s in EXECUTION_SETTINGS:
-        if s.get('id') == 'trace_directory':
-            s['plainString'] = {'defaultValue': path}
-            break
-
-
-def get_default_trace_directory() -> str:
-    return _state['default_trace_directory']
 
 
 def trace_filter_regex(settings: list[dict[str, Any]]) -> str:
@@ -144,14 +117,14 @@ def trace_limit(settings: list[dict[str, Any]]) -> int:
 def trace_directory(settings: list[dict[str, Any]]) -> str:
     """Pull the `trace_directory` path out of a settings request body.
 
-    Falls back to the CLI default (set via set_default_trace_directory)
-    when the setting is missing or the value is empty. Wire-format key
-    is `setting_id` (snake_case) — see `trace_filter_regex` for the
-    rationale.
+    Returns '' when the setting is missing or empty — the caller
+    (`server._resolve_trace_dir`) translates that into a 400 response.
+    Wire-format key is `setting_id` (snake_case) — see
+    `trace_filter_regex` for the rationale.
     """
     for s in settings or []:
         if s.get('setting_id') == 'trace_directory':
             values = s.get('values') or []
             if values and isinstance(values, list) and values[0]:
                 return str(values[0])
-    return _state['default_trace_directory']
+    return ''

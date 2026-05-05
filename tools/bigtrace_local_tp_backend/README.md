@@ -153,9 +153,9 @@ UI dev server in a sibling repo.
 cd ~/Projects/perfetto_2/tools/bigtrace_local_tp_backend && ./setup_venv.sh
 
 # Terminal 1: BigTrace local TP backend (+ Datasette + DuckDB UI).
+# The traces directory is set in the BigTrace UI, not on the CLI.
 cd ~/Projects/perfetto_2/tools/bigtrace_local_tp_backend
-.venv/bin/python server.py --traces-dir ~/Downloads \
-  --with-datasette --with-db-ui
+.venv/bin/python server.py --with-datasette --with-db-ui
 
 # Terminal 2: perfetto bigtrace UI dev server (lives in the perfetto repo).
 cd ~/Projects/perfetto
@@ -185,8 +185,12 @@ both accept an explicit port (`--with-datasette 8500`).
 
 ## Setup
 
-The Python `TraceProcessor` lives in `~/Projects/perfetto/python` — we
-install it editable so we always get the in-repo version, not PyPI.
+The Python `TraceProcessor` lives in this repo's `python/` directory
+— `setup_venv.sh` finds it relative to the script location and
+installs it editable so you always get the in-repo version, not the
+PyPI release. To point at a different checkout (e.g. a sibling
+clone), set `PERFETTO_PY=/path/to/perfetto/python` before running the
+script.
 
 ```sh
 ./setup_venv.sh
@@ -200,7 +204,7 @@ Re-run any time `requirements.txt` changes.
 ## Run
 
 ```sh
-.venv/bin/python server.py --traces-dir ~/traces \
+.venv/bin/python server.py \
   [--port 8002] \
   [--max-pool 4] \
   [--db-path ~/.cache/bigtrace_local/state.duckdb] \
@@ -210,14 +214,12 @@ Re-run any time `requirements.txt` changes.
   [--with-datasette [PORT]]
 ```
 
-`--traces-dir` (alias `--default-trace-directory`) is required and
-becomes the **default** value of the `Trace Directory` setting. The
-user can override it per-query at runtime via the BigTrace settings UI;
-the CLI value is just what the input is pre-populated with. Files
-matched: `.pftrace`, `.perfetto-trace`, `.pb`, `.trace`. If the
-directory is missing at startup the server logs a warning and starts
-anyway — but queries then fail with HTTP 400 ("Trace Directory '…'
-does not exist") until the user picks a real directory in settings.
+The traces directory is **not** a CLI flag — the BigTrace UI's
+Settings page asks the user for a `Trace Directory`, and that path is
+sent in the `settings` array of every query. The backend has no
+server-side default; queries with no `trace_directory` set return
+HTTP 400 with a descriptive error. Files matched:
+`.pftrace`, `.perfetto-trace`, `.pb`, `.trace`.
 
 This runtime override is a **local-dev-only** convenience. Never port
 it verbatim into a real BigTrace deployment: letting an HTTP client
@@ -270,7 +272,7 @@ Several options; `--with-datasette` is the most practical.
 ### Option 1: in-process Datasette (recommended)
 
 ```sh
-.venv/bin/python server.py --traces-dir ~/Downloads --with-datasette
+.venv/bin/python server.py --with-datasette
 # Datasette on http://localhost:8003/state
 ```
 
@@ -312,7 +314,7 @@ Pass `--with-db-ui` and the server boots DuckDB's own web UI on its
 existing connection.
 
 ```sh
-.venv/bin/python server.py --traces-dir ~/Downloads --with-db-ui
+.venv/bin/python server.py --with-db-ui
 # DuckDB UI on http://localhost:4213
 ```
 

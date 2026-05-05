@@ -13,8 +13,9 @@ pyarrow>=14.0
 # name is parquet-themed but it handles .duckdb files natively).
 datasette>=0.65
 datasette-parquet>=0.6
-# The `perfetto` Python package itself is provided via an editable install
-# pointing at ../../../perfetto/python. That step is run explicitly by the
-# setup script — see the README. We deliberately do NOT pin perfetto here so
-# that pip doesn't try to fetch it from PyPI during a plain
-# `pip install -r requirements.txt`.
+# The `perfetto` Python package itself is provided via an editable
+# install pointing at this repo's python/ dir (resolved relative to
+# setup_venv.sh; override with PERFETTO_PY=...). That step is run
+# explicitly by the setup script — see the README. We deliberately do
+# NOT pin perfetto here so pip doesn't try to fetch it from PyPI during
+# a plain `pip install -r requirements.txt`.

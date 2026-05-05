@@ -156,7 +156,7 @@ def main() -> int:
     db_path = os.path.join(db_dir, 'state.duckdb')
     server = subprocess.Popen(
         [venv_python, os.path.join(HERE, 'server.py'),
-         '--traces-dir', traces_dir, '--port', str(PORT),
+         '--port', str(PORT),
          '--db-path', db_path,
          '--table-ttl-seconds', '5',
          '--table-ttl-sweep-seconds', '1',
@@ -164,6 +164,17 @@ def main() -> int:
          '--log-level', 'warning'],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
+
+    # Real UI clients send `trace_directory` in every request's
+    # settings array (the BigTrace Settings page persists it in
+    # localStorage and re-sends it on every submit). The smoke does
+    # the same — no server-side default exists.
+    def with_traces(extra=None):
+        out = [{'setting_id': 'trace_directory', 'values': [traces_dir],
+                'category': 'TRACE_ADDRESS'}]
+        if extra:
+            out.extend(extra)
+        return out
     failed = False
     try:
         # Wait for server to come up.
@@ -195,11 +206,11 @@ def main() -> int:
             f'trace_directory setting must be a plainString, got: {td_setting}'
         )
         td_default = td_setting['plainString'].get('defaultValue')
-        assert td_default == os.path.abspath(traces_dir), (
-            f'trace_directory defaultValue should be the CLI value '
-            f'({os.path.abspath(traces_dir)!r}), got {td_default!r}'
+        assert td_default == '', (
+            f'trace_directory defaultValue should be empty (no CLI '
+            f'fallback by design), got {td_default!r}'
         )
-        print(f'    trace_directory default: {td_default}')
+        print('    trace_directory default: <empty> (client supplies path)')
 
         print('[2] /trace_metadata_settings')
         _, md = http('POST', '/trace_metadata_settings', body={'settings': []})
@@ -213,7 +224,7 @@ def main() -> int:
         print('[3] /execute_bigtrace_query (sync)')
         _, sync = http('POST', '/execute_bigtrace_query',
                        body={'limit': 5, 'perfetto_sql': 'SELECT 1 AS one',
-                             'settings': []})
+                             'settings': with_traces()})
         print(f'    columns={sync.get("columnNames")} rows={len(sync.get("rows", []))}')
         assert sync.get('rows'), 'sync query returned no rows'
 
@@ -244,8 +255,9 @@ def main() -> int:
         print(f'    sync logged as {sync_uuid[:8]}... fetch_results=404 (no materialized table)')
 
         # 3a. trace_directory setting end-to-end.
-        # (a) no setting -> uses CLI default; (b) setting points at a
-        # different sub-dir; (c) setting points at a non-existent dir -> 400.
+        # (a) missing setting -> 400 (no server-side fallback);
+        # (b) setting points at a different sub-dir -> rows from there;
+        # (c) setting points at a non-existent dir -> 400.
         # Wire format (per ~/Projects/CLAUDE.md and what the BigTrace UI
         # actually emits): each settings entry is
         # `{setting_id, values, category}` (snake_case). Earlier versions
@@ -253,7 +265,21 @@ def main() -> int:
         # a real bug where changing Trace Directory in the UI did
         # nothing. Lookup is now strict on `setting_id`.
         print('[3a] trace_directory setting')
-        # (a) Already covered by [3] above (no trace_directory in settings).
+        # (a) Missing trace_directory in settings -> 400. The backend has
+        # no server-side default for this; clients always supply it.
+        code_missing, body_missing = http_status_and_body(
+            'POST', '/execute_bigtrace_query',
+            body={'limit': 1, 'perfetto_sql': 'SELECT 1', 'settings': []},
+        )
+        assert code_missing == 400, (
+            f'expected 400 when trace_directory absent, got {code_missing}: '
+            f'{body_missing}'
+        )
+        assert 'No traces directory' in body_missing or \
+               'Trace Directory' in body_missing, (
+            f'expected error to mention Trace Directory; got: {body_missing}'
+        )
+        print(f'    missing trace_directory -> {code_missing}')
         # (b) Build an alternate sub-dir holding one trace and query it.
         alt_dir = os.path.join(traces_dir, 'alt_subdir')
         os.makedirs(alt_dir, exist_ok=True)
@@ -325,10 +351,10 @@ def main() -> int:
         _, sub = http('POST', '/execute_bigtrace_query_async',
                       body={'limit': 10,
                             'perfetto_sql': 'SELECT name, dur FROM slice LIMIT 10',
-                            'settings': [
+                            'settings': with_traces([
                                 {'setting_id': 'trace_filter', 'values': ['.*'],
                                  'category': 'TRACE_ADDRESS'},
-                            ]})
+                            ])})
         async_uuid = sub['rows'][0]['values'][0]
         print(f'    uuid={async_uuid}')
 
@@ -364,7 +390,7 @@ def main() -> int:
             body={
                 'limit': 200,
                 'perfetto_sql': 'SELECT name, dur FROM slice LIMIT 200',
-                'settings': [],
+                'settings': with_traces(),
             },
         )
         stream_uuid = ssub['rows'][0]['values'][0]
@@ -430,7 +456,7 @@ def main() -> int:
         _, fail_sub = http('POST', '/execute_bigtrace_query_async',
                            body={'limit': 10,
                                  'perfetto_sql': 'SELECT * FROM does_not_exist',
-                                 'settings': []})
+                                 'settings': with_traces()})
         fail_uuid = fail_sub['rows'][0]['values'][0]
         wait_until(
             lambda: http('GET', f'/query_executions/{fail_uuid}:status')[1]['status']
@@ -464,7 +490,7 @@ def main() -> int:
                              'perfetto_sql':
                                  'SELECT s1.name, s2.name FROM slice s1, slice s2 '
                                  'LIMIT 1000000',
-                             'settings': []})
+                             'settings': with_traces()})
         cancel_uuid = csub['rows'][0]['values'][0]
         # Give it just a moment to start.
         time.sleep(0.2)
@@ -495,7 +521,7 @@ def main() -> int:
                              'perfetto_sql':
                                  'SELECT s1.name, s2.dur FROM slice s1, '
                                  'slice s2 LIMIT 100000',
-                             'settings': []})
+                             'settings': with_traces()})
         partial_uuid = psub['rows'][0]['values'][0]
         # Wait for at least one trace to finish merging before cancelling
         # so we have non-trivial partials. Bound the wait so a fast/empty
@@ -569,7 +595,7 @@ def main() -> int:
         long_sql = 'SELECT name FROM slice WHERE name = "' + 'x' * 400 + '"'
         _, lsub = http('POST', '/execute_bigtrace_query_async',
                        body={'limit': 1, 'perfetto_sql': long_sql,
-                             'settings': []})
+                             'settings': with_traces()})
         long_uuid = lsub['rows'][0]['values'][0]
         wait_until(
             lambda: http('GET', f'/query_executions/{long_uuid}:status')[1]
@@ -632,7 +658,7 @@ def main() -> int:
             body={
                 'limit': 5,
                 'perfetto_sql': 'SELECT name FROM slice LIMIT 5',
-                'settings': [],
+                'settings': with_traces(),
             },
         )
         ttl_uuid = tsub['rows'][0]['values'][0]
@@ -691,7 +717,7 @@ def main() -> int:
             body={
                 'limit': N,
                 'perfetto_sql': 'SELECT name FROM slice',
-                'settings': [],
+                'settings': with_traces(),
             },
         )
         gl_uuid = glsub['rows'][0]['values'][0]
@@ -733,10 +759,10 @@ def main() -> int:
                 # that bounds processedTraces.
                 'limit': 10_000,
                 'perfetto_sql': 'SELECT name FROM slice LIMIT 5',
-                'settings': [
+                'settings': with_traces([
                     {'setting_id': 'trace_limit', 'values': [str(TL)],
                      'category': 'TRACE_ADDRESS'},
-                ],
+                ]),
             },
         )
         tl_uuid = tlsub['rows'][0]['values'][0]
@@ -783,7 +809,7 @@ def main() -> int:
             body={
                 'limit': 1,
                 'perfetto_sql': 'SELECT * FROM does_not_exist_either',
-                'settings': [],
+                'settings': with_traces(),
             },
         )
         ss_uuid = ssub['rows'][0]['values'][0]
@@ -810,7 +836,7 @@ def main() -> int:
                 'limit': 1_000_000,
                 'perfetto_sql': 'SELECT s1.name FROM slice s1, slice s2 '
                                 'LIMIT 1000000',
-                'settings': [],
+                'settings': with_traces(),
             },
         )
         dl_uuid = dlsub['rows'][0]['values'][0]
@@ -866,11 +892,11 @@ def main() -> int:
             body={
                 'limit': 5,
                 'perfetto_sql': 'SELECT name FROM slice LIMIT 1',
-                'settings': [
+                'settings': with_traces([
                     {'setting_id': 'trace_filter',
                      'values': [r'Copy 11\)\.pftrace$'],
                      'category': 'TRACE_ADDRESS'},
-                ],
+                ]),
             },
         )
         tf_uuid = tfsub['rows'][0]['values'][0]
@@ -906,7 +932,7 @@ def main() -> int:
             body={
                 'limit': 5,
                 'perfetto_sql': 'SELECT name FROM slice LIMIT 5',
-                'settings': [],
+                'settings': with_traces(),
             },
         )
         ts_uuid = tssub['rows'][0]['values'][0]
@@ -964,11 +990,11 @@ def main() -> int:
             body={
                 'limit': 5,
                 'perfetto_sql': 'SELECT 1',
-                'settings': [
+                'settings': with_traces([
                     {'setting_id': 'trace_filter',
                      'values': ['^definitely-no-match-anywhere$'],
                      'category': 'TRACE_ADDRESS'},
-                ],
+                ]),
             },
         )
         nm_uuid = nmsub['rows'][0]['values'][0]
@@ -1020,7 +1046,7 @@ def main() -> int:
                 'limit': 1_000_000,
                 'perfetto_sql': 'SELECT s1.name FROM slice s1, slice s2 '
                                 'LIMIT 1000000',
-                'settings': [],
+                'settings': with_traces(),
             },
         )
         sr_uuid = srsub['rows'][0]['values'][0]
@@ -1040,7 +1066,7 @@ def main() -> int:
             # Restart on the SAME port + db_path. Same CLI as before.
             server = subprocess.Popen(
                 [venv_python, os.path.join(HERE, 'server.py'),
-                 '--traces-dir', traces_dir, '--port', str(PORT),
+                 '--port', str(PORT),
                  '--db-path', db_path,
                  '--table-ttl-seconds', '5',
                  '--table-ttl-sweep-seconds', '1',
@@ -1098,7 +1124,7 @@ def main() -> int:
             body={
                 'limit': 5,
                 'perfetto_sql': 'SELECT name FROM slice LIMIT 5',
-                'settings': [],
+                'settings': with_traces(),
             },
         )
         ds_uuid = dssub['rows'][0]['values'][0]

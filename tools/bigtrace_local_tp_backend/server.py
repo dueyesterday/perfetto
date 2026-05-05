@@ -16,8 +16,12 @@ Python `TraceProcessor` package.
 This is NOT a real BigTrace — it's a single-machine approximation. Known
 limitations are documented in README.md.
 
+The traces directory is chosen by the client on every request via the
+`trace_directory` setting (set in the BigTrace UI's Settings page). The
+server has no startup-time knowledge of where traces live.
+
 Usage:
-    .venv/bin/python server.py --traces-dir /path/to/traces [--port 8002]
+    .venv/bin/python server.py [--port 8002]
 """
 
 from __future__ import annotations
@@ -49,7 +53,6 @@ from query_executor import (  # noqa: E402
 from settings import (  # noqa: E402
     EXECUTION_SETTINGS,
     TRACE_METADATA_SETTINGS,
-    set_default_trace_directory,
     trace_directory,
     trace_filter_regex,
     trace_limit,
@@ -73,7 +76,6 @@ app.add_middleware(
 
 @dataclass
 class ServerConfig:
-    traces_dir: str = ''
     max_pool: int = 4
     # Materialized tables are dropped from DuckDB this long after the
     # query reaches a terminal state. The metadata row stays so the
@@ -226,15 +228,15 @@ def _get_snapshot_or_404(uuid_str: str) -> QESnapshot:
 def _resolve_trace_dir(settings: list[dict[str, Any]]) -> str:
     """Return a validated traces directory, or raise HTTPException(400).
 
-    The path comes from the per-request `trace_directory` setting if present,
-    otherwise from the --traces-dir CLI default. We validate at the point of
-    use rather than at server startup so users can correct a typo via the
-    settings UI without restarting.
+    The path always comes from the per-request `trace_directory`
+    setting — the server has no fallback. We validate at the point of
+    use rather than at submit time so the UI can correct a typo via
+    the settings page without restarting anything.
 
-    Shell-style `~` and `$VAR` references are expanded here so that paths
-    like `~/Downloads` (which a CLI user would expect to work) resolve
-    correctly. Local-dev backend only — a multi-tenant deployment must
-    not let arbitrary clients dereference the server's environment.
+    Shell-style `~` and `$VAR` references are expanded here so paths
+    like `~/Downloads` resolve as a CLI user would expect. Local-dev
+    backend only — a multi-tenant deployment must not let arbitrary
+    clients dereference the server's environment.
     """
     path = trace_directory(settings)
     if path:
@@ -737,13 +739,6 @@ async def _on_shutdown() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description='BigTrace local TraceProcessor backend')
-    parser.add_argument(
-        '--traces-dir', '--default-trace-directory', dest='traces_dir',
-        type=str, default='~/Downloads',
-        help='Initial directory containing trace files (.pftrace, '
-             '.perfetto-trace, .pb). Used as the default for the '
-             '`Trace Directory` setting; the user can override it per-query '
-             'via the BigTrace settings UI. (default: ~/Downloads)')
     parser.add_argument('--port', type=int, default=8002)
     parser.add_argument('--host', type=str, default='127.0.0.1')
     parser.add_argument(
@@ -789,18 +784,6 @@ def main() -> None:
         format='%(asctime)s %(levelname)s %(name)s: %(message)s',
     )
 
-    # Two paths matter here:
-    # - CONFIG.traces_dir: the absolute, expanded path the backend reads
-    #   from when no per-request override is set (used for fan-out + the
-    #   "no recognized trace files" startup warning).
-    # - default_setting_value: the human-readable string the UI is told
-    #   to pre-populate the Trace Directory input with. We keep `~`/`$VAR`
-    #   in this string so the input shows what the user typed (or our
-    #   default of "~/Downloads") rather than an expanded absolute path.
-    CONFIG.traces_dir = os.path.abspath(
-        os.path.expandvars(os.path.expanduser(args.traces_dir))
-    )
-    default_setting_value = args.traces_dir
     CONFIG.max_pool = args.max_pool
     CONFIG.table_ttl_seconds = args.table_ttl_seconds
     CONFIG.table_ttl_sweep_seconds = args.table_ttl_sweep_seconds
@@ -809,30 +792,13 @@ def main() -> None:
     )
     CONFIG.db_ui_port = args.db_ui_port or 0
     CONFIG.datasette_port = args.datasette_port or 0
-    set_default_trace_directory(default_setting_value)
     global POOL
     POOL = TracePool(max_size=args.max_pool)
 
-    if not os.path.isdir(CONFIG.traces_dir):
-        log.warning(
-            'traces-dir %s does not exist; queries will fail with HTTP 400 '
-            'until the user picks a valid Trace Directory in the settings UI.',
-            CONFIG.traces_dir,
-        )
-    else:
-        files = list_matching_traces(CONFIG.traces_dir, '.*')
-        if not files:
-            log.warning(
-                'traces-dir %s exists but contains no recognized trace files. '
-                'Recognized extensions: .pftrace .perfetto-trace .pb .trace',
-                CONFIG.traces_dir,
-            )
-        else:
-            log.info('Found %d trace file(s) in %s', len(files), CONFIG.traces_dir)
-
     import uvicorn
     print(f'BigTrace local TP backend listening on http://{args.host}:{args.port}')
-    print(f'  traces-dir: {CONFIG.traces_dir}')
+    print('  Set the Trace Directory in the BigTrace UI Settings page '
+          'before running a query.')
     print(f'  max-pool:   {CONFIG.max_pool}')
     print(f'  db-path:    {CONFIG.db_path}')
     print(f'  ttl:        {CONFIG.table_ttl_seconds}s '

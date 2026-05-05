@@ -112,7 +112,6 @@ function startBackend() {
     venv,
     [
       path.join(HERE, 'server.py'),
-      '--traces-dir', TRACES_DIR,
       '--port', String(PORT),
       '--db-path', DB_PATH,
       '--log-level', 'warning',
@@ -235,7 +234,7 @@ function stopBackend() {
   await page.waitForTimeout(2500);
   await snap(page, 'settings_loaded');
 
-  header('Trace Directory card exists and is pre-populated with the CLI value');
+  header('Trace Directory card starts empty; fill it with TRACES_DIR');
   const tdLabel = page.locator('text=Trace Directory').first();
   if ((await tdLabel.count()) === 0) {
     note('Trace Directory label not found on settings page');
@@ -247,18 +246,19 @@ function stopBackend() {
     if ((await tdInput.count()) === 0) {
       note('No text input inside Trace Directory card');
     } else {
-      const tdValue = await tdInput.inputValue();
-      // The CLI passed --traces-dir TRACES_DIR; the input should reflect that
-      // (server.py absolutizes it before stamping into the schema).
-      const expected = path.resolve(TRACES_DIR);
-      if (tdValue !== expected) {
+      // The backend has no server-side default — the input should
+      // start empty. We then type TRACES_DIR so subsequent queries
+      // can find traces.
+      const initial = await tdInput.inputValue();
+      if (initial && initial.length > 0) {
         note(
-          `Trace Directory input value=${JSON.stringify(tdValue)}, ` +
-            `expected ${JSON.stringify(expected)}`,
+          `Trace Directory input expected empty initially, got ` +
+            `${JSON.stringify(initial)}`,
         );
-      } else {
-        console.log(`  Trace Directory pre-populated with ${tdValue}`);
       }
+      await tdInput.click();
+      await tdInput.fill(path.resolve(TRACES_DIR));
+      console.log(`  set Trace Directory -> ${path.resolve(TRACES_DIR)}`);
     }
   }
   await snap(page, 'trace_directory_card');
