@@ -271,7 +271,10 @@ function renderStatusBox(tab: BigTraceEditorTab): m.Children {
   const status = tab.execution?.status ?? 'UNKNOWN';
   const processedTraces = tab.execution?.processedTraces ?? 0;
   const totalTraces = tab.execution?.totalTraces ?? 0;
-  const durationStr = Duration.humanise(Duration.fromMillis(durationMs));
+  // `Duration.humanise` caps the unit at `s`, so a long-running query
+  // (e.g. 13,300s) renders as the unfriendly "13300s". `Duration.format`
+  // breaks into y/d/h/m/s/ms/µs/ns instead, giving "3h 41m 40s".
+  const durationStr = Duration.format(Duration.fromMillis(durationMs));
 
   return m(
     Box,

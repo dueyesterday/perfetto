@@ -30,17 +30,25 @@ export function renderSetting(setting: Setting<unknown>): m.Children {
 
   switch (setting.type) {
     case 'number':
+      // Commit on every keystroke (in addition to blur) for the same
+      // reason the string branch does: a Mithril redraw triggered by
+      // unrelated state can wipe the user's typed-but-not-yet-committed
+      // value, making the number input feel like it "doesn't stay
+      // modified". onInput fires on every change including arrow-keys
+      // and stepper clicks; onChange covers Enter / blur.
+      const commitNumber = (value: string) => {
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue)) {
+          setting.set(numValue);
+        }
+      };
       return m(TextInput, {
         type: 'number',
         value: String(currentValue),
         placeholder: setting.placeholder,
         disabled,
-        onChange: (value: string) => {
-          const numValue = parseFloat(value);
-          if (!isNaN(numValue)) {
-            setting.set(numValue);
-          }
-        },
+        onInput: commitNumber,
+        onChange: commitNumber,
       });
     case 'string':
       if (setting.format === 'sql') {
