@@ -474,7 +474,12 @@ async def get_status(uuid: str) -> dict[str, Any]:
 
 
 @app.get('/query_executions/{uuid}:fetch_results')
-async def fetch_results(uuid: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+async def fetch_results(
+    uuid: str,
+    limit: int = 50,
+    offset: int = 0,
+    order_by: str = '',
+) -> dict[str, Any]:
     """Paginated read over the per-query materialized table.
 
     `tableName` is the source of truth for "is there a fetchable
@@ -485,6 +490,12 @@ async def fetch_results(uuid: str, limit: int = 50, offset: int = 0) -> dict[str
     The "table exists but empty" case (mid-flight, no worker has
     merged yet) returns 200 with an empty body so streaming callers
     see the table come alive as workers merge.
+
+    `order_by` follows AIP-132 §Ordering: a comma-separated list of
+    field names, each optionally followed by ` desc` (default `asc`).
+    Field names must be columns of this query's materialized table —
+    unknown fields, malformed direction, or other lexical errors all
+    yield HTTP 400.
     """
     snap = _get_snapshot_or_404(uuid)
     if snap.table_name is None:
@@ -496,7 +507,10 @@ async def fetch_results(uuid: str, limit: int = 50, offset: int = 0) -> dict[str
                 'TTL expired)'
             ),
         )
-    cols, rows = _get_db().fetch_paginated(uuid, limit, offset)
+    try:
+        cols, rows = _get_db().fetch_paginated(uuid, limit, offset, order_by)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return _rows_response(cols, rows)
 
 

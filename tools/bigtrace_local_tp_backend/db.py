@@ -123,6 +123,47 @@ def safe_table_id(query_uuid: str) -> str:
     return 'bigtrace_' + query_uuid.replace('-', '_')
 
 
+def parse_order_by(s: str) -> list[tuple[str, str]]:
+    """Parse an AIP-132 `order_by` string into (field, direction) pairs.
+
+    Grammar (AIP-132 §Ordering):
+        order_by  = field [direction] *( "," field [direction] )
+        direction = "asc" | "desc"            ; default "asc"
+
+    Examples:
+        ""                       -> []
+        "name"                   -> [("name", "ASC")]
+        "name desc"              -> [("name", "DESC")]
+        "name desc, dur asc"     -> [("name", "DESC"), ("dur", "ASC")]
+
+    Returns a list with directions normalized to upper-case `ASC`/`DESC`
+    so the caller can splice them straight into SQL. Raises `ValueError`
+    on syntax errors. Column-name validation against the live schema is
+    the caller's responsibility — this function is purely lexical.
+    """
+    out: list[tuple[str, str]] = []
+    if not s.strip():
+        return out
+    for raw in s.split(','):
+        token = raw.strip()
+        if not token:
+            raise ValueError('empty order_by entry')
+        parts = token.split()
+        if len(parts) > 2:
+            raise ValueError(f'invalid order_by entry: {token!r}')
+        field = parts[0]
+        direction = 'ASC'
+        if len(parts) == 2:
+            d = parts[1].lower()
+            if d not in ('asc', 'desc'):
+                raise ValueError(
+                    f"direction must be 'asc' or 'desc': {token!r}"
+                )
+            direction = d.upper()
+        out.append((field, direction))
+    return out
+
+
 # Map Python types from the first sample row → DuckDB column types.
 _TYPE_MAP = {
     bool: 'BOOLEAN',
@@ -667,6 +708,7 @@ class Database:
         query_uuid: str,
         limit: int,
         offset: int,
+        order_by: str = '',
     ) -> tuple[list[str], list[list[Any]]]:
         """Return (column_names, rows[offset:offset+limit]).
 
@@ -674,15 +716,50 @@ class Database:
         (via `get_qe(...).table_name is not None`). If the table doesn't
         actually exist (legitimate "in flight, no merge yet"), returns
         ([], []).
+
+        `order_by` is an AIP-132 ordering string ("name desc, dur asc").
+        Empty / absent → no ORDER BY (insertion order). Each field is
+        validated against the live table schema; unknown columns raise
+        `ValueError`. Identifiers are double-quoted in the generated
+        SQL so user column names that collide with DuckDB keywords or
+        contain special characters work correctly.
         """
+        # Lexical parse first — fails fast on bad syntax without
+        # touching the DB or holding the lock.
+        parsed = parse_order_by(order_by)
         tbl = safe_table_id(query_uuid)
         with self._lock:
+            if parsed:
+                allowed = {
+                    r[0] for r in self._conn.execute(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                         WHERE table_name = ?
+                        """,
+                        [tbl],
+                    ).fetchall()
+                }
+                if not allowed:
+                    # Table not yet materialized.
+                    return [], []
+                for field, _ in parsed:
+                    if field not in allowed:
+                        raise ValueError(
+                            f'unknown order_by column {field!r}; '
+                            f'available: {sorted(allowed)}'
+                        )
+                order_clause = ', '.join(
+                    f'"{f}" {d}' for f, d in parsed
+                )
+                sql = (
+                    f'SELECT * FROM {tbl} ORDER BY {order_clause} '
+                    f'LIMIT ? OFFSET ?'
+                )
+            else:
+                sql = f'SELECT * FROM {tbl} LIMIT ? OFFSET ?'
             try:
                 # DuckDB exposes column names via the cursor's description.
-                cur = self._conn.execute(
-                    f'SELECT * FROM {tbl} LIMIT ? OFFSET ?',
-                    [limit, offset],
-                )
+                cur = self._conn.execute(sql, [limit, offset])
             except duckdb.CatalogException:
                 # Table doesn't exist yet — query is still in flight and
                 # no worker has merged anything.

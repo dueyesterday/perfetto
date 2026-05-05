@@ -134,6 +134,54 @@ contains at most 1000 rows. Workers short-circuit at the cancel/limit
 checks once the cap is reached, so trailing traces don't waste TP
 work.
 
+### Sorting (`order_by` on `:fetch_results`)
+
+`GET /query_executions/{uuid}:fetch_results` accepts an optional
+`order_by` query parameter that follows
+[AIP-132 §Ordering](https://google.aip.dev/132#ordering):
+
+```
+order_by  = field [direction] *( "," field [direction] )
+direction = "asc" | "desc"            ; default "asc"
+```
+
+Examples:
+
+| `order_by`              | Effect                                          |
+| ----------------------- | ----------------------------------------------- |
+| `` (omitted)            | Insertion order (worker merge order). Default. |
+| `dur`                   | `ORDER BY "dur" ASC`                            |
+| `dur desc`              | `ORDER BY "dur" DESC`                           |
+| `name asc, dur desc`    | `ORDER BY "name" ASC, "dur" DESC`               |
+
+Field names must match a column of this query's materialized table
+(`trace_id` plus the user's SELECT columns, in DuckDB's
+`information_schema.columns`). The backend whitelists every field
+against that schema before composing the SQL — there is no SQL
+injection surface and no way to leak columns from other tables. All
+identifiers are double-quoted in the generated SQL so column names
+that collide with DuckDB keywords or contain special characters work
+correctly.
+
+Error shape (HTTP 400, `application/json`, `{"detail": "..."}`):
+
+- Unknown field: `unknown order_by column 'foo'; available: [...]`
+  (the available-columns list is included so clients can render a
+  helpful suggestion).
+- Bad direction: `direction must be 'asc' or 'desc': 'foo bar'`.
+- Empty / malformed token: `empty order_by entry` /
+  `invalid order_by entry: '...'`.
+
+Pagination (`limit`/`offset`) is applied **after** ordering — the
+backend always orders the full result, then slices. Repeating the
+same `offset` with a different `order_by` returns a different slice
+of the (re-)ordered result. The UI's data source preserves the
+user's current page across sort changes (page 3 + click `id asc` →
+third-page slice of the new ordering), matching the in-tree
+`InMemoryDataSource` and broader data-grid convention. Clients that
+want "top of new sort" semantics must explicitly request
+`offset=0`.
+
 ### Recovery on restart
 
 Any rows still `IN_PROGRESS` when the server starts (because a previous
@@ -247,7 +295,7 @@ Same shapes as `bigtrace_ref_backend`. Read
 | POST | `/execute_bigtrace_query` | Sync variant. Returns the assembled tabular result inline; logged to history with `materialized=false`. |
 | GET | `/query_executions/{uuid}:status` | **Strict progress-only**: `{queryUuid, status, processedTraces, totalTraces, processedRows}`. UI polls this every 3s; static metadata isn't here. |
 | GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata + tableName. 404 if soft-deleted. |
-| GET | `/query_executions/{uuid}:fetch_results` | Paginated `?limit=&offset=` over the materialized result. **404** if `tableName` is null (sync, FAILED, CANCELLED-with-0, soft-deleted, TTL-expired). |
+| GET | `/query_executions/{uuid}:fetch_results` | Paginated `?limit=&offset=` over the materialized result, with optional [AIP-132](https://google.aip.dev/132#ordering) `&order_by=field [asc\|desc][, field [asc\|desc]]*`. **404** if `tableName` is null (sync, FAILED, CANCELLED-with-0, soft-deleted, TTL-expired); **400** on malformed or unknown-column `order_by`. See "Sorting" above. |
 | POST | `/query_executions/{uuid}:cancel` | Atomically transitions to CANCELLED under the DB lock. 200. No row lands after this returns. |
 | GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. |
 | DELETE | `/query_executions/{uuid}` | Soft-delete. 200 on terminal, 409 on IN_PROGRESS, 404 if already deleted/missing. |
@@ -409,6 +457,11 @@ verifies:
     `tableLink` from a successful query points at a Datasette URL with
     `?sql=...`, that URL renders the table HTML, and the `.json`
     variant returns rows.
+16. AIP-132 `order_by` on `:fetch_results`: ascending and descending
+    on a real column return rows actually sorted; multi-field
+    (`name asc, dur desc`) returns rows; bad direction (`dur sideways`)
+    and unknown column both yield HTTP 400 with the offending token
+    surfaced in the body.
 
 If no traces are available it prints `SKIP` and returns 0.
 

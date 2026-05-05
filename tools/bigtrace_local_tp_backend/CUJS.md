@@ -100,6 +100,18 @@ where it's tested.
 | G4 | UI page-size change re-fetches with new limit | UI |
 | G5 | UI sticky table headers; only body scrolls | manual |
 
+## G'. Sorting (AIP-132 `order_by`)
+
+| #   | CUJ | Coverage |
+|-----|-----|----------|
+| GS1 | `:fetch_results?order_by=field` sorts ascending | HTTP-22 |
+| GS2 | `:fetch_results?order_by=field desc` sorts descending | HTTP-22 |
+| GS3 | Multi-field ordering (`a asc, b desc`) returns rows | HTTP-22 |
+| GS4 | Bad direction → HTTP 400 | HTTP-22 |
+| GS5 | Unknown column → HTTP 400 with available-columns list in body | HTTP-22 |
+| GS6 | UI column-header click emits `&order_by=…` and rows reorder | manual (verified once via /tmp/verify_sort.js Playwright probe) |
+| GS7 | UI: clicking a header on a finished persistent query (re-opened from history) refetches sorted | manual |
+
 ## H. History panel
 
 | # | CUJ | Coverage |

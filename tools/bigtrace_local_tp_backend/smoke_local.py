@@ -1166,6 +1166,84 @@ def main() -> int:
         )
         print(f'    tableLink HTML rendered; JSON returned {len(ds_json["rows"])} rows')
 
+        # 22. AIP-132 order_by on :fetch_results.
+        #   Submit a query, then re-fetch sorted asc/desc and assert
+        #   the rows are actually in that order. Also assert that
+        #   malformed / unknown-column inputs return HTTP 400.
+        print('[22] order_by (AIP-132) end-to-end')
+        _, obsub = http(
+            'POST', '/execute_bigtrace_query_async',
+            body={
+                'limit': 50,
+                # `dur` is monotonic-ish across slices; comparing it
+                # gives a deterministic ordering test that doesn't
+                # depend on the trace contents.
+                'perfetto_sql': 'SELECT name, dur FROM slice LIMIT 50',
+                'settings': with_traces(),
+            },
+        )
+        ob_uuid = obsub['rows'][0]['values'][0]
+        wait_until(
+            lambda: http('GET', f'/query_executions/{ob_uuid}:status')[1]
+                    ['status'] == 'SUCCESS',
+            timeout=30.0, label='order_by test query SUCCESS',
+        )
+        # Ascending dur.
+        _, asc = http(
+            'GET',
+            f'/query_executions/{ob_uuid}:fetch_results'
+            f'?limit=50&offset=0&order_by=dur%20asc',
+        )
+        asc_durs = [r['values'][2] for r in asc.get('rows', [])
+                    if r['values'][2] is not None]
+        assert asc_durs == sorted(asc_durs), (
+            f'order_by=dur asc rows not ascending: {asc_durs[:10]}…'
+        )
+        # Descending dur.
+        _, desc_resp = http(
+            'GET',
+            f'/query_executions/{ob_uuid}:fetch_results'
+            f'?limit=50&offset=0&order_by=dur%20desc',
+        )
+        desc_durs = [r['values'][2] for r in desc_resp.get('rows', [])
+                     if r['values'][2] is not None]
+        assert desc_durs == sorted(desc_durs, reverse=True), (
+            f'order_by=dur desc rows not descending: {desc_durs[:10]}…'
+        )
+        # Multi-field ordering.
+        _, multi = http(
+            'GET',
+            f'/query_executions/{ob_uuid}:fetch_results'
+            f'?limit=50&offset=0&order_by=name%20asc%2C%20dur%20desc',
+        )
+        assert multi.get('rows'), (
+            'multi-field order_by returned no rows; smoke is broken'
+        )
+        # Bad direction → 400.
+        bad_dir_code, bad_dir_body = http_status_and_body(
+            'GET',
+            f'/query_executions/{ob_uuid}:fetch_results'
+            f'?order_by=dur%20sideways',
+        )
+        assert bad_dir_code == 400, (
+            f'bad direction expected 400, got {bad_dir_code}: {bad_dir_body}'
+        )
+        # Unknown column → 400.
+        bad_col_code, bad_col_body = http_status_and_body(
+            'GET',
+            f'/query_executions/{ob_uuid}:fetch_results'
+            f'?order_by=does_not_exist',
+        )
+        assert bad_col_code == 400, (
+            f'unknown column expected 400, got {bad_col_code}: {bad_col_body}'
+        )
+        assert 'does_not_exist' in bad_col_body, (
+            f'expected error to mention the offending column; got: '
+            f'{bad_col_body}'
+        )
+        print(f'    asc/desc/multi all sort correctly; bad direction + '
+              f'unknown column both return 400')
+
         print('\nALL CHECKS PASSED')
     except AssertionError as e:
         print(f'\nFAIL: {e}')
