@@ -1,0 +1,20 @@
+fastapi>=0.110
+uvicorn>=0.29
+protobuf>=3.20
+numpy>=1.23
+duckdb>=1.0
+# pyarrow unlocks DuckDB's bulk-insert fast path. executemany() is
+# orders of magnitude slower for parameterized inserts; Arrow ingests
+# 1M rows in <1s where executemany takes ~10 minutes.
+pyarrow>=14.0
+# Optional UI for browsing query history + materialized tables. Mounted
+# in-process under /datasette/ when --with-datasette is passed.
+# datasette-parquet adds DuckDB-file support to Datasette (the package
+# name is parquet-themed but it handles .duckdb files natively).
+datasette>=0.65
+datasette-parquet>=0.6
+# The `perfetto` Python package itself is provided via an editable install
+# pointing at ../../../perfetto/python. That step is run explicitly by the
+# setup script — see the README. We deliberately do NOT pin perfetto here so
+# that pip doesn't try to fetch it from PyPI during a plain
+# `pip install -r requirements.txt`.
