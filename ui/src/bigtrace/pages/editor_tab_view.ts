@@ -838,6 +838,7 @@ function attachAsyncDataSource(
     tab.queryUuid,
     queryClient,
     () => tab.pageSize,
+    () => tab.currentOffset,
     tab.lifecycle.signal,
   );
   tab.isLoading = true;

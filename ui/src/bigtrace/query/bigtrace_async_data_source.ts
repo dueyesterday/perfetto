@@ -29,20 +29,64 @@ type ModelWithColumns = DataSourceModel & {
   columns?: Array<{field: string; alias?: string}>;
 };
 
+/**
+ * `DataSource` adapter that pages a query's materialized result table
+ * through `BigtraceQueryClient.fetchResults`.
+ *
+ * Sorting contract
+ * ----------------
+ * The DataGrid widget expresses single-column sort via `model.sort =
+ * {alias, direction}` (alias = the column's `id`). We translate that
+ * into an [AIP-132 §Ordering](https://google.aip.dev/132#ordering)
+ * `order_by` string of the form `"<field> asc|desc"` and append it to
+ * the next `:fetch_results` URL.
+ *
+ * - The widget's `alias` is resolved back to the original SELECT
+ *   `field` via the `model.columns` mapping, because the backend's
+ *   column whitelist is on field names (not aliases).
+ * - When the sort spec changes, we refetch the user's *current page*
+ *   using `getCurrentOffset()` and `getPageSize()` — these report the
+ *   BigTrace tab's pagination state (driven by the toolbar Prev/Next
+ *   buttons), which is what the user actually sees. We deliberately
+ *   do NOT use `model.pagination`; that's the DataGrid widget's
+ *   internal virtualization offset, which is independent and
+ *   typically stays at 0. Sorting and pagination are orthogonal —
+ *   matching the in-tree `InMemoryDataSource` and the mainstream
+ *   data-grid convention. Page 3 + click `id asc` → third-page slice
+ *   of the new ordering, not the first slice.
+ * - Empty / absent sort → no `order_by` is sent; backend returns rows
+ *   in materialization order (worker insertion order). The widget
+ *   does not push down multi-column sort today; the data source's
+ *   serialization layer is intentionally limited to one field to
+ *   match.
+ */
 export class BigtraceAsyncDataSource implements DataSource {
   private loadedRows: Row[] = [];
   private isFetching = false;
   private columns: string[] = [];
   private error: string | null = null;
   private hasInitialFetchCompleted = false;
+  // AIP-132 §Ordering string ("name desc, dur asc"). Empty = backend
+  // returns rows in materialization order (worker insertion order).
+  // Tracked here so `useRows` can detect when the widget's sort spec
+  // changes and trigger a refetch from offset 0.
+  private currentOrderBy = '';
 
   // The signal is plumbed through to every fetchResults call. Owners
   // (typically a tab) abort it on close so we don't write into a destroyed
   // data source.
+  //
+  // `getCurrentOffset` reports the tab's current page offset (the
+  // value the BigTrace toolbar's Prev/Next buttons drive — NOT the
+  // DataGrid widget's internal virtualization offset, which lives
+  // separately on `model.pagination` and stays at 0 here). We need
+  // it on sort changes to refetch the user's current page with the
+  // new ordering instead of resetting to the top.
   constructor(
     private readonly queryUuid: string,
     private readonly queryClient: BigtraceQueryClient,
     private readonly getPageSize: () => number,
+    private readonly getCurrentOffset: () => number,
     private readonly signal?: AbortSignal,
   ) {
     // Trigger initial fetch to get schema and first batch of data
@@ -51,6 +95,32 @@ export class BigtraceAsyncDataSource implements DataSource {
 
   useRows(_model: DataSourceModel): DataSourceRows {
     const model = _model as ModelWithColumns;
+
+    // Detect sort changes from the widget. When the user clicks a
+    // column header, the DataGrid updates `model.sort` and re-renders.
+    // We translate that into an AIP-132 order_by string, and if it
+    // differs from what's currently loaded, refetch the user's
+    // current page with the new ordering applied at the backend.
+    //
+    // We keep the user on the same page (rather than resetting to
+    // page 1) to match the in-tree `InMemoryDataSource` convention
+    // and the broader data-grid norm: sort and pagination are
+    // orthogonal — clicking a header rearranges the data without
+    // jumping the user away from where they were.
+    const wantedOrderBy = this.formatOrderBy(model);
+    if (
+      wantedOrderBy !== this.currentOrderBy &&
+      this.hasInitialFetchCompleted &&
+      !this.isFetching
+    ) {
+      this.currentOrderBy = wantedOrderBy;
+      // Refetch the tab's current page with the new ordering. We use
+      // the tab's pagination state (driven by the BigTrace toolbar),
+      // NOT `model.pagination` (the DataGrid widget's virtualization
+      // offset, which is independent and typically stays at 0).
+      this.fetchMoreRows(this.getCurrentOffset(), this.getPageSize());
+    }
+
     // Map rows to aliases on the fly!
     const mappedRows = this.loadedRows.map((row) => {
       const mappedRow: Row = {};
@@ -75,6 +145,17 @@ export class BigtraceAsyncDataSource implements DataSource {
     };
   }
 
+  // The widget's sort spec is alias-based; the backend's materialized
+  // table uses the original SELECT field names. Resolve alias → field
+  // before serializing so the column whitelist on the backend matches.
+  private formatOrderBy(model: ModelWithColumns): string {
+    const sort = model.sort;
+    if (!sort) return '';
+    const col = model.columns?.find((c) => c.alias === sort.alias);
+    const field = col?.field ?? sort.alias;
+    return `${field} ${sort.direction.toLowerCase()}`;
+  }
+
   triggerFetch(offset: number, limit: number) {
     if (offset === 0) {
       // For first page refresh, we clear the first page rows to force reload
@@ -96,6 +177,7 @@ export class BigtraceAsyncDataSource implements DataSource {
         limit,
         offset,
         this.signal,
+        this.currentOrderBy,
       );
       this.loadedRows = [...result.rows];
       this.hasInitialFetchCompleted = true;

@@ -108,16 +108,34 @@ export class BigtraceQueryClient {
     });
   }
 
+  /**
+   * Page through a finished (or in-flight) async query's materialized
+   * result table.
+   *
+   * - `limit` / `offset` apply **after** ordering, so flipping
+   *   direction starts the user at the top of the new ordering.
+   * - `orderBy` follows
+   *   [AIP-132 §Ordering](https://google.aip.dev/132#ordering):
+   *   comma-separated list of `"<field> [asc|desc]"` entries; default
+   *   `asc`. Field names must match the materialized table's
+   *   columns; the backend rejects unknown fields and malformed
+   *   directions with HTTP 400.
+   * - Mid-flight queries (status=IN_PROGRESS) return whatever rows
+   *   workers have merged so far. Empty body is normal during the
+   *   merge gap.
+   */
   async fetchResults(
     uuid: string,
     limit: number,
     offset: number,
     signal?: AbortSignal,
+    orderBy?: string,
   ): Promise<QueryResultPage> {
-    const result = await this.requestJson<QueryResponsePayload>(
-      `/query_executions/${uuid}:fetch_results?limit=${limit}&offset=${offset}`,
-      {signal},
-    );
+    let path = `/query_executions/${uuid}:fetch_results?limit=${limit}&offset=${offset}`;
+    if (orderBy && orderBy.length > 0) {
+      path += `&order_by=${encodeURIComponent(orderBy)}`;
+    }
+    const result = await this.requestJson<QueryResponsePayload>(path, {signal});
     return parseQueryResponse(result);
   }
 

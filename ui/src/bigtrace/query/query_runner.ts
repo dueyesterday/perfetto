@@ -189,6 +189,7 @@ export class QueryRunner {
             tab.queryUuid,
             queryClient,
             () => tab.pageSize,
+            () => tab.currentOffset,
             tab.lifecycle.signal,
           )
         : new InMemoryDataSource([]);
@@ -415,6 +416,7 @@ export class QueryRunner {
         tab.queryUuid,
         client,
         () => tab.pageSize,
+        () => tab.currentOffset,
         tab.lifecycle.signal,
       );
     }
