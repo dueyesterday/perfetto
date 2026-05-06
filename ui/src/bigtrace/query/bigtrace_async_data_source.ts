@@ -31,34 +31,38 @@ type ModelWithColumns = DataSourceModel & {
 
 /**
  * `DataSource` adapter that pages a query's materialized result table
- * through `BigtraceQueryClient.fetchResults`.
+ * through `BigtraceQueryClient.fetchResults`, driving the DataGrid
+ * widget's virtualized scrolling.
+ *
+ * Pagination contract
+ * -------------------
+ * The Grid widget owns the scroll position and reports it on every
+ * render via `model.pagination = {offset, limit}`. We hold a single
+ * window of rows (`loadedRows`) that covers `[loadedOffset,
+ * loadedOffset + loadedLimit)`. When `useRows` is invoked with a
+ * `model.pagination` range we don't have, we kick off a fetch for the
+ * new range and `loadedRows` is replaced when it returns.
+ *
+ * `totalRows` comes from `getTotalRows()` (typically the
+ * QueryExecution's `processedRows`) so the Grid can size its virtual
+ * scrollbar correctly even though only a window is loaded at any time.
  *
  * Sorting contract
  * ----------------
  * The DataGrid widget expresses single-column sort via `model.sort =
  * {alias, direction}` (alias = the column's `id`). We translate that
  * into an [AIP-132 §Ordering](https://google.aip.dev/132#ordering)
- * `order_by` string of the form `"<field> asc|desc"` and append it to
- * the next `:fetch_results` URL.
+ * `order_by` query parameter on the next `:fetch_results` URL.
  *
  * - The widget's `alias` is resolved back to the original SELECT
  *   `field` via the `model.columns` mapping, because the backend's
  *   column whitelist is on field names (not aliases).
- * - When the sort spec changes, we refetch the user's *current page*
- *   using `getCurrentOffset()` and `getPageSize()` — these report the
- *   BigTrace tab's pagination state (driven by the toolbar Prev/Next
- *   buttons), which is what the user actually sees. We deliberately
- *   do NOT use `model.pagination`; that's the DataGrid widget's
- *   internal virtualization offset, which is independent and
- *   typically stays at 0. Sorting and pagination are orthogonal —
- *   matching the in-tree `InMemoryDataSource` and the mainstream
- *   data-grid convention. Page 3 + click `id asc` → third-page slice
- *   of the new ordering, not the first slice.
+ * - On a sort change we refetch the user's *current* viewport
+ *   (`model.pagination.offset/limit`). Sort and pagination stay
+ *   orthogonal — clicking a header rearranges the data without
+ *   jumping the user away from where they were.
  * - Empty / absent sort → no `order_by` is sent; backend returns rows
- *   in materialization order (worker insertion order). The widget
- *   does not push down multi-column sort today; the data source's
- *   serialization layer is intentionally limited to one field to
- *   match.
+ *   in materialization order.
  */
 export class BigtraceAsyncDataSource implements DataSource {
   private loadedRows: Row[] = [];
@@ -66,59 +70,57 @@ export class BigtraceAsyncDataSource implements DataSource {
   private columns: string[] = [];
   private error: string | null = null;
   private hasInitialFetchCompleted = false;
-  // AIP-132 §Ordering string ("name desc, dur asc"). Empty = backend
-  // returns rows in materialization order (worker insertion order).
-  // Tracked here so `useRows` can detect when the widget's sort spec
-  // changes and trigger a refetch from offset 0.
+  // Window currently held in `loadedRows`. Updated whenever a fetch
+  // completes successfully so subsequent `useRows` calls can detect
+  // whether the Grid wants a different window.
+  private loadedOffset = 0;
+  private loadedLimit = 0;
+  // AIP-132 §Ordering string ("name desc"). Empty = backend returns
+  // rows in materialization order.
   private currentOrderBy = '';
 
   // The signal is plumbed through to every fetchResults call. Owners
-  // (typically a tab) abort it on close so we don't write into a destroyed
-  // data source.
+  // (typically a tab) abort it on close so we don't write into a
+  // destroyed data source.
   //
-  // `getCurrentOffset` reports the tab's current page offset (the
-  // value the BigTrace toolbar's Prev/Next buttons drive — NOT the
-  // DataGrid widget's internal virtualization offset, which lives
-  // separately on `model.pagination` and stays at 0 here). We need
-  // it on sort changes to refetch the user's current page with the
-  // new ordering instead of resetting to the top.
+  // `getTotalRows` reports the total row count of the materialized
+  // table — typically `tab.execution.processedRows`. The Grid uses it
+  // to size the virtual scrollbar so the user can navigate the full
+  // result set even though only one window is loaded at any time.
   constructor(
     private readonly queryUuid: string,
     private readonly queryClient: BigtraceQueryClient,
-    private readonly getPageSize: () => number,
-    private readonly getCurrentOffset: () => number,
+    private readonly getTotalRows: () => number,
     private readonly signal?: AbortSignal,
-  ) {
-    // Trigger initial fetch to get schema and first batch of data
-    this.fetchMoreRows(0, this.getPageSize());
-  }
+  ) {}
 
   useRows(_model: DataSourceModel): DataSourceRows {
     const model = _model as ModelWithColumns;
-
-    // Detect sort changes from the widget. When the user clicks a
-    // column header, the DataGrid updates `model.sort` and re-renders.
-    // We translate that into an AIP-132 order_by string, and if it
-    // differs from what's currently loaded, refetch the user's
-    // current page with the new ordering applied at the backend.
-    //
-    // We keep the user on the same page (rather than resetting to
-    // page 1) to match the in-tree `InMemoryDataSource` convention
-    // and the broader data-grid norm: sort and pagination are
-    // orthogonal — clicking a header rearranges the data without
-    // jumping the user away from where they were.
     const wantedOrderBy = this.formatOrderBy(model);
-    if (
-      wantedOrderBy !== this.currentOrderBy &&
+    const wantedOffset = model.pagination?.offset ?? 0;
+    const wantedLimit = model.pagination?.limit ?? 0;
+
+    // Decide whether to fire a fetch. Three triggers:
+    //  1. Sort spec changed.
+    //  2. The Grid's viewport range no longer overlaps what's loaded.
+    //  3. We never fetched at all (initial render).
+    // Skip if a fetch is already in flight — the in-flight fetch will
+    // settle and trigger another `useRows`, at which point we
+    // re-evaluate. This prevents redraw storms.
+    const sortChanged = wantedOrderBy !== this.currentOrderBy;
+    const rangeChanged =
       this.hasInitialFetchCompleted &&
-      !this.isFetching
-    ) {
+      (wantedOffset !== this.loadedOffset ||
+        (wantedLimit > 0 && wantedLimit !== this.loadedLimit));
+    const needsInitial =
+      !this.hasInitialFetchCompleted && wantedLimit > 0;
+    if ((sortChanged || rangeChanged || needsInitial) && !this.isFetching) {
       this.currentOrderBy = wantedOrderBy;
-      // Refetch the tab's current page with the new ordering. We use
-      // the tab's pagination state (driven by the BigTrace toolbar),
-      // NOT `model.pagination` (the DataGrid widget's virtualization
-      // offset, which is independent and typically stays at 0).
-      this.fetchMoreRows(this.getCurrentOffset(), this.getPageSize());
+      // Use the Grid's requested range. On the very first render the
+      // limit may be 0 (model not fully populated yet); fall back to
+      // a small default so the schema can come back.
+      const fetchLimit = wantedLimit > 0 ? wantedLimit : 100;
+      this.fetchMoreRows(wantedOffset, fetchLimit);
     }
 
     // Map rows to aliases on the fly!
@@ -135,13 +137,16 @@ export class BigtraceAsyncDataSource implements DataSource {
       return mappedRow;
     });
 
-    const isPending = this.isFetching;
-
     return {
       rows: mappedRows,
-      totalRows: this.loadedRows.length,
-      rowOffset: 0,
-      isPending: isPending,
+      // Real total so the Grid sizes its scrollbar over the full
+      // dataset, not just the loaded window.
+      totalRows: this.getTotalRows(),
+      // Where the loaded rows start in the full result. The Grid uses
+      // this to position the rows correctly within its virtualized
+      // scroll area.
+      rowOffset: this.loadedOffset,
+      isPending: this.isFetching,
     };
   }
 
@@ -156,20 +161,34 @@ export class BigtraceAsyncDataSource implements DataSource {
     return `${field} ${sort.direction.toLowerCase()}`;
   }
 
-  triggerFetch(offset: number, limit: number) {
-    if (offset === 0) {
-      // For first page refresh, we clear the first page rows to force reload
-      for (let i = 0; i < limit; i++) {
-        delete this.loadedRows[i];
-      }
-    }
-    this.fetchMoreRows(offset, limit);
+  /**
+   * Re-fetch whatever window is currently loaded. Called by the
+   * "Refresh" button and by the query runner once the async query
+   * reaches a terminal-with-rows state. No-op if a fetch is already
+   * in flight.
+   */
+  async refresh(): Promise<void> {
+    if (this.isFetching) return;
+    // If nothing has been loaded yet, ask for the first window with a
+    // sensible default — virtualization will refine it on the next
+    // render.
+    const offset = this.loadedOffset;
+    const limit = this.loadedLimit > 0 ? this.loadedLimit : 100;
+    await this.fetchMoreRows(offset, limit);
   }
 
   private async fetchMoreRows(offset: number, limit: number) {
     if (this.signal?.aborted) return;
     this.error = null;
     this.isFetching = true;
+    // Single funnel for every :fetch_results call we make. Logged at
+    // info level so it shows up in DevTools without enabling debug
+    // verbosity. `[bigtrace]` prefix is grep-friendly.
+    console.log(
+      `[bigtrace] fetch_results uuid=${this.queryUuid.slice(0, 8)} ` +
+        `offset=${offset} limit=${limit} ` +
+        `order_by=${JSON.stringify(this.currentOrderBy)}`,
+    );
     m.redraw();
     try {
       const result = await this.queryClient.fetchResults(
@@ -180,6 +199,8 @@ export class BigtraceAsyncDataSource implements DataSource {
         this.currentOrderBy,
       );
       this.loadedRows = [...result.rows];
+      this.loadedOffset = offset;
+      this.loadedLimit = limit;
       this.hasInitialFetchCompleted = true;
 
       if (this.columns.length === 0 && result.columns.length > 0) {
@@ -188,7 +209,7 @@ export class BigtraceAsyncDataSource implements DataSource {
     } catch (e) {
       // Abort is expected when the owning tab closes; don't surface it.
       if (e instanceof QueryCancelledError) return;
-      console.error('Failed to fetch more rows:', e);
+      console.error('[bigtrace] fetch_results failed:', e);
       this.error = e instanceof Error ? e.message : String(e);
     } finally {
       this.isFetching = false;
@@ -196,18 +217,14 @@ export class BigtraceAsyncDataSource implements DataSource {
     }
   }
 
-  async ensureResultsLoaded(tab: {pageSize: number}): Promise<void> {
-    if (this.hasInitialFetchCompleted) {
-      return;
-    }
-    await this.fetchMoreRows(0, tab.pageSize);
-  }
-
-  async refresh(tab: {pageSize: number; currentOffset: number}): Promise<void> {
-    if (this.isFetching) {
-      return;
-    }
-    await this.fetchMoreRows(tab.currentOffset, tab.pageSize);
+  /**
+   * Kicks the data source after the async query reaches SUCCESS so
+   * the first window of rows lands without waiting for a render.
+   * No-op once any fetch has completed.
+   */
+  async ensureResultsLoaded(): Promise<void> {
+    if (this.hasInitialFetchCompleted) return;
+    await this.fetchMoreRows(0, 100);
   }
 
   getError(): string | null {

@@ -188,8 +188,7 @@ export class QueryRunner {
         ? new BigtraceAsyncDataSource(
             tab.queryUuid,
             queryClient,
-            () => tab.pageSize,
-            () => tab.currentOffset,
+            () => tab.execution?.processedRows ?? 0,
             tab.lifecycle.signal,
           )
         : new InMemoryDataSource([]);
@@ -271,7 +270,7 @@ export class QueryRunner {
       (details.tableName ?? '') !== '' &&
       exec.processedRows > 0
     ) {
-      await tab.dataSource.ensureResultsLoaded(tab);
+      await tab.dataSource.ensureResultsLoaded();
     } else if (exec.status === 'FAILED') {
       tab.queryResult.error =
         details.errorMessage ??
@@ -415,8 +414,7 @@ export class QueryRunner {
       tab.dataSource = new BigtraceAsyncDataSource(
         tab.queryUuid,
         client,
-        () => tab.pageSize,
-        () => tab.currentOffset,
+        () => tab.execution?.processedRows ?? 0,
         tab.lifecycle.signal,
       );
     }
@@ -480,7 +478,7 @@ export class QueryRunner {
     if (processedRows <= tab.lastProcessedRows) return;
 
     if (tab.dataSource instanceof BigtraceAsyncDataSource) {
-      await tab.dataSource.refresh(tab);
+      await tab.dataSource.refresh();
       tab.lastProcessedRows = processedRows;
     }
   }
@@ -548,9 +546,15 @@ export class QueryRunner {
         }
       });
 
-    // Auto-fetch results on success.
-    if (isSuccess && tab.dataSource instanceof BigtraceAsyncDataSource) {
-      tab.dataSource.triggerFetch(tab.currentOffset, tab.pageSize);
+    // No explicit auto-fetch on success: the same processedRows seen
+    // here was just handled by `maybeAutoFetchProgress` on this poll
+    // iteration (it called `refresh()` for the same window). When the
+    // editor renders the result panel after this redraw, the
+    // DataGrid widget will mount and its first `onLoadData` will
+    // request the actual viewport range — superseding any preload
+    // anyway. Issuing another `refresh()` here is a redundant
+    // round-trip.
+    if (isSuccess) {
       tab.lastProcessedRows = tab.execution?.processedRows ?? 0;
     }
   }

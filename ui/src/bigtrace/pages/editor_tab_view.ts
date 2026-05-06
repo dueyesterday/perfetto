@@ -23,7 +23,6 @@ import {EmptyState} from '../../widgets/empty_state';
 import {HotkeyGlyphs} from '../../widgets/hotkey_glyphs';
 import {Icon} from '../../widgets/icon';
 import {linkify} from '../../widgets/anchor';
-import {Select} from '../../widgets/select';
 import {Spinner} from '../../widgets/spinner';
 import {SplitPanel} from '../../widgets/split_panel';
 import {Stack, StackAuto} from '../../widgets/stack';
@@ -54,8 +53,6 @@ const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   'FAILED',
   'CANCELLED',
 ]);
-
-const PAGE_SIZE_OPTIONS: ReadonlyArray<number> = [50, 100, 250];
 
 export interface EditorTabViewAttrs {
   readonly tab: BigTraceEditorTab;
@@ -417,7 +414,7 @@ async function refreshAsyncStatus(tab: BigTraceEditorTab): Promise<void> {
     console.error('Failed to fetch query status on refresh:', e);
   }
   if (tab.dataSource instanceof BigtraceAsyncDataSource) {
-    tab.dataSource.triggerFetch(tab.currentOffset, tab.pageSize);
+    tab.dataSource.refresh();
     tab.lastProcessedRows = tab.execution?.processedRows ?? 0;
   }
   m.redraw();
@@ -642,7 +639,7 @@ function wrapInTabs(tableContent: m.Children): m.Children {
 
 function renderDataGrid(
   tab: BigTraceEditorTab,
-  tabsState: QueryTabsState,
+  _tabsState: QueryTabsState,
   _runner: QueryRunner,
   columns: ReadonlyArray<string>,
   queryResult: QueryResponse,
@@ -694,26 +691,26 @@ function renderDataGrid(
         'span.pf-query-page__results-summary',
         renderResultsSummary(tab, queryResult),
       ),
-      // Pagination sits in the middle of the toolbar — absolutely
-      // positioned so the summary stays anchored left and Copy Query
-      // / Export stay anchored right. Rendered inside the left slot
-      // because that's the only slot we can hook into; the SCSS lifts
-      // it out of the left Stack's flow.
-      tab.materialize &&
-        m(
-          'span.pf-query-page__pagination-center',
-          renderPaginationCenter(tab, tabsState, dataSource),
-        ),
     ],
-    toolbarItemsRight: renderPaginationToolbar(
-      tab,
-      tabsState,
-      queryResult,
-      dataSource,
-    ),
+    toolbarItemsRight: [
+      m(CopyToClipboardButton, {
+        textToCopy: queryResult.query,
+        title: 'Copy executed query to clipboard',
+        label: 'Copy Query',
+      }),
+    ],
   });
 }
 
+// Result-summary text shown in the toolbar's left slot.
+//
+// Sync queries: rowcount + duration on a single line.
+// Materialized queries: just the total. We deliberately don't render
+// a "Showing X-Y" range — the DataGrid widget virtualizes; the
+// "loaded window" the data source holds is a prefetch buffer (typically
+// viewport + ~80 rows above and below), not what the user actually
+// sees. Putting that range in the toolbar misleads more than it helps.
+// The Grid's scrollbar already shows the user's position.
 function renderResultsSummary(
   tab: BigTraceEditorTab,
   queryResult: QueryResponse,
@@ -721,103 +718,12 @@ function renderResultsSummary(
   if (!tab.materialize) {
     return `Returned ${queryResult.totalRowCount.toLocaleString()} rows in ${Math.round(queryResult.durationMs).toLocaleString()} ms`;
   }
-  const start = tab.currentOffset + 1;
   const processedRows = tab.execution?.processedRows ?? 0;
-  const end = Math.min(tab.currentOffset + tab.pageSize, processedRows);
   const isTerminal =
     tab.execution?.status !== undefined &&
     TERMINAL_STATUSES.has(tab.execution.status);
-  if (isTerminal) {
-    return `Showing ${start}-${end} of ${processedRows.toLocaleString()} rows`;
-  }
-  return `Showing ${start}-${end} rows`;
-}
-
-function renderPaginationToolbar(
-  _tab: BigTraceEditorTab,
-  _tabsState: QueryTabsState,
-  queryResult: QueryResponse,
-  _dataSource: DataSource,
-): m.Children[] {
-  // Right slot: result-level actions only (Copy Query). Pagination
-  // controls live in the centered slot — see renderPaginationCenter.
-  return [
-    m(CopyToClipboardButton, {
-      textToCopy: queryResult.query,
-      title: 'Copy executed query to clipboard',
-      label: 'Copy Query',
-    }),
-  ];
-}
-
-// Page-size selector + First/Prev/Next/Last navigation. Only renders
-// for materialized queries (paginated). Centered between the result
-// summary (left) and the Copy/Export actions (right).
-function renderPaginationCenter(
-  tab: BigTraceEditorTab,
-  tabsState: QueryTabsState,
-  dataSource: DataSource,
-): m.Children {
-  const processedRows = tab.execution?.processedRows ?? 0;
-  const atFirst = tab.currentOffset === 0;
-  const atLast = tab.currentOffset + tab.pageSize >= processedRows;
-  // Offset of the last page — floor((rows-1)/pageSize)*pageSize. Clamped
-  // to 0 when there are no rows yet so we don't compute a negative.
-  const lastPageOffset =
-    processedRows > 0
-      ? Math.floor((processedRows - 1) / tab.pageSize) * tab.pageSize
-      : 0;
-  const fetch = (offset: number) => {
-    tab.currentOffset = offset;
-    if (dataSource instanceof BigtraceAsyncDataSource) {
-      dataSource.triggerFetch(tab.currentOffset, tab.pageSize);
-    }
-  };
-  return [
-    m('span.pf-query-page__page-size-label', 'Rows per page:'),
-    m(
-      Select,
-      {
-        value: String(tab.pageSize),
-        onchange: (e: Event) => {
-          const newPageSize = Number((e.target as HTMLSelectElement).value);
-          tab.currentOffset =
-            Math.floor(tab.currentOffset / newPageSize) * newPageSize;
-          tab.pageSize = newPageSize;
-          tabsState.globalPageSize = newPageSize;
-          tabsState.markDirty();
-          if (dataSource instanceof BigtraceAsyncDataSource) {
-            dataSource.triggerFetch(tab.currentOffset, tab.pageSize);
-          }
-        },
-      },
-      PAGE_SIZE_OPTIONS.map((n) => m('option', {value: String(n)}, String(n))),
-    ),
-    m(Button, {
-      icon: 'first_page',
-      title: 'First page',
-      disabled: atFirst,
-      onclick: () => fetch(0),
-    }),
-    m(Button, {
-      icon: 'arrow_back',
-      title: 'Previous page',
-      disabled: atFirst,
-      onclick: () => fetch(Math.max(0, tab.currentOffset - tab.pageSize)),
-    }),
-    m(Button, {
-      icon: 'arrow_forward',
-      title: 'Next page',
-      disabled: atLast,
-      onclick: () => fetch(tab.currentOffset + tab.pageSize),
-    }),
-    m(Button, {
-      icon: 'last_page',
-      title: 'Last page',
-      disabled: atLast,
-      onclick: () => fetch(lastPageOffset),
-    }),
-  ];
+  const text = `${processedRows.toLocaleString()} rows`;
+  return isTerminal ? text : `${text} · running…`;
 }
 
 // ---------------------------------------------------------------------------
@@ -837,8 +743,7 @@ function attachAsyncDataSource(
   tab.dataSource = new BigtraceAsyncDataSource(
     tab.queryUuid,
     queryClient,
-    () => tab.pageSize,
-    () => tab.currentOffset,
+    () => tab.execution?.processedRows ?? 0,
     tab.lifecycle.signal,
   );
   tab.isLoading = true;

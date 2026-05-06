@@ -22,7 +22,6 @@ import {SettingFilter} from '../settings/settings_types';
 
 const QUERY_TABS_STORAGE_KEY = 'bigtraceQueryTabs';
 const DEFAULT_SQL = '';
-const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_LIMIT = 100;
 
 // Result of a single query execution as the editor tab understands it.
@@ -65,9 +64,7 @@ export interface BigTraceEditorTab {
   materialize: boolean;
   queryUuid?: string;
   pollInterval?: number;
-  currentOffset: number;
   lastProcessedRows: number;
-  pageSize: number;
   clientStartTime?: number;
   execution?: QueryExecution;
   // Incremented each time startPolling() is called. Stale poll loops
@@ -91,7 +88,6 @@ interface StoredTab {
 interface StoredState {
   readonly tabs: ReadonlyArray<StoredTab>;
   readonly activeTabId?: string;
-  readonly globalPageSize?: number;
 }
 
 // Manages the collection of editor tabs. Survives QueryPage re-mounts so
@@ -99,7 +95,6 @@ interface StoredState {
 export class QueryTabsState {
   tabs: BigTraceEditorTab[] = [];
   activeTabId = '';
-  globalPageSize = DEFAULT_PAGE_SIZE;
 
   private tabCounter = 0;
   private readonly debouncedSave = debounce(() => this.saveToStorage(), 1000);
@@ -157,9 +152,7 @@ export class QueryTabsState {
       lifecycle: new AbortController(),
       activeRequest: undefined,
       materialize: materialize ?? (queryUuid ? true : false),
-      currentOffset: 0,
       lastProcessedRows: 0,
-      pageSize: this.globalPageSize,
       queryUuid,
       pollGeneration: 0,
     };
@@ -232,7 +225,6 @@ export class QueryTabsState {
         error: t.queryResult?.error,
       })),
       activeTabId: this.activeTabId,
-      globalPageSize: this.globalPageSize,
     };
     localStorage.setItem(QUERY_TABS_STORAGE_KEY, JSON.stringify(state));
   }
@@ -248,9 +240,6 @@ export class QueryTabsState {
     }
     if (!Array.isArray(parsed.tabs) || parsed.tabs.length === 0) return false;
 
-    if (parsed.globalPageSize !== undefined) {
-      this.globalPageSize = parsed.globalPageSize;
-    }
     for (const t of parsed.tabs) {
       const tab = this.addNewTab(
         t.title,
