@@ -31,6 +31,7 @@ import {Tabs} from '../../widgets/tabs';
 import {TextInput} from '../../widgets/text_input';
 import {DataGrid} from '../../components/widgets/datagrid/datagrid';
 import {DataSource} from '../../components/widgets/datagrid/data_source';
+import {InMemoryDataSource} from '../../components/widgets/datagrid/in_memory_data_source';
 import {
   ColumnSchema,
   SchemaRegistry,
@@ -192,6 +193,45 @@ function renderEditorPanel(
   ]);
 }
 
+// "Running query…" indicator with a live-ticking elapsed-time
+// readout. Used while `tab.isLoading` is true and there's no
+// dataSource/queryResult yet (sync request in flight, or the brief
+// window between async submit and the first poll). Sync queries
+// have no polling loop to drive periodic redraws, so the component
+// owns its own setInterval — torn down on unmount.
+class RunningQuerySpinner implements m.ClassComponent<{startMs: number}> {
+  private timer: number | null = null;
+
+  oncreate(): void {
+    // 100 ms gives a smooth tenths-of-a-second tick without burning
+    // CPU. The Mithril global redraw is cheap (one component).
+    this.timer = window.setInterval(() => m.redraw(), 100);
+  }
+
+  onremove(): void {
+    if (this.timer !== null) {
+      window.clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  view({attrs: {startMs}}: m.Vnode<{startMs: number}>): m.Children {
+    // Reuse the async status-bar's formatter so a sync query that
+    // somehow ran for an hour reads "1h 2m 3s" rather than "3723s".
+    const elapsedMs = Math.max(0, Date.now() - startMs);
+    const durationStr = Duration.format(Duration.fromMillis(elapsedMs));
+    return m(
+      EmptyState,
+      {
+        title: `Running query… ${durationStr}`,
+        icon: 'hourglass_empty',
+        fillHeight: true,
+      },
+      m(Spinner),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Results panel: status box (async only) + error banner + DataGrid/Chart.
 // ---------------------------------------------------------------------------
@@ -208,7 +248,7 @@ function renderResultsPanel(
       '.pf-query-page__results-panel',
       status,
       tab.isLoading
-        ? m('div')
+        ? m(RunningQuerySpinner, {startMs: tab.clientStartTime ?? Date.now()})
         : m(EmptyState, {
             title: 'Run a query to see results',
             icon: 'search',
@@ -580,6 +620,19 @@ function renderResultsGrid(
   }
 
   if (columns.length === 0) {
+    // Re-opened sync (Ephemeral) tab: results aren't persisted, so
+    // there's no schema to wait for. Show a clear recovery hint
+    // instead of a spinner that will never resolve.
+    if (!tab.materialize && tab.queryUuid) {
+      tableContent.push(
+        m(EmptyState, {
+          title: "Sync query results aren't persisted",
+          icon: 'refresh',
+          fillHeight: true,
+        }),
+      );
+      return wrapInTabs(tableContent);
+    }
     // Trigger useRows to start fetching data and columns.
     dataSource.useRows({mode: 'flat', columns: []});
     tableContent.push(
@@ -740,6 +793,16 @@ function attachAsyncDataSource(
   const endpoint = endpointSetting ? (endpointSetting.get() as string) : '';
   const queryClient = new BigtraceQueryClient(endpoint);
   tab.queryClient = queryClient;
+  // Sync (Ephemeral) queries aren't persisted server-side — there's no
+  // materialized table to fetch from. Attach an empty in-memory data
+  // source so the result panel can render a cleaner "re-run to see
+  // results" empty-state instead of trying (and failing) to load a
+  // schema. Skip polling too: the QueryStore already has the
+  // history-row metadata (sql, timing, processedRows).
+  if (!tab.materialize) {
+    tab.dataSource = new InMemoryDataSource([]);
+    return;
+  }
   tab.dataSource = new BigtraceAsyncDataSource(
     tab.queryUuid,
     queryClient,

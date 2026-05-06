@@ -546,15 +546,17 @@ export class QueryRunner {
         }
       });
 
-    // No explicit auto-fetch on success: the same processedRows seen
-    // here was just handled by `maybeAutoFetchProgress` on this poll
-    // iteration (it called `refresh()` for the same window). When the
-    // editor renders the result panel after this redraw, the
-    // DataGrid widget will mount and its first `onLoadData` will
-    // request the actual viewport range — superseding any preload
-    // anyway. Issuing another `refresh()` here is a redundant
-    // round-trip.
-    if (isSuccess) {
+    // Auto-fetch results on success. This is NOT redundant with
+    // `maybeAutoFetchProgress`: that function bails early for
+    // already-terminal queries (`if (isTerminal) return`), so when a
+    // tab is restored from localStorage with a UUID whose status is
+    // already SUCCESS, the per-poll path never fetches. Without this
+    // explicit hook the editor stays on "Loading schema…" forever
+    // because columns never arrive. For streaming queries this fires
+    // a duplicate fetch of the latest window — accept the round-trip
+    // rather than the bug.
+    if (isSuccess && tab.dataSource instanceof BigtraceAsyncDataSource) {
+      tab.dataSource.refresh();
       tab.lastProcessedRows = tab.execution?.processedRows ?? 0;
     }
   }

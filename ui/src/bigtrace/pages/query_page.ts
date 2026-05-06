@@ -35,17 +35,26 @@ interface QueryPageAttrs {
 // QueryPage instance. Same pattern as sidebarToggleFn in index.ts.
 export let queryRightSidebarToggleFn: (() => void) | undefined;
 
+// Module-level singletons. Survive route navigations
+// (/query → /settings → /query) so in-flight sync queries don't get
+// orphaned with the destroyed QueryPage instance, and so tab state
+// (`isLoading`, `clientStartTime`, `queryResult`, `dataSource`,
+// `BigtraceAsyncDataSource` polling) carries over. Async query state
+// already had a localStorage fallback via queryUuid, but sync queries
+// are UUID-less from the SPA's view and have no recovery path —
+// they'd vanish on every page switch.
+const sharedTabsState = new QueryTabsState();
+let sharedHistoryRefreshSignal = 0;
+const sharedRunner = new QueryRunner({
+  onHistoryChanged: () => {
+    sharedHistoryRefreshSignal++;
+  },
+  markDirty: () => sharedTabsState.markDirty(),
+});
+
 export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
   private useBigtraceBackend = false;
   private sidebarVisible = true;
-  private historyRefreshSignal = 0;
-  private readonly tabsState = new QueryTabsState();
-  private readonly runner = new QueryRunner({
-    onHistoryChanged: () => {
-      this.historyRefreshSignal++;
-    },
-    markDirty: () => this.tabsState.markDirty(),
-  });
 
   oninit({attrs}: m.Vnode<QueryPageAttrs>) {
     this.useBigtraceBackend = attrs.useBigtraceBackend || false;
@@ -54,13 +63,13 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
       m.redraw();
     };
     if (attrs.initialQuery) {
-      const activeTab = this.tabsState.getActiveTab();
+      const activeTab = sharedTabsState.getActiveTab();
       if (activeTab && activeTab.editorText.trim() === '') {
         activeTab.editorText = attrs.initialQuery;
       } else {
-        this.tabsState.addNewTab(undefined, attrs.initialQuery);
+        sharedTabsState.addNewTab(undefined, attrs.initialQuery);
       }
-      this.tabsState.markDirty();
+      sharedTabsState.markDirty();
     }
     if (this.useBigtraceBackend) {
       bigTraceSettingsStorage.loadSettings();
@@ -69,18 +78,18 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
   }
 
   view() {
-    const activeTab = this.tabsState.getActiveTab();
+    const activeTab = sharedTabsState.getActiveTab();
 
     // Build editor tabs for the Tabs widget.
-    const editorTabs: TabsTab[] = this.tabsState.tabs.map((tab) => ({
+    const editorTabs: TabsTab[] = sharedTabsState.tabs.map((tab) => ({
       key: tab.id,
       title: tab.title,
       leftIcon: 'code',
-      closeButton: this.tabsState.tabs.length > 1,
+      closeButton: sharedTabsState.tabs.length > 1,
       content: m(EditorTabView, {
         tab,
-        tabsState: this.tabsState,
-        runner: this.runner,
+        tabsState: sharedTabsState,
+        runner: sharedRunner,
         useBigtraceBackend: this.useBigtraceBackend,
       }),
     }));
@@ -88,21 +97,21 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
     const leftPanel = m(Tabs, {
       className: 'pf-query-page__editor-tabs',
       tabs: editorTabs,
-      activeTabKey: this.tabsState.activeTabId,
+      activeTabKey: sharedTabsState.activeTabId,
       reorderable: true,
       onTabChange: (key) => {
-        this.tabsState.activeTabId = key;
-        this.tabsState.markDirty();
+        sharedTabsState.activeTabId = key;
+        sharedTabsState.markDirty();
       },
-      onTabRename: (key, newTitle) => this.tabsState.renameTab(key, newTitle),
-      onTabClose: (key) => this.tabsState.closeTab(key),
+      onTabRename: (key, newTitle) => sharedTabsState.renameTab(key, newTitle),
+      onTabClose: (key) => sharedTabsState.closeTab(key),
       onTabReorder: (draggedKey, beforeKey) =>
-        this.tabsState.reorderTab(draggedKey, beforeKey),
+        sharedTabsState.reorderTab(draggedKey, beforeKey),
       newTabContent: [
         m(Button, {
           icon: 'add',
           className: 'pf-tabs__new-tab-btn',
-          onclick: () => this.tabsState.addNewTab(),
+          onclick: () => sharedTabsState.addNewTab(),
         }),
         m('div', {style: {flex: '1'}}),
         m(Button, {
@@ -125,7 +134,7 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
           leftIcon: 'history',
           content: m(QueryHistoryComponent, {
             className: 'pf-query-page__history',
-            refreshSignal: this.historyRefreshSignal,
+            refreshSignal: sharedHistoryRefreshSignal,
             setQuery: (query: string) => {
               if (activeTab) activeTab.editorText = query;
             },
@@ -137,7 +146,7 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
               limit?: number,
               startTime?: number,
             ) => {
-              const tab = this.tabsState.addNewTab(
+              const tab = sharedTabsState.addNewTab(
                 undefined,
                 query,
                 limit,
@@ -145,12 +154,12 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
                 materialize,
                 forceNew,
               );
-              this.tabsState.activeTabId = tab.id;
-              this.tabsState.markDirty();
+              sharedTabsState.activeTabId = tab.id;
+              sharedTabsState.markDirty();
               if (startTime !== undefined && tab.execution) {
                 tab.execution.startTime = startTime;
               }
-              await this.runner.resumeFromHistory(tab, query);
+              await sharedRunner.resumeFromHistory(tab, query);
             },
           }),
         },
@@ -203,7 +212,7 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
     return m(TableList, {
       sqlModules: modules,
       onQueryTable: (tableName, query) => {
-        this.tabsState.addNewTab(tableName, query);
+        sharedTabsState.addNewTab(tableName, query);
       },
     });
   }

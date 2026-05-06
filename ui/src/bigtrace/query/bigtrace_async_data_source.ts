@@ -112,8 +112,7 @@ export class BigtraceAsyncDataSource implements DataSource {
       this.hasInitialFetchCompleted &&
       (wantedOffset !== this.loadedOffset ||
         (wantedLimit > 0 && wantedLimit !== this.loadedLimit));
-    const needsInitial =
-      !this.hasInitialFetchCompleted && wantedLimit > 0;
+    const needsInitial = !this.hasInitialFetchCompleted && wantedLimit > 0;
     if ((sortChanged || rangeChanged || needsInitial) && !this.isFetching) {
       this.currentOrderBy = wantedOrderBy;
       // Use the Grid's requested range. On the very first render the
