@@ -136,6 +136,11 @@ export class QueryRunner {
     if (tab.queryResult !== undefined && !tab.materialize) {
       tab.dataSource = new InMemoryDataSource(tab.queryResult.rows);
       tab.isLoading = false;
+      // Sync queries don't go through finalizePolling, so we need to
+      // fire onHistoryChanged here for the sidebar to refresh from
+      // the IN_PROGRESS row to the SUCCESS one. The async path gets
+      // this for free via finalizePolling at the end of polling.
+      this.cb.onHistoryChanged();
     }
     this.redraw();
   }
@@ -252,7 +257,16 @@ export class QueryRunner {
         query: tab.editorText,
       };
     } else {
-      tab.queryResult.totalRowCount = exec.processedRows;
+      // Only sync `totalRowCount` from `exec.processedRows` for
+      // materialized (async) tabs — that's the live count from the
+      // materialized table. For sync, `processedRows` is 0 by design
+      // (the backend doesn't track row counts for sync) and the
+      // inline rows on `tab.queryResult` are the source of truth, so
+      // overwriting `totalRowCount` would zero the toolbar's
+      // "Returned X rows" summary.
+      if (tab.materialize) {
+        tab.queryResult.totalRowCount = exec.processedRows;
+      }
       tab.queryResult.lastStatementSql = tab.editorText;
       tab.queryResult.query = tab.editorText;
     }
