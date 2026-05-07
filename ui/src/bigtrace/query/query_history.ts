@@ -38,6 +38,12 @@ interface QueryHistoryComponentAttrs {
   readonly refreshSignal?: number;
 }
 
+// Round-trip debounce: `runner.run()` bumps the refresh signal *before*
+// submitting to the backend (so the new history row doesn't exist
+// yet at signal-fire time). Wait long enough for the round-trip and
+// the backend's IN_PROGRESS insert to land before refetching.
+const HISTORY_REFRESH_DEBOUNCE_MS = 1000;
+
 // Compact format for sidebar history rows. Examples:
 //   - same year: "5/4 3:47 PM"
 //   - other year: "5/4/25 3:47 PM"
@@ -53,37 +59,55 @@ function formatCompactDate(d: Date): string {
   return `${date} ${h}:${mm} ${m12}`;
 }
 
-export class QueryHistoryComponent
-  implements m.ClassComponent<QueryHistoryComponentAttrs>
-{
-  private history: QueryExecution[] = [];
+// Module-level state. Survives `QueryHistoryComponent` mount/unmount
+// cycles (e.g. toggling the right sidebar) so we don't re-fetch the
+// history list on every show. Refetches are signal-gated by the
+// runner via `refreshSignal` and debounced via
+// `HISTORY_REFRESH_DEBOUNCE_MS` to cover the round-trip between the
+// signal fire and the backend's row insert.
+class HistoryStore {
+  history: QueryExecution[] = [];
+  isLoading = true;
+  error: string | null = null;
+  activeTabKey = 'materialized';
+  private lastRefreshSignal = -1;
+  private debounceTimer?: number;
+  private hasEverLoaded = false;
 
-  private lastRefreshSignal = 0;
-  private refreshTimeout?: number;
-
-  onbeforeupdate(vnode: m.CVnode<QueryHistoryComponentAttrs>) {
-    if (vnode.attrs.refreshSignal !== this.lastRefreshSignal) {
-      this.lastRefreshSignal =
-        vnode.attrs.refreshSignal !== undefined ? vnode.attrs.refreshSignal : 0;
-      if (this.refreshTimeout !== undefined) {
-        window.clearTimeout(this.refreshTimeout);
-      }
-      this.refreshTimeout = window.setTimeout(() => {
-        this.loadHistory();
-        this.refreshTimeout = undefined;
-      }, 1000);
+  // Caller uses this on every render: it's a no-op when the signal
+  // hasn't changed (so sidebar toggles don't refetch), an immediate
+  // fetch on the very first call (so the page mount doesn't sit on
+  // the loading spinner for a debounce period), and a debounced
+  // fetch on subsequent signal bumps (round-trip delay).
+  requestRefresh(refreshSignal: number): void {
+    if (refreshSignal === this.lastRefreshSignal) return;
+    this.lastRefreshSignal = refreshSignal;
+    if (!this.hasEverLoaded) {
+      this.load();
+      return;
     }
-    return true;
+    if (this.debounceTimer !== undefined) {
+      window.clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = window.setTimeout(
+      () => this.load(),
+      HISTORY_REFRESH_DEBOUNCE_MS,
+    );
   }
-  private isLoading = true;
-  private error: string | null = null;
-  private activeTabKey = 'materialized';
 
-  oninit(_vnode: m.CVnode<QueryHistoryComponentAttrs>) {
-    this.loadHistory();
+  // Bypass the signal check + debounce. Used by the explicit Refresh
+  // button and after a Delete (where the user expects an immediate
+  // update).
+  refreshNow(): void {
+    if (this.debounceTimer !== undefined) {
+      window.clearTimeout(this.debounceTimer);
+      this.debounceTimer = undefined;
+    }
+    this.load();
   }
 
-  async loadHistory() {
+  private async load(): Promise<void> {
+    this.hasEverLoaded = true;
     this.isLoading = true;
     this.error = null;
     m.redraw();
@@ -99,11 +123,26 @@ export class QueryHistoryComponent
       m.redraw();
     }
   }
+}
+
+const historyStore = new HistoryStore();
+
+export class QueryHistoryComponent
+  implements m.ClassComponent<QueryHistoryComponentAttrs>
+{
+  oninit(vnode: m.CVnode<QueryHistoryComponentAttrs>) {
+    historyStore.requestRefresh(vnode.attrs.refreshSignal ?? 0);
+  }
+
+  onbeforeupdate(vnode: m.CVnode<QueryHistoryComponentAttrs>) {
+    historyStore.requestRefresh(vnode.attrs.refreshSignal ?? 0);
+    return true;
+  }
 
   view({attrs}: m.CVnode<QueryHistoryComponentAttrs>) {
     const {openQuery, ...rest} = attrs;
 
-    if (this.isLoading) {
+    if (historyStore.isLoading && historyStore.history.length === 0) {
       return m(
         EmptyState,
         {
@@ -115,16 +154,18 @@ export class QueryHistoryComponent
       );
     }
 
-    if (this.error) {
+    if (historyStore.error) {
       return m(EmptyState, {
-        title: `Failed to load history: ${this.error}`,
+        title: `Failed to load history: ${historyStore.error}`,
         icon: 'error',
         fillHeight: true,
       });
     }
 
-    const standardQueries = this.history.filter((h) => !h.materialized);
-    const materializedQueries = this.history.filter((h) => h.materialized);
+    const standardQueries = historyStore.history.filter((h) => !h.materialized);
+    const materializedQueries = historyStore.history.filter(
+      (h) => h.materialized,
+    );
 
     const tabs: TabsTab[] = [
       {
@@ -147,15 +188,15 @@ export class QueryHistoryComponent
           m(Button, {
             icon: 'refresh',
             title: 'Refresh history',
-            onclick: () => this.loadHistory(),
+            onclick: () => historyStore.refreshNow(),
           }),
         ],
       ),
       m(Tabs, {
         tabs: tabs,
-        activeTabKey: this.activeTabKey,
+        activeTabKey: historyStore.activeTabKey,
         onTabChange: (key) => {
-          this.activeTabKey = key;
+          historyStore.activeTabKey = key;
           m.redraw();
         },
       }),
@@ -242,7 +283,7 @@ export class QueryHistoryComponent
               onclick: async () => {
                 if (uuid) {
                   await queryHistoryStorage.deleteQuery(uuid);
-                  this.loadHistory();
+                  historyStore.refreshNow();
                 }
               },
               icon: Icons.Delete,

@@ -374,41 +374,35 @@ export class QueryRunner {
     wallStartMs: number,
   ): Promise<void> {
     const data = await client.executeAsync(query, tab.limit, settings, signal);
-    if (data.rows.length > 0) {
-      const firstRow = data.rows[0];
-      // The backend returns the query UUID in a column named 'queryUuid'
-      // or 'query_uuid'. Fall back to the first column for forward-
-      // compatibility.
-      const uuidCol =
-        data.columns.find(
-          (c) => c === 'queryUuid' || c === 'query_uuid' || c === 'uuid',
-        ) ?? data.columns[0];
-      if (uuidCol) {
-        tab.queryUuid = String(firstRow[uuidCol]);
-        // Always assign tab.execution to the store entry for this UUID so
-        // subsequent applyStatus()/queryStore.update() calls mutate the
-        // same object the UI reads from. Previously this was guarded by
-        // `if (tab.execution)`, which left fresh tabs with execution
-        // undefined — the status pill got stuck on UNKNOWN even after
-        // the polling loop saw FAILED/SUCCESS.
-        tab.execution = queryStore.getOrCreate(tab.queryUuid, tab.execution);
+    // Modern backends emit `queryUuid` as a top-level field; older
+    // shapes stuffed it into the single result row, which
+    // parseQueryResponse normalizes to the same `queryUuid`. Either
+    // way we just read it off the parsed page.
+    if (data.queryUuid !== undefined && data.queryUuid !== '') {
+      tab.queryUuid = data.queryUuid;
+      // Always assign tab.execution to the store entry for this UUID so
+      // subsequent applyStatus()/queryStore.update() calls mutate the
+      // same object the UI reads from. Previously this was guarded by
+      // `if (tab.execution)`, which left fresh tabs with execution
+      // undefined — the status pill got stuck on UNKNOWN even after
+      // the polling loop saw FAILED/SUCCESS.
+      tab.execution = queryStore.getOrCreate(tab.queryUuid, tab.execution);
 
-        // Best-effort fetch for a precise server start_time.
-        try {
-          const details = await client.getQueryExecution(
-            tab.queryUuid,
-            tab.lifecycle.signal,
-          );
-          const serverStartMs = isoToEpochMs(details?.startTime);
-          if (serverStartMs !== undefined && tab.queryUuid) {
-            queryStore.update(tab.queryUuid, {startTime: serverStartMs});
-          }
-        } catch (e) {
-          console.error('Failed to fetch query details after executeAsync:', e);
+      // Best-effort fetch for a precise server start_time.
+      try {
+        const details = await client.getQueryExecution(
+          tab.queryUuid,
+          tab.lifecycle.signal,
+        );
+        const serverStartMs = isoToEpochMs(details?.startTime);
+        if (serverStartMs !== undefined && tab.queryUuid) {
+          queryStore.update(tab.queryUuid, {startTime: serverStartMs});
         }
-
-        this.startPolling(tab);
+      } catch (e) {
+        console.error('Failed to fetch query details after executeAsync:', e);
       }
+
+      this.startPolling(tab);
     }
     if (tab.queryUuid) {
       tab.dataSource = new BigtraceAsyncDataSource(
@@ -440,6 +434,17 @@ export class QueryRunner {
     wallStartMs: number,
   ): Promise<void> {
     const result = await client.executeSync(query, tab.limit, settings, signal);
+    // Capture the server-assigned UUID into the tab so the tab
+    // tracks its most recent run. Mirrors `runAsync`: each Run
+    // updates `tab.queryUuid` to the new history entry, even when
+    // the tab was originally opened from a different history
+    // entry. Backends that don't emit `queryUuid` (the mock) leave
+    // it undefined; we fall back to `tab.id` as the QueryStore key
+    // as before.
+    if (result.queryUuid !== undefined && result.queryUuid !== '') {
+      tab.queryUuid = result.queryUuid;
+      tab.execution = queryStore.getOrCreate(tab.queryUuid, tab.execution);
+    }
     tab.queryResult = {
       rows: [...result.rows],
       columns: [...result.columns],

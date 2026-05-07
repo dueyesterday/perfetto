@@ -20,7 +20,15 @@ import {RawQueryExecution} from './query_history_storage';
 // `values` array aligned with `columnNames`. Cell values are whatever the
 // backend can express in JSON; we don't translate them here — the renderer
 // receives them as-is and decides how to display.
+//
+// `queryUuid` is the server-assigned identifier for the run. Modern
+// backends emit it as a top-level field on both sync and async submit
+// responses. Older / mock backends still ship the async UUID inside a
+// `{columnNames: ['queryUuid'], rows: [{values: [uuid]}]}` envelope —
+// `parseQueryResponse` falls back to that legacy shape when the
+// top-level field is absent.
 interface QueryResponsePayload {
+  queryUuid?: string;
   columnNames?: string[];
   rows?: Array<{values: Array<string | number | null>}>;
 }
@@ -28,6 +36,7 @@ interface QueryResponsePayload {
 export interface QueryResultPage {
   readonly rows: ReadonlyArray<DataGridRow>;
   readonly columns: ReadonlyArray<string>;
+  readonly queryUuid?: string;
 }
 
 // Thrown when a request is aborted via its AbortSignal. Callers should treat
@@ -213,6 +222,20 @@ export class BigtraceQueryClient {
       const errorText = await response
         .text()
         .catch(() => 'Failed to read response body');
+      // BigTrace's wire contract carries human-readable error
+      // descriptions in a top-level `detail` field on the JSON body.
+      // Extract that so the UI surfaces the reason (e.g. "Query X
+      // is not materialized") rather than the raw JSON envelope.
+      // Falls back to the body text if it isn't JSON.
+      let detail = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (typeof parsed?.detail === 'string') {
+          detail = parsed.detail;
+        }
+      } catch {
+        // Not JSON — use the body as-is.
+      }
       if (response.status === 404) {
         // Best-effort UUID extraction from /query_executions/{uuid} or
         // /query_executions/{uuid}:status etc. Falls back to the path if
@@ -222,13 +245,13 @@ export class BigtraceQueryClient {
       }
       if (response.status === 403) {
         throw new Error(
-          `HTTP error! status: ${response.status}. This might be an ` +
-            `authentication issue. Please ensure you are logged in with ` +
-            `the correct credentials. Backend says: ${errorText}`,
+          `HTTP error! status: ${response.status}, message: ${detail}. ` +
+            `This might be an authentication issue. Please ensure you ` +
+            `are logged in with the correct credentials.`,
         );
       }
       throw new Error(
-        `HTTP error! status: ${response.status}, message: ${errorText}`,
+        `HTTP error! status: ${response.status}, message: ${detail}`,
       );
     }
     return response;
@@ -260,7 +283,7 @@ export function parseQueryResponse(
     result.rows === undefined ||
     result.rows === null
   ) {
-    return {rows: [], columns: []};
+    return {rows: [], columns: [], queryUuid: result.queryUuid};
   }
 
   const columns = colNames.filter((h): h is string => h !== null);
@@ -274,5 +297,14 @@ export function parseQueryResponse(
     }
     return out;
   });
-  return {rows, columns};
+  // Prefer the top-level `queryUuid` (modern wire shape). Legacy
+  // shape stuffed the uuid into a single-cell tabular response with
+  // a `queryUuid` column — recover it from `rows[0]` if the
+  // top-level field is absent.
+  let queryUuid = result.queryUuid;
+  if (queryUuid === undefined && rows.length === 1) {
+    const v = rows[0]['queryUuid'];
+    if (typeof v === 'string') queryUuid = v;
+  }
+  return {rows, columns, queryUuid};
 }

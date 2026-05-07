@@ -260,21 +260,72 @@ function renderResultsPanel(
   const errorBanner = renderErrorBanner(tab);
   const processedRows = tab.execution?.processedRows ?? 0;
 
+  // Sync (Ephemeral) re-open from history with no re-run yet:
+  // results aren't persisted server-side, and `processedRows` is
+  // intentionally 0 (the backend doesn't track row counts for sync
+  // queries — it'd be misleading metadata). Show an explicit hint
+  // rather than fall into the `processedRows == 0` "Query returned
+  // no rows" branch, which would imply the original run had no
+  // rows. The discriminator is `tab.queryResult.rows.length`:
+  // resumeFromHistory leaves it at 0; runSync repopulates it on
+  // re-run. Errors fall through to the regular path so the banner
+  // surfaces them.
+  const isSyncReopenNoRerun =
+    !tab.materialize &&
+    Boolean(tab.queryUuid) &&
+    tab.queryResult.rows.length === 0 &&
+    !tab.queryResult.error;
+
+  // Async tab whose materialized table is gone (TTL-expired,
+  // CANCELLED-with-zero-rows, or post-failure cleanup), but the
+  // metadata row still exists with `processedRows > 0`. Without
+  // this branch the editor enters renderResultsGrid → "Loading
+  // schema..." → triggers a dummy useRows (no pagination) → the
+  // data source's `needsInitial` gate requires `limit > 0` so no
+  // fetch fires → spinner never resolves. Detect upfront and show
+  // a recovery hint. Errors fall through (the error banner shows
+  // them).
+  const isAsyncTableCleared =
+    tab.materialize &&
+    Boolean(tab.queryUuid) &&
+    !tab.execution?.tableName &&
+    !tab.queryResult.error;
+
+  // Whether to render the grid. For async, gate on the live
+  // processedRows from the materialized table; for sync (whose
+  // `processedRows` stays at 0 server-side), gate on the inline
+  // rows actually held in tab.queryResult.
+  const hasRowsToShow = tab.materialize
+    ? processedRows > 0
+    : tab.queryResult.rows.length > 0;
+
   return m(
     '.pf-query-page__results-panel',
     status,
     m('.pf-query-page__results-container', [
       errorBanner,
-      processedRows > 0
-        ? renderResultsGrid(tab, tabsState, runner)
-        : tab.isLoading
-          ? m('div')
-          : !tab.queryResult.error &&
-            m(EmptyState, {
-              title: 'Query returned no rows',
-              icon: 'search',
+      isSyncReopenNoRerun
+        ? m(EmptyState, {
+            title: "Sync query results aren't persisted",
+            icon: 'refresh',
+            fillHeight: true,
+          })
+        : isAsyncTableCleared
+          ? m(EmptyState, {
+              title: 'Results no longer available',
+              icon: 'refresh',
               fillHeight: true,
-            }),
+            })
+          : hasRowsToShow
+            ? renderResultsGrid(tab, tabsState, runner)
+            : tab.isLoading
+              ? m('div')
+              : !tab.queryResult.error &&
+                m(EmptyState, {
+                  title: 'Query returned no rows',
+                  icon: 'search',
+                  fillHeight: true,
+                }),
     ]),
   );
 }
@@ -603,6 +654,11 @@ function renderResultsGrid(
 
   if (dataSource instanceof BigtraceAsyncDataSource) {
     const error = dataSource.getError();
+    // Show errors when the query is terminal (real failures) or when
+    // the error isn't a 400 (which during streaming is the backend's
+    // FAILED_PRECONDITION for "no rows yet" / "table not yet
+    // materialized" — transient by definition until the query
+    // finishes, so suppress to avoid flashing an error banner).
     if (
       error !== null &&
       error !== '' &&
@@ -620,20 +676,11 @@ function renderResultsGrid(
   }
 
   if (columns.length === 0) {
-    // Re-opened sync (Ephemeral) tab: results aren't persisted, so
-    // there's no schema to wait for. Show a clear recovery hint
-    // instead of a spinner that will never resolve.
-    if (!tab.materialize && tab.queryUuid) {
-      tableContent.push(
-        m(EmptyState, {
-          title: "Sync query results aren't persisted",
-          icon: 'refresh',
-          fillHeight: true,
-        }),
-      );
-      return wrapInTabs(tableContent);
-    }
-    // Trigger useRows to start fetching data and columns.
+    // Async query mid-flight: schema hasn't arrived yet. Trigger
+    // `useRows` so the data source starts fetching, then show a
+    // spinner. (Sync re-opens are intercepted upstream in
+    // renderResultsPanel by the `isSyncReopenNoRerun` branch, so
+    // they never reach here.)
     dataSource.useRows({mode: 'flat', columns: []});
     tableContent.push(
       m(
