@@ -38,15 +38,15 @@ log = logging.getLogger('bigtrace_local.pool')
 
 @dataclass
 class PooledTP:
-    path: str
-    tp: TraceProcessor
-    # Held by a worker thread for the duration of its `tp.query(...)` call.
-    # Different traces have different locks so they run in parallel.
-    lock: threading.Lock
+  path: str
+  tp: TraceProcessor
+  # Held by a worker thread for the duration of its `tp.query(...)` call.
+  # Different traces have different locks so they run in parallel.
+  lock: threading.Lock
 
 
 class TracePool:
-    """LRU cache of TraceProcessor instances keyed by absolute trace path.
+  """LRU cache of TraceProcessor instances keyed by absolute trace path.
 
     Thread-safe: `acquire()` is callable from any thread. The internal
     pool lock is only held briefly (dict mutations + LRU bookkeeping).
@@ -54,74 +54,74 @@ class TracePool:
     workers can keep acquiring already-loaded TPs while one is loading.
     """
 
-    def __init__(self, max_size: int = 4) -> None:
-        self._max_size = max_size
-        self._entries: 'OrderedDict[str, PooledTP]' = OrderedDict()
-        self._mu = threading.Lock()
+  def __init__(self, max_size: int = 4) -> None:
+    self._max_size = max_size
+    self._entries: 'OrderedDict[str, PooledTP]' = OrderedDict()
+    self._mu = threading.Lock()
 
-    def acquire(self, path: str) -> PooledTP:
-        """Get (or load) the PooledTP for `path` and mark it MRU.
+  def acquire(self, path: str) -> PooledTP:
+    """Get (or load) the PooledTP for `path` and mark it MRU.
 
         The caller MUST take `entry.lock` before invoking any method on
         the underlying TraceProcessor.
         """
-        path = os.path.abspath(path)
+    path = os.path.abspath(path)
 
-        # Fast path under the pool lock: hit + LRU bump.
-        with self._mu:
-            entry = self._entries.get(path)
-            if entry is not None:
-                self._entries.move_to_end(path)
-                return entry
+    # Fast path under the pool lock: hit + LRU bump.
+    with self._mu:
+      entry = self._entries.get(path)
+      if entry is not None:
+        self._entries.move_to_end(path)
+        return entry
 
-            # Evict if at capacity. Eviction happens BEFORE we load the new
-            # TP so we don't temporarily blow the budget.
-            evicted: list[PooledTP] = []
-            while len(self._entries) >= self._max_size:
-                evicted_path, e = self._entries.popitem(last=False)
-                log.info('Evicting TP for %s', evicted_path)
-                evicted.append(e)
+      # Evict if at capacity. Eviction happens BEFORE we load the new
+      # TP so we don't temporarily blow the budget.
+      evicted: list[PooledTP] = []
+      while len(self._entries) >= self._max_size:
+        evicted_path, e = self._entries.popitem(last=False)
+        log.info('Evicting TP for %s', evicted_path)
+        evicted.append(e)
 
-        # Close evicted TPs OUTSIDE the pool lock — closing the shell
-        # waits on the subprocess and shouldn't block other acquisitions.
-        # We deliberately do NOT take e.lock here — if anyone is mid-query
-        # they'll see a broken-pipe shortly; that's an accepted limitation,
-        # documented in the README.
-        for e in evicted:
-            try:
-                e.tp.close()
-            except Exception as ex:  # noqa: BLE001
-                log.warning('Error closing evicted TP %s: %s', e.path, ex)
+    # Close evicted TPs OUTSIDE the pool lock — closing the shell
+    # waits on the subprocess and shouldn't block other acquisitions.
+    # We deliberately do NOT take e.lock here — if anyone is mid-query
+    # they'll see a broken-pipe shortly; that's an accepted limitation,
+    # documented in the README.
+    for e in evicted:
+      try:
+        e.tp.close()
+      except Exception as ex:  # noqa: BLE001
+        log.warning('Error closing evicted TP %s: %s', e.path, ex)
 
-        # Load outside the pool lock so we don't block other acquisitions.
-        # If two workers race for the same path we'll briefly load it twice;
-        # the loser's TP is closed below.
-        log.info('Loading TP for %s', path)
-        config = TraceProcessorConfig(load_timeout=30)
-        tp = TraceProcessor(trace=path, config=config)
-        new_entry = PooledTP(path=path, tp=tp, lock=threading.Lock())
+    # Load outside the pool lock so we don't block other acquisitions.
+    # If two workers race for the same path we'll briefly load it twice;
+    # the loser's TP is closed below.
+    log.info('Loading TP for %s', path)
+    config = TraceProcessorConfig(load_timeout=30)
+    tp = TraceProcessor(trace=path, config=config)
+    new_entry = PooledTP(path=path, tp=tp, lock=threading.Lock())
 
-        with self._mu:
-            existing = self._entries.get(path)
-            if existing is not None:
-                # Lost the race — drop the one we just loaded.
-                tp.close()
-                self._entries.move_to_end(path)
-                return existing
-            self._entries[path] = new_entry
-            self._entries.move_to_end(path)
-            return new_entry
+    with self._mu:
+      existing = self._entries.get(path)
+      if existing is not None:
+        # Lost the race — drop the one we just loaded.
+        tp.close()
+        self._entries.move_to_end(path)
+        return existing
+      self._entries[path] = new_entry
+      self._entries.move_to_end(path)
+      return new_entry
 
-    def close_all(self) -> None:
-        """Close every TP. Called on server shutdown."""
-        with self._mu:
-            entries = list(self._entries.values())
-            self._entries.clear()
-        for e in entries:
-            try:
-                e.tp.close()
-            except Exception as ex:  # noqa: BLE001
-                log.warning('Error closing TP for %s: %s', e.path, ex)
+  def close_all(self) -> None:
+    """Close every TP. Called on server shutdown."""
+    with self._mu:
+      entries = list(self._entries.values())
+      self._entries.clear()
+    for e in entries:
+      try:
+        e.tp.close()
+      except Exception as ex:  # noqa: BLE001
+        log.warning('Error closing TP for %s: %s', e.path, ex)
 
-    def size(self) -> int:
-        return len(self._entries)
+  def size(self) -> int:
+    return len(self._entries)

@@ -62,7 +62,10 @@ via `executemany`.
 The wire-protocol field `tableName` is the source of truth for "is
 there a fetchable result for this query." The UI guards every
 `:fetch_results` call on `tableName != null`; the backend enforces it
-as a safety net by 404-ing fetches when `tableName` is null.
+as a safety net by returning **HTTP 400 FAILED_PRECONDITION** when
+the entry exists but isn't fetchable. NOT_FOUND (404) is reserved
+for genuinely-missing UUIDs and out-of-band table drops — see the
+endpoint table below for the full mapping.
 
 | State                              | tableName |
 | ---------------------------------- | --------- |
@@ -107,7 +110,8 @@ as a safety net by 404-ing fetches when `tableName` is null.
 metadata row stays for audit. After soft-delete:
 
 - `GET /query_executions/{uuid}` (full), `:status`, `:fetch_results` →
-  404 (treats the entry as gone).
+  404 (treats the entry as gone — `_get_snapshot_or_404` filters
+  `WHERE deleted = FALSE`).
 - `GET /query_executions` (list) → filters out deleted rows.
 - Re-DELETE the same UUID → 404 (already gone).
 
@@ -122,7 +126,8 @@ the cleanup. Metadata rows survive — only the row buffer goes away.
 After expiry:
 
 - `tableName` is null on the metadata row;
-- `:fetch_results` returns 404;
+- `:fetch_results` returns **400 FAILED_PRECONDITION** ("no longer
+  has a materialized table");
 - The history list still shows the entry with its preserved
   status/SQL/processed counts.
 
@@ -291,11 +296,11 @@ Same shapes as `bigtrace_ref_backend`. Read
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/execute_bigtrace_query_async` | Returns `{columnNames:['queryUuid'],rows:[{values:[uuid]}]}`; spawns a background task that runs the SQL across every matching trace. tableName is set immediately. |
-| POST | `/execute_bigtrace_query` | Sync variant. Returns the assembled tabular result inline; logged to history with `materialized=false`. |
+| POST | `/execute_bigtrace_query_async` | Returns `{queryUuid: string}` (top-level). Spawns a background task that runs the SQL across every matching trace; tableName is set immediately. |
+| POST | `/execute_bigtrace_query` | Sync variant. Returns `{queryUuid, columnNames, rows}` — the assembled tabular result inline plus a server-assigned identifier. Logged to history with `materialized=false`. |
 | GET | `/query_executions/{uuid}:status` | **Strict progress-only**: `{queryUuid, status, processedTraces, totalTraces, processedRows}`. UI polls this every 3s; static metadata isn't here. |
 | GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata + tableName. 404 if soft-deleted. |
-| GET | `/query_executions/{uuid}:fetch_results` | Paginated `?limit=&offset=` over the materialized result, with optional [AIP-132](https://google.aip.dev/132#ordering) `&order_by=field [asc\|desc][, field [asc\|desc]]*`. **404** if `tableName` is null (sync, FAILED, CANCELLED-with-0, soft-deleted, TTL-expired); **400** on malformed or unknown-column `order_by`. See "Sorting" above. |
+| GET | `/query_executions/{uuid}:fetch_results` | Paginated `?limit=&offset=` over the materialized result, with optional [AIP-132](https://google.aip.dev/132#ordering) `&order_by=field [asc\|desc][, field [asc\|desc]]*`. Errors follow gRPC/AIP semantics: **404 NOT_FOUND** if missing/soft-deleted or the table is gone in DuckDB; **400 FAILED_PRECONDITION** if the entry exists but isn't fetchable (`materialized=false`, `processed_rows=0`, or `tableName=null` from FAILED/CANCELLED-with-zero/TTL-expired); **400 INVALID_ARGUMENT** on malformed or unknown-column `order_by`. See "Sorting" above. |
 | POST | `/query_executions/{uuid}:cancel` | Atomically transitions to CANCELLED under the DB lock. 200. No row lands after this returns. |
 | GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. |
 | DELETE | `/query_executions/{uuid}` | Soft-delete. 200 on terminal, 409 on IN_PROGRESS, 404 if already deleted/missing. |
@@ -425,13 +430,15 @@ verifies:
 2. trace_directory setting end-to-end (custom subdir works, bogus path
    returns HTTP 400),
 3. sync query with materialized=false logged in history;
-   `:fetch_results` returns 404 (no materialized table for sync),
+   `:fetch_results` returns 400 FAILED_PRECONDITION (sync queries
+   aren't materialized),
 4. async query, polling to SUCCESS,
 5. paginated `:fetch_results`,
 5a. streaming progress + mid-flight `:fetch_results` returning rows
     while IN_PROGRESS (verifies threaded merge is live, not batched),
 6. async query that fails (`SELECT * FROM does_not_exist`), with
-   `:fetch_results` returning 404 (FAILED clears tableName),
+   `:fetch_results` returning 400 FAILED_PRECONDITION (FAILED
+   clears tableName),
 7. cancel mid-flight reaching a terminal state,
 7a. partials-on-cancel: CANCELLED with rows > 0 keeps tableName +
     rows fetchable; soft-skip if cancel races natural completion,
@@ -440,7 +447,8 @@ verifies:
 9. soft delete: list filtered, all per-uuid endpoints 404 after
    DELETE, re-DELETE returns 404,
 10. TTL sweep: smoke runs the server with a tight TTL=5s and asserts
-    that fetch returns 404 + tableName=null after the wait, while
+    that fetch returns 400 FAILED_PRECONDITION + tableName=null
+    after the wait, while
     metadata is preserved.
 11. Result limit is **global**, not per-trace: `limit=7` over 14
     traces materializes ≤ 7 rows total.

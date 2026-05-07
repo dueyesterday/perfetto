@@ -24,18 +24,24 @@ never be ported verbatim into a real BigTrace backend.
 
 from typing import Any
 
-
 EXECUTION_SETTINGS: list[dict[str, Any]] = [
     {
         # Regex over filenames in the chosen `trace_directory`.
         # query_executor.list_matching_traces narrows the candidate
         # set with this before fanning out.
-        'id': 'trace_filter',
-        'name': 'Trace Filter',
-        'description': 'Filter traces by regex pattern (matched against filename)',
-        'disabled': False,
-        'category': 'TRACE_ADDRESS',
-        'plainString': {'defaultValue': '.*'},
+        'id':
+            'trace_filter',
+        'name':
+            'Trace Filter',
+        'description':
+            'Filter traces by regex pattern (matched against filename)',
+        'disabled':
+            False,
+        'category':
+            'TRACE_ADDRESS',
+        'plainString': {
+            'defaultValue': '.*'
+        },
     },
     {
         # On-disk directory the backend reads trace files from. Picked
@@ -43,13 +49,14 @@ EXECUTION_SETTINGS: list[dict[str, Any]] = [
         # request. Not persisted server-side.
         'id': 'trace_directory',
         'name': 'Trace Directory',
-        'description': (
-            'Filesystem path the backend reads .pftrace/.pb files from. '
-            'Re-resolved on every query.'
-        ),
+        'description':
+            ('Filesystem path the backend reads .pftrace/.pb files from. '
+             'Re-resolved on every query.'),
         'disabled': False,
         'category': 'TRACE_ADDRESS',
-        'plainString': {'defaultValue': ''},
+        'plainString': {
+            'defaultValue': ''
+        },
     },
     {
         # Caps the number of trace files processed per query, applied AFTER
@@ -58,16 +65,18 @@ EXECUTION_SETTINGS: list[dict[str, Any]] = [
         # `list_matching_traces`) are scheduled. 0 disables the cap.
         'id': 'trace_limit',
         'name': 'Trace Limit',
-        'description': (
-            'Maximum number of traces to process. Applied after Trace '
-            'Filter; ignored if 0.'
-        ),
+        'description':
+            ('Maximum number of traces to process. Applied after Trace '
+             'Filter; ignored if 0.'),
         'disabled': False,
         'category': 'TRACE_ADDRESS',
-        'number': {'defaultValue': 100, 'min': 1, 'max': 10000},
+        'number': {
+            'defaultValue': 100,
+            'min': 1,
+            'max': 10000
+        },
     },
 ]
-
 
 # A real BigTrace deployment populates this from an indexer that pre-extracts
 # device/Android metadata from each trace and exposes it as filter chips.
@@ -79,23 +88,23 @@ TRACE_METADATA_SETTINGS: list[dict[str, Any]] = []
 
 
 def trace_filter_regex(settings: list[dict[str, Any]]) -> str:
-    """Pull the `trace_filter` regex out of a settings request body.
+  """Pull the `trace_filter` regex out of a settings request body.
 
     Defaults to '.*' (match everything) if not supplied or if the value
     is empty. The wire-format key is `setting_id` (snake_case) — what
     the BigTrace UI emits and what `~/Projects/CLAUDE.md` documents.
     Strict matching: any other key (e.g. `settingId`, `id`) is ignored.
     """
-    for s in settings or []:
-        if s.get('setting_id') == 'trace_filter':
-            values = s.get('values') or []
-            if values and isinstance(values, list) and values[0]:
-                return str(values[0])
-    return '.*'
+  for s in settings or []:
+    if s.get('setting_id') == 'trace_filter':
+      values = s.get('values') or []
+      if values and isinstance(values, list) and values[0]:
+        return str(values[0])
+  return '.*'
 
 
 def trace_limit(settings: list[dict[str, Any]]) -> int:
-    """Pull the `trace_limit` cap out of a settings request body.
+  """Pull the `trace_limit` cap out of a settings request body.
 
     Returns 0 when the setting is missing, malformed, or set to 0
     explicitly — both meanings collapsed to "no cap" because the UI
@@ -103,28 +112,28 @@ def trace_limit(settings: list[dict[str, Any]]) -> int:
     omitting the setting entirely. The caller should treat the
     returned value as "if > 0, truncate the trace list to this many".
     """
-    for s in settings or []:
-        if s.get('setting_id') == 'trace_limit':
-            values = s.get('values') or []
-            if values and isinstance(values, list):
-                try:
-                    return max(0, int(values[0]))
-                except (TypeError, ValueError):
-                    return 0
-    return 0
+  for s in settings or []:
+    if s.get('setting_id') == 'trace_limit':
+      values = s.get('values') or []
+      if values and isinstance(values, list):
+        try:
+          return max(0, int(values[0]))
+        except (TypeError, ValueError):
+          return 0
+  return 0
 
 
 def trace_directory(settings: list[dict[str, Any]]) -> str:
-    """Pull the `trace_directory` path out of a settings request body.
+  """Pull the `trace_directory` path out of a settings request body.
 
     Returns '' when the setting is missing or empty — the caller
     (`server._resolve_trace_dir`) translates that into a 400 response.
     Wire-format key is `setting_id` (snake_case) — see
     `trace_filter_regex` for the rationale.
     """
-    for s in settings or []:
-        if s.get('setting_id') == 'trace_directory':
-            values = s.get('values') or []
-            if values and isinstance(values, list) and values[0]:
-                return str(values[0])
-    return ''
+  for s in settings or []:
+    if s.get('setting_id') == 'trace_directory':
+      values = s.get('values') or []
+      if values and isinstance(values, list) and values[0]:
+        return str(values[0])
+  return ''

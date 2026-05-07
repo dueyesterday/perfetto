@@ -45,7 +45,7 @@ where it's tested.
 | C2 | Empty query is a no-op (no backend call) | UI |
 | C3 | Double-quote in SQL shows the warning callout | UI |
 | C4 | Sync logged in `/query_executions` with `materialized=false` | HTTP-3 |
-| C5 | `:fetch_results` on a sync UUID → 404 (no materialized table) | HTTP-3 |
+| C5 | `:fetch_results` on a sync UUID → 400 FAILED_PRECONDITION ("not materialized") | HTTP-3 |
 | C6 | Sync history visible in the Ephemeral subtab | UI |
 | C7 | Sync `start_time` and `end_time` differ (real duration in history) | HTTP-17 (async variant; sync via live probe in this session) |
 | C8 | Sync honors global limit (rows ≤ N) | TODO (HTTP) — covered for async; sync probe is manual |
@@ -72,7 +72,7 @@ where it's tested.
 | E1 | Async failure (every trace errors) → status FAILED | HTTP-6 |
 | E2 | FAILED query has `errorMessage` on full GET | HTTP-6 |
 | E3 | FAILED `tableName` is null | HTTP-6 |
-| E4 | `:fetch_results` on a FAILED UUID → 404 | HTTP-6 |
+| E4 | `:fetch_results` on a FAILED UUID → 400 FAILED_PRECONDITION (tableName cleared) | HTTP-6 |
 | E5 | UI shows error banner with collapsed traceback | UI |
 | E6 | Submit-time validation: bogus trace dir → 400 | HTTP-3a |
 
@@ -170,7 +170,7 @@ where it's tested.
 |---|-----|----------|
 | L1 | Materialized table dropped after `--table-ttl-seconds` | HTTP-10 |
 | L2 | Metadata row (status, sql, timing, processedRows) preserved | HTTP-10 |
-| L3 | `:fetch_results` on TTL-expired UUID → 404 | HTTP-10 |
+| L3 | `:fetch_results` on TTL-expired UUID → 400 FAILED_PRECONDITION (tableName cleared) | HTTP-10 |
 | L4 | TTL skips IN_PROGRESS queries | implicit; not directly asserted | TODO (HTTP) |
 
 ## M. Server restart / persistence

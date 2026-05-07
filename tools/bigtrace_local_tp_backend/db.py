@@ -59,36 +59,36 @@ import pyarrow as pa
 
 log = logging.getLogger('bigtrace_local.db')
 
-
 # ---------------------------------------------------------------------------
 # Wire-protocol-friendly snapshot of one query_executions row.
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class QESnapshot:
-    """In-memory view of a query_executions row.
+  """In-memory view of a query_executions row.
 
     Built by `Database` from a SELECT result. Handlers serialize this
     into the JSON wire shape via `to_raw_dict` / `to_status_dict` (in
     server.py). All times are ISO-8601 strings (UTC) to match the wire
     protocol — the DuckDB columns are TIMESTAMP, converted on read.
     """
-    query_uuid: str
-    status: str
-    perfetto_sql: str
-    query_limit: int
-    materialized: bool
-    start_time: str  # ISO-8601
-    end_time: Optional[str]
-    processed_rows: int
-    processed_traces: int
-    total_traces: int
-    error_message: Optional[str]
-    table_name: Optional[str]
+  query_uuid: str
+  status: str
+  perfetto_sql: str
+  query_limit: int
+  materialized: bool
+  start_time: str  # ISO-8601
+  end_time: Optional[str]
+  processed_rows: int
+  processed_traces: int
+  total_traces: int
+  error_message: Optional[str]
+  table_name: Optional[str]
 
 
 def _ts_to_iso(ts: Any) -> Optional[str]:
-    """Format a DuckDB TIMESTAMP back to ISO-8601 with **millisecond**
+  """Format a DuckDB TIMESTAMP back to ISO-8601 with **millisecond**
     precision.
 
     Sub-second precision matters because most queries complete in well
@@ -96,13 +96,13 @@ def _ts_to_iso(ts: Any) -> Optional[str]:
     `.000Z`) made the UI show a flat 0s duration. DuckDB's TIMESTAMP
     is microsecond-precise; we keep ms in the wire and pad/truncate.
     """
-    if ts is None:
-        return None
-    return ts.strftime('%Y-%m-%dT%H:%M:%S') + f'.{ts.microsecond // 1000:03d}Z'
+  if ts is None:
+    return None
+  return ts.strftime('%Y-%m-%dT%H:%M:%S') + f'.{ts.microsecond // 1000:03d}Z'
 
 
 def utcnow() -> datetime:
-    """Naive UTC datetime suitable for binding to a DuckDB TIMESTAMP.
+  """Naive UTC datetime suitable for binding to a DuckDB TIMESTAMP.
 
     Use this instead of DuckDB's `CURRENT_TIMESTAMP`: the latter
     resolves to **local time** when it lands in a TIMESTAMP column,
@@ -110,7 +110,7 @@ def utcnow() -> datetime:
     guarantees UTC end-to-end and lets the caller capture distinct
     start_time / end_time around the actual work.
     """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+  return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # DuckDB-compatible identifier from a UUID. Hyphens aren't allowed in
@@ -120,11 +120,11 @@ def utcnow() -> datetime:
 # derived mechanically from `tableName`, so clients can paste either
 # directly into a SQL editor.
 def safe_table_id(query_uuid: str) -> str:
-    return 'bigtrace_' + query_uuid.replace('-', '_')
+  return 'bigtrace_' + query_uuid.replace('-', '_')
 
 
 def parse_order_by(s: str) -> list[tuple[str, str]]:
-    """Parse an AIP-132 `order_by` string into (field, direction) pairs.
+  """Parse an AIP-132 `order_by` string into (field, direction) pairs.
 
     Grammar (AIP-132 §Ordering):
         order_by  = field [direction] *( "," field [direction] )
@@ -141,27 +141,25 @@ def parse_order_by(s: str) -> list[tuple[str, str]]:
     on syntax errors. Column-name validation against the live schema is
     the caller's responsibility — this function is purely lexical.
     """
-    out: list[tuple[str, str]] = []
-    if not s.strip():
-        return out
-    for raw in s.split(','):
-        token = raw.strip()
-        if not token:
-            raise ValueError('empty order_by entry')
-        parts = token.split()
-        if len(parts) > 2:
-            raise ValueError(f'invalid order_by entry: {token!r}')
-        field = parts[0]
-        direction = 'ASC'
-        if len(parts) == 2:
-            d = parts[1].lower()
-            if d not in ('asc', 'desc'):
-                raise ValueError(
-                    f"direction must be 'asc' or 'desc': {token!r}"
-                )
-            direction = d.upper()
-        out.append((field, direction))
+  out: list[tuple[str, str]] = []
+  if not s.strip():
     return out
+  for raw in s.split(','):
+    token = raw.strip()
+    if not token:
+      raise ValueError('empty order_by entry')
+    parts = token.split()
+    if len(parts) > 2:
+      raise ValueError(f'invalid order_by entry: {token!r}')
+    field = parts[0]
+    direction = 'ASC'
+    if len(parts) == 2:
+      d = parts[1].lower()
+      if d not in ('asc', 'desc'):
+        raise ValueError(f"direction must be 'asc' or 'desc': {token!r}")
+      direction = d.upper()
+    out.append((field, direction))
+  return out
 
 
 # Map Python types from the first sample row → DuckDB column types.
@@ -175,49 +173,49 @@ _TYPE_MAP = {
 
 
 def _infer_column_types(sample_row: list[Any]) -> list[str]:
-    """Map one row's Python values to DuckDB column type names.
+  """Map one row's Python values to DuckDB column type names.
 
     `None` columns fall through to VARCHAR — DuckDB will accept any
     castable value going forward.
     """
-    out: list[str] = []
-    for v in sample_row:
-        if v is None:
-            out.append('VARCHAR')
-        else:
-            out.append(_TYPE_MAP.get(type(v), 'VARCHAR'))
-    return out
+  out: list[str] = []
+  for v in sample_row:
+    if v is None:
+      out.append('VARCHAR')
+    else:
+      out.append(_TYPE_MAP.get(type(v), 'VARCHAR'))
+  return out
 
 
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 
+
 class Database:
-    """Thin wrapper around a DuckDB connection. Thread-safe.
+  """Thin wrapper around a DuckDB connection. Thread-safe.
 
     All public methods take `self._lock` for the duration of the SQL
     call so multiple worker threads can call into here concurrently.
     """
 
-    def __init__(self, path: str) -> None:
-        self.path = path
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        self._lock = threading.Lock()
-        # Single connection. DuckDB's Python connection isn't safe to
-        # share across threads without external sync, but our `_lock`
-        # provides exactly that.
-        self._conn = duckdb.connect(path)
-        self._init_schema()
+  def __init__(self, path: str) -> None:
+    self.path = path
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    self._lock = threading.Lock()
+    # Single connection. DuckDB's Python connection isn't safe to
+    # share across threads without external sync, but our `_lock`
+    # provides exactly that.
+    self._conn = duckdb.connect(path)
+    self._init_schema()
 
-    # ------------------------------------------------------------------
-    # Schema setup (idempotent).
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Schema setup (idempotent).
+  # ------------------------------------------------------------------
 
-    def _init_schema(self) -> None:
-        with self._lock:
-            self._conn.execute(
-                """
+  def _init_schema(self) -> None:
+    with self._lock:
+      self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS query_executions (
                   query_uuid       VARCHAR PRIMARY KEY,
                   status           VARCHAR NOT NULL,
@@ -233,146 +231,140 @@ class Database:
                   error_message    VARCHAR,
                   deleted          BOOLEAN NOT NULL DEFAULT FALSE
                 )
-                """
-            )
-            self._conn.execute(
-                """
+                """)
+      self._conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_qe_visible
                   ON query_executions (deleted, end_time)
-                """
-            )
+                """)
 
-    # ------------------------------------------------------------------
-    # query_executions: writes
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # query_executions: writes
+  # ------------------------------------------------------------------
 
-    def insert_qe_async(
-        self,
-        query_uuid: str,
-        perfetto_sql: str,
-        query_limit: int,
-    ) -> None:
-        """Initial insert for an async (materialized) submission.
+  def insert_qe_in_progress(
+      self,
+      query_uuid: str,
+      perfetto_sql: str,
+      query_limit: int,
+      materialized: bool,
+      start_time: Optional[datetime] = None,
+  ) -> None:
+    """Initial insert for any query (sync or async) that's about
+        to start running.
 
-        Sets status=IN_PROGRESS, materialized=TRUE, table_name set
-        (because the materialized table will exist soon), no end_time
-        yet. start_time is captured as UTC at the moment of this call
-        (not via DuckDB's CURRENT_TIMESTAMP, which would land as local
-        time in our naive TIMESTAMP column).
+        Status starts at IN_PROGRESS; transition via
+        `mark_success` / `mark_failed` / `mark_cancelled` (each
+        conditional on IN_PROGRESS so concurrent state changes can't
+        race). For `materialized=True`, `table_name` is set so the
+        wire shape can expose it from the moment of submission. For
+        `materialized=False` (sync), `table_name` stays NULL — sync
+        queries don't have a fetchable result.
+
+        `start_time` defaults to utcnow() if not provided. Callers
+        that captured a precise wall-clock at the start of the
+        request should pass it explicitly so the recorded duration
+        matches reality.
         """
-        with self._lock:
-            self._conn.execute(
-                """
+    if start_time is None:
+      start_time = utcnow()
+    table_name = safe_table_id(query_uuid) if materialized else None
+    with self._lock:
+      self._conn.execute(
+          """
                 INSERT INTO query_executions
                   (query_uuid, status, start_time, perfetto_sql, query_limit,
                    materialized, table_name, processed_traces, total_traces,
                    processed_rows)
-                VALUES (?, 'IN_PROGRESS', ?, ?, ?, TRUE, ?, 0, 0, 0)
+                VALUES (?, 'IN_PROGRESS', ?, ?, ?, ?, ?, 0, 0, 0)
                 """,
-                [query_uuid, utcnow(), perfetto_sql, query_limit,
-                 safe_table_id(query_uuid)],
-            )
+          [
+              query_uuid, start_time, perfetto_sql, query_limit, materialized,
+              table_name
+          ],
+      )
 
-    def insert_qe_sync_terminal(
-        self,
-        query_uuid: str,
-        perfetto_sql: str,
-        query_limit: int,
-        status: str,  # SUCCESS or FAILED
-        processed_traces: int,
-        total_traces: int,
-        processed_rows: int,
-        error_message: Optional[str],
-        start_time: datetime,
-        end_time: datetime,
-    ) -> None:
-        """One-shot insert for a completed sync query.
-
-        Sync queries don't transition states — they finish before
-        /execute_bigtrace_query returns. We persist them here purely so
-        the history list shows them with materialized=FALSE and
-        tableName=NULL (their result rows aren't materialized; the UI
-        re-runs if the user clicks Open).
-
-        `start_time` and `end_time` are captured by the caller around
-        the actual query execution (not derived from a single
-        `CURRENT_TIMESTAMP` at insert time, which would yield
-        identical values and a UI-visible duration of zero).
-        """
-        with self._lock:
-            self._conn.execute(
-                """
-                INSERT INTO query_executions
-                  (query_uuid, status, start_time, end_time, perfetto_sql,
-                   query_limit, materialized, table_name, processed_traces,
-                   total_traces, processed_rows, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, FALSE, NULL, ?, ?, ?, ?)
-                """,
-                [query_uuid, status, start_time, end_time,
-                 perfetto_sql, query_limit, processed_traces,
-                 total_traces, processed_rows, error_message],
-            )
-
-    def update_progress(
-        self,
-        query_uuid: str,
-        processed_traces: int,
-        processed_rows: int,
-    ) -> None:
-        """Hot path: called from worker threads after every merge.
+  def update_progress(
+      self,
+      query_uuid: str,
+      processed_traces: int,
+      processed_rows: int,
+  ) -> None:
+    """Hot path: called from worker threads after every merge.
 
         Kept narrow so the lock is held for microseconds.
         """
-        with self._lock:
-            self._conn.execute(
-                """
+    with self._lock:
+      self._conn.execute(
+          """
                 UPDATE query_executions
                    SET processed_traces = ?, processed_rows = ?
                  WHERE query_uuid = ?
                 """,
-                [processed_traces, processed_rows, query_uuid],
-            )
+          [processed_traces, processed_rows, query_uuid],
+      )
 
-    def update_total_traces(self, query_uuid: str, total: int) -> None:
-        with self._lock:
-            self._conn.execute(
-                'UPDATE query_executions SET total_traces = ? '
-                'WHERE query_uuid = ?',
-                [total, query_uuid],
-            )
+  def update_total_traces(self, query_uuid: str, total: int) -> None:
+    with self._lock:
+      self._conn.execute(
+          'UPDATE query_executions SET total_traces = ? '
+          'WHERE query_uuid = ?',
+          [total, query_uuid],
+      )
 
-    def mark_success(self, query_uuid: str, processed_rows: int) -> bool:
-        """Terminal SUCCESS, **only if currently IN_PROGRESS**.
+  def mark_success(
+      self,
+      query_uuid: str,
+      processed_rows: Optional[int] = None,
+  ) -> bool:
+    """Terminal SUCCESS, **only if currently IN_PROGRESS**.
 
         Returns True if the transition applied. The conditional WHERE
         prevents the natural-completion path from clobbering a CANCELLED
         that landed concurrently (e.g. cancel handler ran while
         `_run_async_query` was settling its terminal state).
+
+        `processed_rows` is optional: when omitted, the column is left
+        as-is. Sync queries finish without per-row backend tracking
+        (results aren't materialized, so processed_rows stays at 0
+        from the initial insert) and pass `None`. Async queries pass
+        the count from the live snapshot so the terminal row reflects
+        the final state.
         """
-        with self._lock:
-            return self._update_if_in_progress_locked(
-                query_uuid,
-                """
+    with self._lock:
+      if processed_rows is None:
+        return self._update_if_in_progress_locked(
+            query_uuid,
+            """
+                    UPDATE query_executions
+                       SET status = 'SUCCESS',
+                           end_time = ?
+                     WHERE query_uuid = ? AND status = 'IN_PROGRESS'
+                    """,
+            [utcnow(), query_uuid],
+        )
+      return self._update_if_in_progress_locked(
+          query_uuid,
+          """
                 UPDATE query_executions
                    SET status = 'SUCCESS',
                        end_time = ?,
                        processed_rows = ?
                  WHERE query_uuid = ? AND status = 'IN_PROGRESS'
                 """,
-                [utcnow(), processed_rows, query_uuid],
-            )
+          [utcnow(), processed_rows, query_uuid],
+      )
 
-    def mark_failed(self, query_uuid: str, error_message: str) -> bool:
-        """Terminal FAILED, **only if currently IN_PROGRESS**.
+  def mark_failed(self, query_uuid: str, error_message: str) -> bool:
+    """Terminal FAILED, **only if currently IN_PROGRESS**.
 
         Returns True if the transition applied. Clears `table_name`
         (no fetchable result) and drops any partial table that the
         worker thread may have created before the failure.
         """
-        with self._lock:
-            applied = self._update_if_in_progress_locked(
-                query_uuid,
-                """
+    with self._lock:
+      applied = self._update_if_in_progress_locked(
+          query_uuid,
+          """
                 UPDATE query_executions
                    SET status = 'FAILED',
                        end_time = ?,
@@ -380,19 +372,19 @@ class Database:
                        table_name = NULL
                  WHERE query_uuid = ? AND status = 'IN_PROGRESS'
                 """,
-                [utcnow(), error_message, query_uuid],
-            )
-            if applied:
-                self._drop_materialized_locked(query_uuid)
-            return applied
+          [utcnow(), error_message, query_uuid],
+      )
+      if applied:
+        self._drop_materialized_locked(query_uuid)
+      return applied
 
-    def _update_if_in_progress_locked(
-        self,
-        query_uuid: str,
-        sql: str,
-        params: list[Any],
-    ) -> bool:
-        """Caller must hold `self._lock`.
+  def _update_if_in_progress_locked(
+      self,
+      query_uuid: str,
+      sql: str,
+      params: list[Any],
+  ) -> bool:
+    """Caller must hold `self._lock`.
 
         Runs `sql` (which must include `WHERE status = 'IN_PROGRESS'`)
         and returns True if it actually applied. DuckDB's Python API
@@ -400,31 +392,31 @@ class Database:
         UPDATE: if it changed away from IN_PROGRESS, the update applied
         (or was raced and we're irrelevant either way).
         """
-        before = self._conn.execute(
-            'SELECT status FROM query_executions WHERE query_uuid = ?',
-            [query_uuid],
-        ).fetchone()
-        if before is None or before[0] != 'IN_PROGRESS':
-            return False
-        self._conn.execute(sql, params)
-        return True
+    before = self._conn.execute(
+        'SELECT status FROM query_executions WHERE query_uuid = ?',
+        [query_uuid],
+    ).fetchone()
+    if before is None or before[0] != 'IN_PROGRESS':
+      return False
+    self._conn.execute(sql, params)
+    return True
 
-    def mark_cancelled(
-        self,
-        query_uuid: str,
-        processed_rows: int,
-        clear_table: bool,
-    ) -> None:
-        """Terminal CANCELLED.
+  def mark_cancelled(
+      self,
+      query_uuid: str,
+      processed_rows: int,
+      clear_table: bool,
+  ) -> None:
+    """Terminal CANCELLED.
 
         If `clear_table` (no rows merged), drops the materialized table
         and nulls table_name. Otherwise the table stays and the user can
         fetch the partials.
         """
-        with self._lock:
-            if clear_table:
-                self._conn.execute(
-                    """
+    with self._lock:
+      if clear_table:
+        self._conn.execute(
+            """
                     UPDATE query_executions
                        SET status = 'CANCELLED',
                            end_time = ?,
@@ -432,86 +424,85 @@ class Database:
                            table_name = NULL
                      WHERE query_uuid = ?
                     """,
-                    [utcnow(), processed_rows, query_uuid],
-                )
-                self._drop_materialized_locked(query_uuid)
-            else:
-                self._conn.execute(
-                    """
+            [utcnow(), processed_rows, query_uuid],
+        )
+        self._drop_materialized_locked(query_uuid)
+      else:
+        self._conn.execute(
+            """
                     UPDATE query_executions
                        SET status = 'CANCELLED',
                            end_time = ?,
                            processed_rows = ?
                      WHERE query_uuid = ?
                     """,
-                    [utcnow(), processed_rows, query_uuid],
-                )
+            [utcnow(), processed_rows, query_uuid],
+        )
 
-    def soft_delete(self, query_uuid: str) -> bool:
-        """Flip deleted=TRUE. Returns True if a row was changed.
+  def soft_delete(self, query_uuid: str) -> bool:
+    """Flip deleted=TRUE. Returns True if a row was changed.
 
         Drops the materialized table immediately to save disk; the
         metadata row remains for audit. Re-deleting an already-deleted
         row is a no-op and returns False (the WHERE clause filters it
         out, RETURNING yields no rows, the caller can 404).
         """
-        with self._lock:
-            row = self._conn.execute(
-                """
+    with self._lock:
+      row = self._conn.execute(
+          """
                 UPDATE query_executions
                    SET deleted = TRUE, table_name = NULL
                  WHERE query_uuid = ? AND deleted = FALSE
                  RETURNING 1
                 """,
-                [query_uuid],
-            ).fetchone()
-            if row is None:
-                return False
-            self._drop_materialized_locked(query_uuid)
-            return True
+          [query_uuid],
+      ).fetchone()
+      if row is None:
+        return False
+      self._drop_materialized_locked(query_uuid)
+      return True
 
-    def _drop_materialized_locked(self, query_uuid: str) -> None:
-        # Must be called with self._lock already held.
-        try:
-            self._conn.execute(
-                f'DROP TABLE IF EXISTS {safe_table_id(query_uuid)}'
-            )
-        except duckdb.Error as e:
-            log.warning(
-                'failed to drop materialized table for %s: %s',
-                query_uuid, e,
-            )
+  def _drop_materialized_locked(self, query_uuid: str) -> None:
+    # Must be called with self._lock already held.
+    try:
+      self._conn.execute(f'DROP TABLE IF EXISTS {safe_table_id(query_uuid)}')
+    except duckdb.Error as e:
+      log.warning(
+          'failed to drop materialized table for %s: %s',
+          query_uuid,
+          e,
+      )
 
-    # ------------------------------------------------------------------
-    # query_executions: reads
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # query_executions: reads
+  # ------------------------------------------------------------------
 
-    def get_status(self, query_uuid: str) -> Optional[str]:
-        """Return just the current status string (or None if missing).
+  def get_status(self, query_uuid: str) -> Optional[str]:
+    """Return just the current status string (or None if missing).
 
         Hot path for worker threads polling for cancellation: cheaper
         than `get_qe` because we only project one column. Soft-deleted
         rows return None — callers treat them as gone, same as missing.
         """
-        with self._lock:
-            row = self._conn.execute(
-                """
+    with self._lock:
+      row = self._conn.execute(
+          """
                 SELECT status FROM query_executions
                  WHERE query_uuid = ? AND deleted = FALSE
                 """,
-                [query_uuid],
-            ).fetchone()
-        return row[0] if row else None
+          [query_uuid],
+      ).fetchone()
+    return row[0] if row else None
 
-    def get_qe(self, query_uuid: str) -> Optional[QESnapshot]:
-        """Return a snapshot. None if not found OR soft-deleted.
+  def get_qe(self, query_uuid: str) -> Optional[QESnapshot]:
+    """Return a snapshot. None if not found OR soft-deleted.
 
         Soft-deleted rows are treated as gone for handler purposes —
         callers 404. The internal hard state of the row stays in the DB.
         """
-        with self._lock:
-            row = self._conn.execute(
-                """
+    with self._lock:
+      row = self._conn.execute(
+          """
                 SELECT query_uuid, status, start_time, end_time,
                        perfetto_sql, query_limit, materialized, table_name,
                        processed_traces, total_traces, processed_rows,
@@ -519,30 +510,30 @@ class Database:
                   FROM query_executions
                  WHERE query_uuid = ? AND deleted = FALSE
                 """,
-                [query_uuid],
-            ).fetchone()
-        if row is None:
-            return None
-        return QESnapshot(
-            query_uuid=row[0],
-            status=row[1],
-            start_time=_ts_to_iso(row[2]) or '',
-            end_time=_ts_to_iso(row[3]),
-            perfetto_sql=row[4] or '',
-            query_limit=row[5] or 0,
-            materialized=bool(row[6]),
-            table_name=row[7],
-            processed_traces=row[8],
-            total_traces=row[9],
-            processed_rows=row[10],
-            error_message=row[11],
-        )
+          [query_uuid],
+      ).fetchone()
+    if row is None:
+      return None
+    return QESnapshot(
+        query_uuid=row[0],
+        status=row[1],
+        start_time=_ts_to_iso(row[2]) or '',
+        end_time=_ts_to_iso(row[3]),
+        perfetto_sql=row[4] or '',
+        query_limit=row[5] or 0,
+        materialized=bool(row[6]),
+        table_name=row[7],
+        processed_traces=row[8],
+        total_traces=row[9],
+        processed_rows=row[10],
+        error_message=row[11],
+    )
 
-    def list_qes(self) -> list[QESnapshot]:
-        """All non-deleted executions, newest first."""
-        with self._lock:
-            rows = self._conn.execute(
-                """
+  def list_qes(self) -> list[QESnapshot]:
+    """All non-deleted executions, newest first."""
+    with self._lock:
+      rows = self._conn.execute(
+          """
                 SELECT query_uuid, status, start_time, end_time,
                        perfetto_sql, query_limit, materialized, table_name,
                        processed_traces, total_traces, processed_rows,
@@ -550,35 +541,38 @@ class Database:
                   FROM query_executions
                  WHERE deleted = FALSE
                  ORDER BY start_time DESC
-                """,
-            ).fetchall()
-        return [
-            QESnapshot(
-                query_uuid=r[0], status=r[1],
-                start_time=_ts_to_iso(r[2]) or '',
-                end_time=_ts_to_iso(r[3]),
-                perfetto_sql=r[4] or '', query_limit=r[5] or 0,
-                materialized=bool(r[6]), table_name=r[7],
-                processed_traces=r[8], total_traces=r[9],
-                processed_rows=r[10], error_message=r[11],
-            )
-            for r in rows
-        ]
+                """,).fetchall()
+    return [
+        QESnapshot(
+            query_uuid=r[0],
+            status=r[1],
+            start_time=_ts_to_iso(r[2]) or '',
+            end_time=_ts_to_iso(r[3]),
+            perfetto_sql=r[4] or '',
+            query_limit=r[5] or 0,
+            materialized=bool(r[6]),
+            table_name=r[7],
+            processed_traces=r[8],
+            total_traces=r[9],
+            processed_rows=r[10],
+            error_message=r[11],
+        ) for r in rows
+    ]
 
-    # ------------------------------------------------------------------
-    # Materialized tables: writes
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Materialized tables: writes
+  # ------------------------------------------------------------------
 
-    def merge_trace_atomic(
-        self,
-        query_uuid: str,
-        trace_id: str,
-        user_columns: list[str],
-        sample_row: list[Any],
-        prefixed_rows: list[list[Any]],
-        global_limit: int,
-    ) -> tuple[str, int, int]:
-        """Atomically merge one trace's rows into the materialized table.
+  def merge_trace_atomic(
+      self,
+      query_uuid: str,
+      trace_id: str,
+      user_columns: list[str],
+      sample_row: list[Any],
+      prefixed_rows: list[list[Any]],
+      global_limit: int,
+  ) -> tuple[str, int, int]:
+    """Atomically merge one trace's rows into the materialized table.
 
         This is the worker thread's single hot-path call — it bundles
         the cancel-check, table creation (lazy on first merge), bulk
@@ -611,111 +605,107 @@ class Database:
         For `'skipped'` and `'not_found'` the returned counts are 0;
         the row-count is informational only at that point.
         """
-        tbl = safe_table_id(query_uuid)
-        col_types = _infer_column_types(sample_row)
-        with self._lock:
-            row = self._conn.execute(
-                """
+    tbl = safe_table_id(query_uuid)
+    col_types = _infer_column_types(sample_row)
+    with self._lock:
+      row = self._conn.execute(
+          """
                 SELECT status, processed_traces, processed_rows
                   FROM query_executions
                  WHERE query_uuid = ? AND deleted = FALSE
                 """,
-                [query_uuid],
-            ).fetchone()
-            if row is None:
-                return 'not_found', 0, 0
-            if row[0] != 'IN_PROGRESS':
-                return 'skipped', 0, 0
-            cur_traces, cur_rows = row[1], row[2]
+          [query_uuid],
+      ).fetchone()
+      if row is None:
+        return 'not_found', 0, 0
+      if row[0] != 'IN_PROGRESS':
+        return 'skipped', 0, 0
+      cur_traces, cur_rows = row[1], row[2]
 
-            # Lazy table creation. Subsequent merges check column
-            # compatibility against the existing table schema.
-            existing_table = self._conn.execute(
-                """
+      # Lazy table creation. Subsequent merges check column
+      # compatibility against the existing table schema.
+      existing_table = self._conn.execute(
+          """
                 SELECT 1 FROM information_schema.tables
                  WHERE table_name = ? LIMIT 1
                 """,
-                [tbl],
-            ).fetchone() is not None
-            if not existing_table:
-                col_decls = ', '.join(
-                    f'"{n}" {t}' for n, t in zip(user_columns, col_types)
-                )
-                self._conn.execute(
-                    f'CREATE TABLE {tbl} (trace_id VARCHAR, {col_decls})'
-                )
-            else:
-                # Compare existing schema (skip trace_id at position 0).
-                existing_cols = [
-                    r[0] for r in self._conn.execute(
-                        """
+          [tbl],
+      ).fetchone() is not None
+      if not existing_table:
+        col_decls = ', '.join(
+            f'"{n}" {t}' for n, t in zip(user_columns, col_types))
+        self._conn.execute(
+            f'CREATE TABLE {tbl} (trace_id VARCHAR, {col_decls})')
+      else:
+        # Compare existing schema (skip trace_id at position 0).
+        existing_cols = [
+            r[0] for r in self._conn.execute(
+                """
                         SELECT column_name FROM information_schema.columns
                          WHERE table_name = ?
                          ORDER BY ordinal_position
                         """,
-                        [tbl],
-                    ).fetchall()
-                ]
-                if existing_cols[1:] != list(user_columns):
-                    new_traces = cur_traces + 1
-                    self._conn.execute(
-                        'UPDATE query_executions SET processed_traces = ? '
-                        'WHERE query_uuid = ?',
-                        [new_traces, query_uuid],
-                    )
-                    return 'col_mismatch', new_traces, cur_rows
+                [tbl],
+            ).fetchall()
+        ]
+        if existing_cols[1:] != list(user_columns):
+          new_traces = cur_traces + 1
+          self._conn.execute(
+              'UPDATE query_executions SET processed_traces = ? '
+              'WHERE query_uuid = ?',
+              [new_traces, query_uuid],
+          )
+          return 'col_mismatch', new_traces, cur_rows
 
-            # Apply the global cap. With cap=L and row-count R, accept
-            # at most (L - R) more rows from this trace.
-            if global_limit > 0:
-                room = global_limit - cur_rows
-                rows_to_insert = (
-                    prefixed_rows[:room] if room > 0 else []
-                )
-            else:
-                rows_to_insert = prefixed_rows
+      # Apply the global cap. With cap=L and row-count R, accept
+      # at most (L - R) more rows from this trace.
+      if global_limit > 0:
+        room = global_limit - cur_rows
+        rows_to_insert = (prefixed_rows[:room] if room > 0 else [])
+      else:
+        rows_to_insert = prefixed_rows
 
-            if rows_to_insert:
-                # Arrow fast-path bulk insert: 1M rows in ~0.5s vs
-                # ~10min via executemany(). DuckDB casts each Arrow
-                # column to the destination column type. Names are
-                # placeholders — insert_into binds positionally.
-                n_cols = len(rows_to_insert[0])
-                cols_data = list(zip(*rows_to_insert))
-                arr = pa.table(
-                    {f'c{i}': list(cols_data[i]) for i in range(n_cols)}
-                )
-                self._conn.from_arrow(arr).insert_into(tbl)
+      if rows_to_insert:
+        # Arrow fast-path bulk insert: 1M rows in ~0.5s vs
+        # ~10min via executemany(). DuckDB casts each Arrow
+        # column to the destination column type. Names are
+        # placeholders — insert_into binds positionally.
+        n_cols = len(rows_to_insert[0])
+        cols_data = list(zip(*rows_to_insert))
+        arr = pa.table({f'c{i}': list(cols_data[i]) for i in range(n_cols)})
+        self._conn.from_arrow(arr).insert_into(tbl)
 
-            new_traces = cur_traces + 1
-            new_rows = cur_rows + len(rows_to_insert)
-            self._conn.execute(
-                """
+      new_traces = cur_traces + 1
+      new_rows = cur_rows + len(rows_to_insert)
+      self._conn.execute(
+          """
                 UPDATE query_executions
                    SET processed_traces = ?, processed_rows = ?
                  WHERE query_uuid = ?
                 """,
-                [new_traces, new_rows, query_uuid],
-            )
-            return 'merged', new_traces, new_rows
+          [new_traces, new_rows, query_uuid],
+      )
+      return 'merged', new_traces, new_rows
 
-    # ------------------------------------------------------------------
-    # Materialized tables: reads
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Materialized tables: reads
+  # ------------------------------------------------------------------
 
-    def fetch_paginated(
-        self,
-        query_uuid: str,
-        limit: int,
-        offset: int,
-        order_by: str = '',
-    ) -> tuple[list[str], list[list[Any]]]:
-        """Return (column_names, rows[offset:offset+limit]).
+  def fetch_paginated(
+      self,
+      query_uuid: str,
+      limit: int,
+      offset: int,
+      order_by: str = '',
+  ) -> tuple[list[str], list[list[Any]]]:
+    """Return (column_names, rows[offset:offset+limit]).
 
-        Caller has already verified the materialized table should exist
-        (via `get_qe(...).table_name is not None`). If the table doesn't
-        actually exist (legitimate "in flight, no merge yet"), returns
-        ([], []).
+        Caller is responsible for the precondition checks (entry
+        exists, materialized=true, etc.) — this method only reads
+        rows. If the materialized table genuinely doesn't exist in
+        DuckDB (e.g., a TTL race or out-of-band drop),
+        `duckdb.CatalogException` propagates so the handler can map
+        it to NOT_FOUND.
 
         `order_by` is an AIP-132 ordering string ("name desc, dur asc").
         Empty / absent → no ORDER BY (insertion order). Each field is
@@ -724,71 +714,61 @@ class Database:
         SQL so user column names that collide with DuckDB keywords or
         contain special characters work correctly.
         """
-        # Lexical parse first — fails fast on bad syntax without
-        # touching the DB or holding the lock.
-        parsed = parse_order_by(order_by)
-        tbl = safe_table_id(query_uuid)
-        with self._lock:
-            if parsed:
-                allowed = {
-                    r[0] for r in self._conn.execute(
-                        """
-                        SELECT column_name FROM information_schema.columns
-                         WHERE table_name = ?
-                        """,
-                        [tbl],
-                    ).fetchall()
-                }
-                if not allowed:
-                    # Table not yet materialized.
-                    return [], []
-                for field, _ in parsed:
-                    if field not in allowed:
-                        raise ValueError(
-                            f'unknown order_by column {field!r}; '
-                            f'available: {sorted(allowed)}'
-                        )
-                order_clause = ', '.join(
-                    f'"{f}" {d}' for f, d in parsed
-                )
-                sql = (
-                    f'SELECT * FROM {tbl} ORDER BY {order_clause} '
-                    f'LIMIT ? OFFSET ?'
-                )
-            else:
-                sql = f'SELECT * FROM {tbl} LIMIT ? OFFSET ?'
-            try:
-                # DuckDB exposes column names via the cursor's description.
-                cur = self._conn.execute(sql, [limit, offset])
-            except duckdb.CatalogException:
-                # Table doesn't exist yet — query is still in flight and
-                # no worker has merged anything.
-                return [], []
-            cols = [d[0] for d in cur.description]
-            rows = cur.fetchall()
-        return cols, [list(r) for r in rows]
+    # Lexical parse first — fails fast on bad syntax without
+    # touching the DB or holding the lock.
+    parsed = parse_order_by(order_by)
+    tbl = safe_table_id(query_uuid)
+    with self._lock:
+      # Resolve the table's columns up-front. Empty result =
+      # table doesn't exist — surface that as a CatalogException
+      # rather than a misleading "unknown column" from the
+      # order_by validator below.
+      cols_res = self._conn.execute(
+          """
+                SELECT column_name FROM information_schema.columns
+                 WHERE table_name = ?
+                """,
+          [tbl],
+      ).fetchall()
+      if not cols_res:
+        raise duckdb.CatalogException(
+            f'materialized table {tbl} does not exist')
+      allowed = {r[0] for r in cols_res}
+      if parsed:
+        for field, _ in parsed:
+          if field not in allowed:
+            raise ValueError(f'unknown order_by column {field!r}; '
+                             f'available: {sorted(allowed)}')
+        order_clause = ', '.join(f'"{f}" {d}' for f, d in parsed)
+        sql = (f'SELECT * FROM {tbl} ORDER BY {order_clause} '
+               f'LIMIT ? OFFSET ?')
+      else:
+        sql = f'SELECT * FROM {tbl} LIMIT ? OFFSET ?'
+      cur = self._conn.execute(sql, [limit, offset])
+      cols = [d[0] for d in cur.description]
+      rows = cur.fetchall()
+    return cols, [list(r) for r in rows]
 
-    # ------------------------------------------------------------------
-    # Startup recovery + TTL sweep
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Startup recovery + TTL sweep
+  # ------------------------------------------------------------------
 
-    def recover_stale_in_progress(self) -> int:
-        """At startup, mark any IN_PROGRESS rows as FAILED.
+  def recover_stale_in_progress(self) -> int:
+    """At startup, mark any IN_PROGRESS rows as FAILED.
 
         Their workers are gone (process died); we don't want them stuck
         in the IN_PROGRESS state forever. Returns the count.
         """
-        with self._lock:
-            uuids = [
-                r[0] for r in self._conn.execute(
-                    "SELECT query_uuid FROM query_executions "
-                    "WHERE status = 'IN_PROGRESS'",
-                ).fetchall()
-            ]
-            if not uuids:
-                return 0
-            self._conn.execute(
-                """
+    with self._lock:
+      uuids = [
+          r[0] for r in self._conn.execute(
+              "SELECT query_uuid FROM query_executions "
+              "WHERE status = 'IN_PROGRESS'",).fetchall()
+      ]
+      if not uuids:
+        return 0
+      self._conn.execute(
+          """
                 UPDATE query_executions
                    SET status = 'FAILED',
                        end_time = ?,
@@ -796,26 +776,26 @@ class Database:
                        table_name = NULL
                  WHERE status = 'IN_PROGRESS'
                 """,
-                [utcnow()],
-            )
-            for u in uuids:
-                self._drop_materialized_locked(u)
-        return len(uuids)
+          [utcnow()],
+      )
+      for u in uuids:
+        self._drop_materialized_locked(u)
+    return len(uuids)
 
-    def expire_terminal_tables(self, ttl_seconds: int) -> int:
-        """Drop materialized tables for terminal queries past their TTL.
+  def expire_terminal_tables(self, ttl_seconds: int) -> int:
+    """Drop materialized tables for terminal queries past their TTL.
 
         Doesn't touch the metadata rows — only clears the row-buffer
         side. Returns how many were swept.
         """
-        with self._lock:
-            # Compare end_time against UTC-now using the same Python
-            # helper that writes the column, so TZ stays consistent
-            # (DuckDB's CURRENT_TIMESTAMP would compare against local).
-            cutoff = utcnow() - timedelta(seconds=ttl_seconds)
-            uuids = [
-                r[0] for r in self._conn.execute(
-                    """
+    with self._lock:
+      # Compare end_time against UTC-now using the same Python
+      # helper that writes the column, so TZ stays consistent
+      # (DuckDB's CURRENT_TIMESTAMP would compare against local).
+      cutoff = utcnow() - timedelta(seconds=ttl_seconds)
+      uuids = [
+          r[0] for r in self._conn.execute(
+              """
                     SELECT query_uuid
                       FROM query_executions
                      WHERE table_name IS NOT NULL
@@ -823,26 +803,26 @@ class Database:
                        AND end_time IS NOT NULL
                        AND end_time < ?
                     """,
-                    [cutoff],
-                ).fetchall()
-            ]
-            if not uuids:
-                return 0
-            for u in uuids:
-                self._conn.execute(
-                    'UPDATE query_executions SET table_name = NULL '
-                    'WHERE query_uuid = ?',
-                    [u],
-                )
-                self._drop_materialized_locked(u)
-        return len(uuids)
+              [cutoff],
+          ).fetchall()
+      ]
+      if not uuids:
+        return 0
+      for u in uuids:
+        self._conn.execute(
+            'UPDATE query_executions SET table_name = NULL '
+            'WHERE query_uuid = ?',
+            [u],
+        )
+        self._drop_materialized_locked(u)
+    return len(uuids)
 
-    # ------------------------------------------------------------------
-    # Optional in-process DuckDB web UI
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Optional in-process DuckDB web UI
+  # ------------------------------------------------------------------
 
-    def start_db_ui(self, port: int) -> None:
-        """Install + load the `ui` extension and start it on `port`.
+  def start_db_ui(self, port: int) -> None:
+    """Install + load the `ui` extension and start it on `port`.
 
         Runs on the server's own connection so there's no file-lock
         contention with external `duckdb -ui` processes. The UI's
@@ -853,22 +833,23 @@ class Database:
         calls reuse the cached extension. Errors are logged but do not
         abort server startup — the UI is a debug convenience.
         """
-        with self._lock:
-            try:
-                self._conn.execute('INSTALL ui')
-                self._conn.execute('LOAD ui')
-                self._conn.execute('SET ui_local_port = ?', [port])
-                self._conn.execute('CALL start_ui_server()')
-                log.info(
-                    'DuckDB UI started: http://localhost:%d', port,
-                )
-            except duckdb.Error as e:
-                log.warning('Failed to start DuckDB UI: %s', e)
+    with self._lock:
+      try:
+        self._conn.execute('INSTALL ui')
+        self._conn.execute('LOAD ui')
+        self._conn.execute('SET ui_local_port = ?', [port])
+        self._conn.execute('CALL start_ui_server()')
+        log.info(
+            'DuckDB UI started: http://localhost:%d',
+            port,
+        )
+      except duckdb.Error as e:
+        log.warning('Failed to start DuckDB UI: %s', e)
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Lifecycle
+  # ------------------------------------------------------------------
 
-    def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+  def close(self) -> None:
+    with self._lock:
+      self._conn.close()
