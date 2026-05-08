@@ -46,6 +46,7 @@ from `tableName`.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -160,6 +161,176 @@ def parse_order_by(s: str) -> list[tuple[str, str]]:
       direction = d.upper()
     out.append((field, direction))
   return out
+
+
+# Recognized filter operators. Mirrors the FilterOpAndValue union in
+# `ui/src/components/widgets/datagrid/model.ts` exactly. Partitioned by
+# value-arity so `parse_filter` can validate the value shape per op.
+_FILTER_NULL_OPS = frozenset({'is null', 'is not null'})
+_FILTER_OP_OPS = frozenset(
+    {'=', '!=', '<', '<=', '>', '>=', 'glob', 'not glob'})
+_FILTER_IN_OPS = frozenset({'in', 'not in'})
+_FILTER_ALL_OPS = _FILTER_NULL_OPS | _FILTER_OP_OPS | _FILTER_IN_OPS
+
+
+@dataclass
+class ParsedFilter:
+  """One entry from a parsed `filter` query param.
+
+    `values` carries 0 entries for null-arity ops (`is null`,
+    `is not null`), 1 entry for scalar ops (`=`, `glob`, `<`, ...),
+    or N entries for list ops (`in`, `not in`). `compile_where` uses
+    that arity to pick the right SQL fragment.
+    """
+  field: str
+  op: str
+  values: list[Any]
+
+
+def parse_filter(s: str) -> list[ParsedFilter]:
+  """Parse a JSON-encoded `Filter[]` from the `filter` query param.
+
+    Wire shape (matches `ui/src/components/widgets/datagrid/model.ts`):
+
+        [
+          {"field": "<col>", "op": "=", "value": <scalar>},
+          {"field": "<col>", "op": "in", "value": [<scalar>, ...]},
+          {"field": "<col>", "op": "is null"},
+          ...
+        ]
+
+    Multi-entry arrays are AND'd together by the caller (the same
+    semantics as `SqlDataSource.filterToSql` on the UI side, which
+    composes `WHERE a AND b AND ...`).
+
+    Op-arity rules:
+        - null-arity ops omit the `value` key entirely. A present
+          `value` is rejected.
+        - scalar ops require a non-array `value`.
+        - list ops require a non-empty array `value`. Empty arrays
+          are rejected (the widget shouldn't generate them; a clear
+          error catches client bugs).
+
+    The wire spec says `value` is always a string (the UI's encoder
+    coerces numbers/booleans/bigints via `String(...)` so int64
+    values round-trip losslessly). The parser is permissive about
+    that — any JSON scalar (`str`, `int`, `float`, `bool`, `None`)
+    passes through and DuckDB does its own coercion at bind time.
+    A genuinely-bad coercion (e.g., `"not-a-number"` against a
+    BIGINT column) surfaces at execute time as a
+    `duckdb.ConversionException` and the endpoint maps that to
+    `400 INVALID_ARGUMENT`.
+
+    Empty / whitespace `s` -> []. Raises `ValueError` on any
+    structural problem. Column-name validation against the live
+    schema is the caller's responsibility — same contract as
+    `parse_order_by`.
+    """
+  if not s.strip():
+    return []
+  try:
+    raw = json.loads(s)
+  except json.JSONDecodeError as e:
+    raise ValueError(f'filter is not valid JSON: {e.msg}')
+  if not isinstance(raw, list):
+    raise ValueError(f'filter must be a JSON array, got {type(raw).__name__}')
+  out: list[ParsedFilter] = []
+  for i, entry in enumerate(raw):
+    if not isinstance(entry, dict):
+      raise ValueError(
+          f'filter[{i}] must be an object, got {type(entry).__name__}')
+    field = entry.get('field')
+    op = entry.get('op')
+    if not isinstance(field, str) or not field:
+      raise ValueError(f'filter[{i}].field must be a non-empty string')
+    if not isinstance(op, str) or op not in _FILTER_ALL_OPS:
+      raise ValueError(f'filter[{i}].op {op!r} is not a recognized operator')
+    if op in _FILTER_NULL_OPS:
+      if 'value' in entry:
+        raise ValueError(f'filter[{i}].op {op!r} must not carry a value')
+      out.append(ParsedFilter(field=field, op=op, values=[]))
+    elif op in _FILTER_OP_OPS:
+      if 'value' not in entry:
+        raise ValueError(f'filter[{i}].op {op!r} requires a value')
+      v = entry['value']
+      if isinstance(v, list):
+        raise ValueError(
+            f'filter[{i}].op {op!r} requires a scalar value, got array')
+      out.append(ParsedFilter(field=field, op=op, values=[v]))
+    else:  # in / not in
+      if 'value' not in entry:
+        raise ValueError(f'filter[{i}].op {op!r} requires a value array')
+      v = entry['value']
+      if not isinstance(v, list):
+        raise ValueError(f'filter[{i}].op {op!r} requires an array value')
+      if len(v) == 0:
+        raise ValueError(f'filter[{i}].op {op!r} requires a non-empty array')
+      out.append(ParsedFilter(field=field, op=op, values=list(v)))
+  return out
+
+
+# Translation table for scalar (single-value) ops. Most map to
+# themselves; `glob` needs uppercasing for DuckDB. `not glob` is
+# emitted by `compile_where` as `NOT (... GLOB ?)` because DuckDB's
+# parser doesn't accept `NOT GLOB` as a single token (it does for
+# `NOT LIKE`/`NOT ILIKE`, but GLOB is the odd one out).
+_FILTER_SQL_SCALAR = {
+    '=': '=',
+    '!=': '!=',
+    '<': '<',
+    '<=': '<=',
+    '>': '>',
+    '>=': '>=',
+    'glob': 'GLOB',
+}
+
+
+def compile_where(
+    parsed: list[ParsedFilter],
+    allowed: set[str],
+) -> tuple[str, list[Any]]:
+  """Compile parsed filters into a SQL WHERE fragment + bound params.
+
+    Returns `('', [])` when `parsed` is empty so the caller can skip
+    the `WHERE` keyword entirely. Otherwise returns a fragment like
+    `'"a" = ? AND "b" IN (?, ?)'` paired with the value list to bind.
+    Identifiers are double-quoted so user column names colliding with
+    DuckDB keywords or containing special characters work; values are
+    parameterized via DuckDB's `?` binding so no user-supplied bytes
+    ever land in the SQL string.
+
+    Each filter's `field` is validated against `allowed` (typically
+    the materialized table's live column list, resolved by the
+    caller from `information_schema.columns`). Unknown columns raise
+    `ValueError` with the same shape as the order_by validator so
+    the endpoint maps both to 400 INVALID_ARGUMENT.
+    """
+  if not parsed:
+    return '', []
+  fragments: list[str] = []
+  params: list[Any] = []
+  for pf in parsed:
+    if pf.field not in allowed:
+      raise ValueError(f'unknown filter column {pf.field!r}; '
+                       f'available: {sorted(allowed)}')
+    col = f'"{pf.field}"'
+    if pf.op in _FILTER_NULL_OPS:
+      sql_op = 'IS NULL' if pf.op == 'is null' else 'IS NOT NULL'
+      fragments.append(f'{col} {sql_op}')
+    elif pf.op in _FILTER_IN_OPS:
+      placeholders = ', '.join(['?'] * len(pf.values))
+      sql_op = 'IN' if pf.op == 'in' else 'NOT IN'
+      fragments.append(f'{col} {sql_op} ({placeholders})')
+      params.extend(pf.values)
+    elif pf.op == 'not glob':
+      # DuckDB's parser rejects `NOT GLOB` as a single token, so
+      # wrap as `NOT (col GLOB ?)`. Same observable semantics.
+      fragments.append(f'NOT ({col} GLOB ?)')
+      params.append(pf.values[0])
+    else:
+      fragments.append(f'{col} {_FILTER_SQL_SCALAR[pf.op]} ?')
+      params.append(pf.values[0])
+  return ' AND '.join(fragments), params
 
 
 # Map Python types from the first sample row → DuckDB column types.
@@ -697,8 +868,9 @@ class Database:
       limit: int,
       offset: int,
       order_by: str = '',
-  ) -> tuple[list[str], list[list[Any]]]:
-    """Return (column_names, rows[offset:offset+limit]).
+      filter_str: str = '',
+  ) -> tuple[list[str], list[list[Any]], int]:
+    """Return (column_names, rows[offset:offset+limit], total_filtered).
 
         Caller is responsible for the precondition checks (entry
         exists, materialized=true, etc.) — this method only reads
@@ -708,21 +880,40 @@ class Database:
         it to NOT_FOUND.
 
         `order_by` is an AIP-132 ordering string ("name desc, dur asc").
-        Empty / absent → no ORDER BY (insertion order). Each field is
-        validated against the live table schema; unknown columns raise
+        Empty / absent → no ORDER BY (insertion order).
+
+        `filter_str` is a JSON-encoded `Filter[]`. Empty / absent →
+        no `WHERE`. Multi-entry arrays are AND'd. See `parse_filter`
+        for the wire shape and `compile_where` for the SQL rules.
+
+        Both `order_by` fields and `filter_str` fields are validated
+        against the live table schema; unknown columns raise
         `ValueError`. Identifiers are double-quoted in the generated
-        SQL so user column names that collide with DuckDB keywords or
-        contain special characters work correctly.
+        SQL so user column names that collide with DuckDB keywords
+        or contain special characters work correctly. Filter values
+        are bound via DuckDB's `?` parameter so user-supplied bytes
+        never land in the SQL string.
+
+        The third return value is the total count of rows matching
+        `filter_str` (or the full materialized table when no filter
+        is set). Computed under the same lock acquisition as the
+        page fetch so the count and the rows always reflect the same
+        snapshot — important because TTL sweeps can drop the table
+        out from under us between independent calls. The UI uses
+        this value to size the DataGrid's virtual scrollbar over the
+        filtered set; cheap on DuckDB's column store, so we always
+        emit it (no caller has to opt in or branch on its absence).
         """
     # Lexical parse first — fails fast on bad syntax without
     # touching the DB or holding the lock.
-    parsed = parse_order_by(order_by)
+    parsed_order = parse_order_by(order_by)
+    parsed_filter = parse_filter(filter_str)
     tbl = safe_table_id(query_uuid)
     with self._lock:
       # Resolve the table's columns up-front. Empty result =
       # table doesn't exist — surface that as a CatalogException
       # rather than a misleading "unknown column" from the
-      # order_by validator below.
+      # order_by/filter validators below.
       cols_res = self._conn.execute(
           """
                 SELECT column_name FROM information_schema.columns
@@ -734,20 +925,36 @@ class Database:
         raise duckdb.CatalogException(
             f'materialized table {tbl} does not exist')
       allowed = {r[0] for r in cols_res}
-      if parsed:
-        for field, _ in parsed:
+      if parsed_order:
+        for field, _ in parsed_order:
           if field not in allowed:
             raise ValueError(f'unknown order_by column {field!r}; '
                              f'available: {sorted(allowed)}')
-        order_clause = ', '.join(f'"{f}" {d}' for f, d in parsed)
-        sql = (f'SELECT * FROM {tbl} ORDER BY {order_clause} '
-               f'LIMIT ? OFFSET ?')
+        order_clause = ', '.join(f'"{f}" {d}' for f, d in parsed_order)
       else:
-        sql = f'SELECT * FROM {tbl} LIMIT ? OFFSET ?'
-      cur = self._conn.execute(sql, [limit, offset])
+        order_clause = ''
+      where_frag, where_params = compile_where(parsed_filter, allowed)
+      # Page fetch: SELECT * [WHERE] [ORDER BY] LIMIT ? OFFSET ?
+      page_parts = [f'SELECT * FROM {tbl}']
+      if where_frag:
+        page_parts.append(f'WHERE {where_frag}')
+      if order_clause:
+        page_parts.append(f'ORDER BY {order_clause}')
+      page_parts.append('LIMIT ? OFFSET ?')
+      page_sql = ' '.join(page_parts)
+      cur = self._conn.execute(page_sql, where_params + [limit, offset])
       cols = [d[0] for d in cur.description]
       rows = cur.fetchall()
-    return cols, [list(r) for r in rows]
+      # Total count under the same lock: SELECT COUNT(*) [WHERE].
+      # Sharing the lock keeps the count consistent with the rows
+      # we just returned — without it, a TTL sweep between two
+      # independent calls could yield rows-but-no-count or vice versa.
+      count_sql = f'SELECT COUNT(*) FROM {tbl}'
+      if where_frag:
+        count_sql += f' WHERE {where_frag}'
+      count_row = self._conn.execute(count_sql, where_params).fetchone()
+      total_filtered = int(count_row[0]) if count_row else 0
+    return cols, [list(r) for r in rows], total_filtered
 
   # ------------------------------------------------------------------
   # Startup recovery + TTL sweep

@@ -194,12 +194,54 @@ def _qe_to_status(snap: QESnapshot) -> dict[str, Any]:
   }
 
 
-def _rows_response(columns: list[str], rows: list[list[Any]]) -> dict[str, Any]:
+def _value_to_wire(v: Any) -> Any:
+  """Coerce one row value to its always-strings wire representation.
+
+    SQL `NULL` (Python `None`) is preserved as JSON `null` rather
+    than the string `'None'` so the UI doesn't need a string-to-null
+    conversion at the cell level. Booleans are lowercased so they
+    round-trip cleanly to/from JSON convention (`True`/`False` from
+    Python `str()` would surprise clients). Everything else goes
+    through `str()` — int64 values past 2^53 round-trip without
+    precision loss because they're never widened to a JS Number on
+    the wire.
+    """
+  if v is None:
+    return None
+  if isinstance(v, bool):
+    return 'true' if v else 'false'
+  return str(v)
+
+
+def _rows_response(
+    columns: list[str],
+    rows: list[list[Any]],
+    total_filtered_rows: int,
+) -> dict[str, Any]:
+  """Pack a result page into the wire shape.
+
+    Row values are uniformly serialized as JSON strings (or `null`
+    for SQL NULL) regardless of column type, mirroring the
+    always-strings contract on the filter wire. This solves
+    int64 precision loss past 2^53: a BIGINT value of
+    1_700_000_000_000_000_000 ships as `"1700000000000000000"`
+    rather than as a JSON number that JS would round to
+    1_700_000_000_000_000_256. The DataGrid renders strings as-is;
+    sorting is server-side via `order_by` so lexical-vs-numeric
+    string ordering doesn't bite us.
+    """
   return {
       'columnNames': columns,
       'rows': [{
-          'values': r
+          'values': [_value_to_wire(v) for v in r]
       } for r in rows],
+      # Always present so the UI never has to branch. Equals the
+      # materialized table size when no filter is applied; equals the
+      # post-filter row count otherwise. The DataGrid uses this to
+      # size its virtual scrollbar over the filtered set. Kept as a
+      # JSON number — it's metadata, not a row value, and counts
+      # never exceed safe-integer range in any realistic dataset.
+      'totalFilteredRows': total_filtered_rows,
   }
 
 
@@ -509,11 +551,20 @@ async def execute_sync(request: Request) -> dict[str, Any]:
   # rowcount" to clients. The UI's history list and re-open empty-
   # state branch on this. See TODO.md if we revisit.
   db.mark_success(new_uuid)
+  # Sync responses follow the same always-strings wire contract as
+  # `:fetch_results`: every row value is a JSON string (or null for
+  # SQL NULL). Symmetric with the async path so clients see one
+  # response shape regardless of which endpoint they hit. Note the
+  # sort caveat in `~/Projects/CLAUDE.md` Filter parameter section
+  # — sync results are sorted client-side via `InMemoryDataSource`,
+  # which can't tell that `"100"` and `"99"` are numeric, so
+  # numeric-looking columns sort lexically until we ship per-column
+  # type info or replace the sync data source.
   return {
       'queryUuid': new_uuid,
       'columnNames': cols,
       'rows': [{
-          'values': r
+          'values': [_value_to_wire(v) for v in r]
       } for r in rows],
   }
 
@@ -533,6 +584,7 @@ async def fetch_results(
     limit: int = 50,
     offset: int = 0,
     order_by: str = '',
+    filter: str = '',  # noqa: A002  (shadows builtin; FastAPI query name)
 ) -> dict[str, Any]:
   """Paginated read over the per-query materialized table.
 
@@ -546,12 +598,29 @@ async def fetch_results(
       fetchable state: sync queries (`materialized=false`),
       `processed_rows == 0`, or `table_name is null` (FAILED,
       CANCELLED-with-zero-rows, TTL-swept).
-    - **400 INVALID_ARGUMENT** — `order_by` malformed or references
-      an unknown column (raised from the parser). Same status code,
-      different `detail` shape from the FAILED_PRECONDITION case.
+    - **400 INVALID_ARGUMENT** — `order_by` or `filter` is malformed
+      or references an unknown column (raised from the parsers).
+      Same status code, different `detail` shape from the
+      FAILED_PRECONDITION case.
 
     `order_by` follows AIP-132 §Ordering: a comma-separated list of
     field names, each optionally followed by ` desc` (default `asc`).
+
+    `filter` is a JSON-encoded `Filter[]` (URL-encoded). Empty /
+    absent → no `WHERE`. Multi-entry arrays are AND'd. The wire
+    shape mirrors the DataGrid's `model.ts:Filter`:
+        [{"field": <col>, "op": <op>, "value": <string|list>}, ...]
+    Recognized ops: `=`, `!=`, `<`, `<=`, `>`, `>=`, `glob`,
+    `not glob`, `in`, `not in`, `is null`, `is not null`. Values
+    are JSON strings on the wire (the UI's encoder coerces
+    numbers/booleans/bigints losslessly via `String(...)`); DuckDB
+    binds them to the column's actual type at execute time. See
+    `~/Projects/CLAUDE.md` "Filter parameter" for the full spec.
+
+    The response always carries `totalFilteredRows` — equal to the
+    materialized table size when no filter is applied, and to the
+    post-filter row count otherwise. The UI uses it to size its
+    virtual scrollbar.
     """
   # NOT_FOUND if missing or soft-deleted.
   snap = _get_snapshot_or_404(uuid)
@@ -579,9 +648,21 @@ async def fetch_results(
     )
 
   try:
-    cols, rows = _get_db().fetch_paginated(uuid, limit, offset, order_by)
+    # `fetch_paginated` returns (cols, rows, total_filtered) under a
+    # single lock acquisition so the count is consistent with the
+    # rows even if a TTL sweep races us. The UI relies on
+    # `totalFilteredRows` always being present.
+    cols, rows, total_filtered = _get_db().fetch_paginated(
+        uuid, limit, offset, order_by, filter_str=filter)
   except ValueError as e:
     raise HTTPException(status_code=400, detail=str(e))
+  except duckdb.ConversionException as e:
+    # Filter value couldn't be coerced to the column's type at bind
+    # time — e.g., 'not-a-number' against a BIGINT column. Same
+    # 400 INVALID_ARGUMENT shape as a parser-rejected filter; the
+    # detail names the offending coercion so clients can surface it.
+    raise HTTPException(
+        status_code=400, detail=f'filter value type mismatch: {e}')
   except duckdb.CatalogException:
     # Metadata says the table should be there but it isn't — TTL
     # race, out-of-band drop, or similar. Treat as NOT_FOUND so
@@ -592,7 +673,7 @@ async def fetch_results(
         detail=(f'Materialized table for {uuid} not found in DuckDB '
                 '(may have been swept between metadata read and fetch)'),
     )
-  return _rows_response(cols, rows)
+  return _rows_response(cols, rows, total_filtered)
 
 
 @app.post('/query_executions/{uuid}:cancel')

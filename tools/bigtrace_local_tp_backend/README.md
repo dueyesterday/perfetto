@@ -187,6 +187,167 @@ third-page slice of the new ordering), matching the in-tree
 want "top of new sort" semantics must explicitly request
 `offset=0`.
 
+### Filtering (`filter` on `:fetch_results`)
+
+`GET /query_executions/{uuid}:fetch_results` accepts an optional
+`filter` query parameter — a URL-encoded JSON array describing
+predicates to AND together. The wire shape mirrors the BigTrace UI's
+DataGrid `model.ts:Filter`, so the UI can ship `model.filters`
+through unchanged.
+
+```jsonc
+[
+  {"field": "<col>", "op": "=",        "value": "<string>"},
+  {"field": "<col>", "op": "in",       "value": ["<string>", ...]},
+  {"field": "<col>", "op": "is null"}
+]
+```
+
+Op categories (`parse_filter` enforces value-arity per category):
+
+| Category   | Ops                                      | `value` shape                      |
+|------------|------------------------------------------|------------------------------------|
+| Comparison | `=`, `!=`, `<`, `<=`, `>`, `>=`          | string                             |
+| Pattern    | `glob`, `not glob`                       | string                             |
+| Set        | `in`, `not in`                           | non-empty array of strings         |
+| Null       | `is null`, `is not null`                 | absent (no `value` key)            |
+
+`value` is always a JSON string for scalar ops, an array of strings
+for `in` / `not in`, or absent for `is null` / `is not null`. The
+UI's encoder coerces non-string primitives via `String(...)` so
+numbers, booleans, and bigints all serialize losslessly —
+`(1700000000000000000n).toString() === "1700000000000000000"`
+preserves int64 precision past `Number.MAX_SAFE_INTEGER`. The
+backend then relies on DuckDB's parameter binding to coerce the
+string to the column's actual type at execute time:
+`WHERE big = ?` with bind value `"1700000000000000000"` matches
+the BIGINT row exactly. Comparisons (`<`, `>`, etc.) against numeric
+columns are numeric, not lexical.
+
+The parser (`parse_filter`) is permissive about non-string `value`s
+— it accepts any JSON scalar and lets DuckDB coerce. The string
+contract is on the *encoder* side; a hand-rolled client that ships
+a number gets the same coercion DuckDB would do for a string.
+
+#### SQL composition
+
+`compile_where` produces a fragment + bound-params list that
+`fetch_paginated` splices into the page query as
+`SELECT * FROM <tbl> [WHERE …] [ORDER BY …] LIMIT ? OFFSET ?`:
+
+| Op                        | SQL fragment              | Bind params  |
+|---------------------------|---------------------------|--------------|
+| `=`, `!=`, `<=`, `>=`, `<`, `>` | `"col" OP ?`         | 1            |
+| `glob`                    | `"col" GLOB ?`            | 1            |
+| `not glob`                | `NOT ("col" GLOB ?)`      | 1            |
+| `in`                      | `"col" IN (?, ?, …)`      | N            |
+| `not in`                  | `"col" NOT IN (?, ?, …)`  | N            |
+| `is null`                 | `"col" IS NULL`           | 0            |
+| `is not null`             | `"col" IS NOT NULL`       | 0            |
+
+Identifiers are double-quoted (so user column names with reserved
+words / special chars work). All values bind via `?` — never
+spliced into the SQL string, so there's no injection surface even
+though we don't sanitize the raw JSON. `not glob` wraps as
+`NOT (col GLOB ?)` because DuckDB's parser doesn't accept
+`NOT GLOB` as a single token (it does for `NOT LIKE`/`NOT ILIKE`).
+
+#### Errors (HTTP 400, `application/json`, `{"detail": "..."}`)
+
+`parse_filter` rejects each of the following with `ValueError` →
+mapped to 400 INVALID_ARGUMENT:
+
+- Malformed JSON, or top-level value not a JSON array.
+- Entry missing `field` (non-empty string) or `op` (recognized).
+- Comparison / pattern op with array `value`.
+- `in` / `not in` with non-array or empty-array `value`.
+- Null op carrying any `value` key.
+
+Plus, `compile_where` rejects:
+
+- `field` not in the materialized table's column list (with
+  `available: [...]` echoed in the detail so clients can render a
+  helpful suggestion, mirroring the `order_by` error shape).
+
+And, at bind time, the endpoint catches DuckDB's
+`ConversionException` and returns 400 — e.g.,
+`"abc"` against a BIGINT column surfaces as
+`filter value type mismatch: Could not convert string 'abc' to INT64`
+rather than a 5xx.
+
+#### `totalFilteredRows` in the response
+
+`:fetch_results` always returns `totalFilteredRows` alongside
+`columnNames` / `rows`:
+
+- No `filter` set → materialized table size (a
+  `SELECT COUNT(*) FROM <tbl>`).
+- `filter` set → post-filter count
+  (`SELECT COUNT(*) FROM <tbl> WHERE …`).
+
+The UI uses it to size the DataGrid's virtual scrollbar over the
+visible (filtered) set rather than the materialized total. Always-
+present means clients don't have to branch on its absence.
+
+`fetch_paginated` issues the page fetch and the count under a single
+`Database._lock` acquisition, so the count is consistent with the
+rows even if a TTL sweep races us. Two SQL statements, one lock,
+two round-trips of work but one wire round-trip.
+
+### Response value contract (always-strings)
+
+Every endpoint that returns a tabular result uses one uniform value
+shape:
+
+> **Row values are always JSON strings (or `null` for SQL NULL),
+> regardless of the underlying column type.**
+
+`server.py:_value_to_wire` is the funnel: every value goes through
+it before serializing. INT64s, DOUBLEs, BOOLEANs, TIMESTAMPs all
+become strings on the wire. Booleans canonicalize to lowercase
+`"true"` / `"false"` so they round-trip through the always-strings
+filter wire cleanly. Both `:fetch_results` (via `_rows_response`)
+and `/execute_bigtrace_query` (the inline sync response) use it.
+
+Why: int64 values past `Number.MAX_SAFE_INTEGER` (2^53) silently
+lose precision when JS parses them as `Number`, which corrupts
+both display and any subsequent filter that targets the value.
+Stringifying preserves precision for any magnitude. The UI never
+converts strings back to typed JS values — `parseQueryResponse`
+passes them through unchanged, cell renderers display them as-is,
+and the cell-filter menu naturally ships the string back through
+the always-strings filter wire. End to end, no type-detection
+code anywhere on the wire path.
+
+#### Sync sort caveat
+
+Async results are sorted server-side (the `order_by` clause sees the
+typed column in DuckDB), so always-strings on the wire doesn't affect
+sort correctness.
+
+Sync results are sorted **client-side** by `InMemoryDataSource`
+(a perfetto-repo shared widget). Its comparator branches on
+`typeof valueA === 'number'` etc. and falls back to `localeCompare`
+on strings. With the always-strings contract, every column ends up
+in the lexical-sort branch — `"100" < "99"` because `'1' < '9'`.
+This means **numeric-looking columns sort lexically on sync queries**,
+a known regression that ships with the always-strings change.
+
+Two ways to fix it (neither done):
+
+1. Ship per-column type information in the response (e.g.,
+   `columnTypes: ["BIGINT", "VARCHAR", ...]`) and have a /bigtrace-
+   local data source pre-coerce values to the right JS type before
+   handing rows to `InMemoryDataSource`.
+2. Replace `InMemoryDataSource` for the sync path with a /bigtrace-
+   local data source whose comparator parses each column's values
+   once and picks numeric vs lexical accordingly.
+
+The async path is the high-value path (paginates over potentially-
+large materialized tables); sync is bounded by interactive ad-hoc
+result sizes, so the precision benefit there outweighs the sort
+regression cost.
+
 ### Recovery on restart
 
 Any rows still `IN_PROGRESS` when the server starts (because a previous

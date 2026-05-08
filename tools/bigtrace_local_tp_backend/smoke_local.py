@@ -32,6 +32,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1255,8 +1256,10 @@ def main() -> int:
         f'/query_executions/{ob_uuid}:fetch_results'
         f'?limit=50&offset=0&order_by=dur%20asc',
     )
+    # Row values come over as strings (always-strings contract);
+    # convert to ints for numeric ordering.
     asc_durs = [
-        r['values'][2]
+        int(r['values'][2])
         for r in asc.get('rows', [])
         if r['values'][2] is not None
     ]
@@ -1269,7 +1272,7 @@ def main() -> int:
         f'?limit=50&offset=0&order_by=dur%20desc',
     )
     desc_durs = [
-        r['values'][2]
+        int(r['values'][2])
         for r in desc_resp.get('rows', [])
         if r['values'][2] is not None
     ]
@@ -1305,6 +1308,202 @@ def main() -> int:
         f'{bad_col_body}')
     print(f'    asc/desc/multi all sort correctly; bad direction + '
           f'unknown column both return 400')
+
+    # 23. filter end-to-end on :fetch_results.
+    #   Submit a query that yields rows we can predicate against,
+    #   then exercise: numeric `>`, string `glob`, `in (...)`,
+    #   `is null`, multi-filter AND, and the `totalFilteredRows`
+    #   response field. Also assert that malformed JSON,
+    #   unknown-column, and empty `in` lists each return HTTP 400.
+    print('[23] filter (JSON Filter[]) end-to-end')
+    _, fsub = http(
+        'POST',
+        '/execute_bigtrace_query_async',
+        body={
+            'limit': 200,
+            'perfetto_sql': ('SELECT name, dur, category FROM slice LIMIT 200'),
+            'settings': with_traces(),
+        },
+    )
+    f_uuid = fsub['queryUuid']
+    wait_until(
+        lambda: http('GET', f'/query_executions/{f_uuid}:status')[1]['status']
+        == 'SUCCESS',
+        timeout=30.0,
+        label='filter test query SUCCESS',
+    )
+    # Baseline (no filter) so we know the materialized total.
+    _, base = http(
+        'GET',
+        f'/query_executions/{f_uuid}:fetch_results?limit=200&offset=0',
+    )
+    assert 'totalFilteredRows' in base, (
+        f'totalFilteredRows missing from no-filter response: {base}')
+    base_total = int(base['totalFilteredRows'])
+    base_rows = base.get('rows', [])
+    # Lock the always-strings response contract: every non-null
+    # value in every row is a JSON string, regardless of column
+    # type. The smoke is the only place we end-to-end-verify this
+    # — the backend's `_value_to_wire` is what enforces it.
+    for r in base_rows:
+      for v in r['values']:
+        assert v is None or isinstance(
+            v, str), (f'always-strings response violated: value {v!r} '
+                      f'(type {type(v).__name__}) in row {r}')
+    # Pick a `dur` threshold that splits the rowset roughly in half so
+    # both branches of `>` and `<=` have rows. row['values'] is
+    # [trace_id, name, dur, category]; grab non-null dur values.
+    # Row values arrive as strings; convert for numeric reasoning.
+    durs = sorted(
+        int(r['values'][2]) for r in base_rows if r['values'][2] is not None)
+    assert durs, 'no non-null dur values to filter on; smoke is broken'
+    threshold = durs[len(durs) // 2]
+    # Numeric `>` filter; verify totalFilteredRows is consistent and
+    # every returned row matches the predicate.
+    f_gt = json.dumps([{'field': 'dur', 'op': '>', 'value': threshold}])
+    _, gt = http(
+        'GET',
+        f'/query_executions/{f_uuid}:fetch_results'
+        f'?limit=200&offset=0&filter={urllib.parse.quote(f_gt)}',
+    )
+    gt_rows = gt.get('rows', [])
+    gt_total = int(gt['totalFilteredRows'])
+    assert gt_total <= base_total, (
+        f'filter total ({gt_total}) > base total ({base_total})')
+    assert all(
+        r['values'][2] is not None and int(r['values'][2]) > threshold
+        for r in gt_rows), f'rows violate dur > {threshold}: {gt_rows[:3]}'
+    # `glob` on `name`. Pick a prefix that exists in the sampled
+    # rows so we know the filter has matches.
+    sample_name = next((r['values'][1] for r in base_rows if r['values'][1]),
+                       None)
+    assert sample_name, 'no non-null name in baseline; cannot test glob'
+    prefix = sample_name[:1]  # first character
+    f_glob = json.dumps([{
+        'field': 'name',
+        'op': 'glob',
+        'value': f'{prefix}*'
+    }])
+    _, glob_resp = http(
+        'GET',
+        f'/query_executions/{f_uuid}:fetch_results'
+        f'?limit=200&offset=0&filter={urllib.parse.quote(f_glob)}',
+    )
+    glob_rows = glob_resp.get('rows', [])
+    assert glob_rows, f'glob {prefix}* returned 0 rows; smoke is broken'
+    assert all(r['values'][1] is not None and r['values'][1].startswith(prefix)
+               for r in glob_rows), f'glob match violated: {glob_rows[:3]}'
+    # Multi-filter AND: glob on name AND dur > threshold.
+    f_and = json.dumps([
+        {
+            'field': 'name',
+            'op': 'glob',
+            'value': f'{prefix}*'
+        },
+        {
+            'field': 'dur',
+            'op': '>',
+            'value': threshold
+        },
+    ])
+    _, and_resp = http(
+        'GET',
+        f'/query_executions/{f_uuid}:fetch_results'
+        f'?limit=200&offset=0&filter={urllib.parse.quote(f_and)}',
+    )
+    and_total = int(and_resp['totalFilteredRows'])
+    assert and_total <= gt_total, (
+        f'AND ({and_total}) widened beyond > alone ({gt_total})')
+    # Bad JSON → 400.
+    bad_json_code, bad_json_body = http_status_and_body(
+        'GET',
+        f'/query_executions/{f_uuid}:fetch_results?filter=not-json',
+    )
+    assert bad_json_code == 400, (
+        f'malformed filter expected 400, got {bad_json_code}: {bad_json_body}')
+    # Unknown column → 400.
+    f_unknown = json.dumps([{'field': 'does_not_exist', 'op': '=', 'value': 1}])
+    bad_col_code, bad_col_body = http_status_and_body(
+        'GET',
+        f'/query_executions/{f_uuid}:fetch_results'
+        f'?filter={urllib.parse.quote(f_unknown)}',
+    )
+    assert bad_col_code == 400, (
+        f'unknown filter column expected 400, got {bad_col_code}: '
+        f'{bad_col_body}')
+    assert 'does_not_exist' in bad_col_body, (
+        f'expected error to mention the offending column; got: '
+        f'{bad_col_body}')
+    # Empty `in` list → 400 (the widget shouldn't generate this; a
+    # clear error catches client bugs).
+    f_empty_in = json.dumps([{'field': 'name', 'op': 'in', 'value': []}])
+    empty_code, empty_body = http_status_and_body(
+        'GET',
+        f'/query_executions/{f_uuid}:fetch_results'
+        f'?filter={urllib.parse.quote(f_empty_in)}',
+    )
+    assert empty_code == 400, (
+        f'empty in[] expected 400, got {empty_code}: {empty_body}')
+    # Wire-coverage sweep for the remaining op variants. Predicate
+    # correctness is locked down in db_unittest.py — here we only
+    # need to confirm each op survives the HTTP round-trip and the
+    # totalFilteredRows result is in [0, base_total]. Tiny test
+    # traces mean some predicates may match zero rows; that's fine,
+    # the contract is "HTTP 200 with consistent total".
+    op_variants = [
+        # (label, filter-array)
+        ('<=', [{
+            'field': 'dur',
+            'op': '<=',
+            'value': threshold
+        }]),
+        ('>=', [{
+            'field': 'dur',
+            'op': '>=',
+            'value': threshold
+        }]),
+        ('!=', [{
+            'field': 'name',
+            'op': '!=',
+            'value': sample_name
+        }]),
+        ('not glob', [{
+            'field': 'name',
+            'op': 'not glob',
+            'value': f'{prefix}*'
+        }]),
+        ('not in', [{
+            'field': 'name',
+            'op': 'not in',
+            'value': [sample_name]
+        }]),
+        ('is null', [{
+            'field': 'name',
+            'op': 'is null'
+        }]),
+        ('is not null', [{
+            'field': 'name',
+            'op': 'is not null'
+        }]),
+    ]
+    for label, body in op_variants:
+      payload = urllib.parse.quote(json.dumps(body))
+      _, resp = http(
+          'GET',
+          f'/query_executions/{f_uuid}:fetch_results'
+          f'?limit=200&offset=0&filter={payload}',
+      )
+      total = int(resp['totalFilteredRows'])
+      assert 0 <= total <= base_total, (
+          f'op {label!r}: totalFilteredRows={total} '
+          f'outside [0, {base_total}]: {resp}')
+      assert len(resp.get('rows', [])) <= total, (
+          f'op {label!r}: returned more rows than totalFilteredRows '
+          f'({len(resp.get("rows", []))} vs {total})')
+    print(f'    >, glob, AND all match; bad JSON / unknown column / '
+          f'empty in[] all return 400; '
+          f'totalFilteredRows={base_total}/{gt_total}/{and_total}; '
+          f'{len(op_variants)} other op variants survive the wire')
 
     print('\nALL CHECKS PASSED')
   except AssertionError as e:
