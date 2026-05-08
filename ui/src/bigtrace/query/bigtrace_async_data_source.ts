@@ -17,12 +17,14 @@ import {
   DataSourceModel,
   DataSourceRows,
 } from '../../components/widgets/datagrid/data_source';
+import {Filter} from '../../components/widgets/datagrid/model';
 import {Row, SqlValue} from '../../trace_processor/query_result';
 import {QueryResult} from '../../base/query_slot';
 import {
   BigtraceQueryClient,
   QueryCancelledError,
 } from './bigtrace_query_client';
+import {encodeFilters} from './filter_encoding';
 import m from 'mithril';
 
 type ModelWithColumns = DataSourceModel & {
@@ -63,6 +65,32 @@ type ModelWithColumns = DataSourceModel & {
  *   jumping the user away from where they were.
  * - Empty / absent sort → no `order_by` is sent; backend returns rows
  *   in materialization order.
+ *
+ * Filtering contract
+ * ------------------
+ * The DataGrid widget exposes active filters via `model.filters`, an
+ * array of `{field, op, value}` entries built up by the cell-filter
+ * and column-filter menus. We JSON-encode it via `encodeFilters`
+ * (which canonicalizes object key order and string-coerces every
+ * primitive value so the wire is uniformly typed; see
+ * `filter_encoding.ts`) and ship it as the `filter` query param on
+ * the next `:fetch_results` URL.
+ *
+ * - Aliases are resolved back to the original SELECT `field` (same
+ *   as for sort) because the backend's column whitelist is on field
+ *   names.
+ * - On a filter change we fetch with the Grid's currently-requested
+ *   offset and rely on `totalFilteredRows` from the response to
+ *   resize the virtual scrollbar. If the new filter shrinks the set
+ *   below the user's offset, the Grid's `onLoadData` clamps and
+ *   re-requests a valid range on the next render.
+ * - The response's `totalFilteredRows` is what we report for
+ *   `useRows`'s `totalRows`. Until the first post-filter fetch
+ *   returns we fall back to the unfiltered total from
+ *   `getTotalRows()`, so the scrollbar stays sized rather than
+ *   collapsing.
+ * - Empty filter → no `filter` is sent; the backend computes
+ *   `totalFilteredRows` over the entire materialized table.
  */
 export class BigtraceAsyncDataSource implements DataSource {
   private loadedRows: Row[] = [];
@@ -78,6 +106,19 @@ export class BigtraceAsyncDataSource implements DataSource {
   // AIP-132 §Ordering string ("name desc"). Empty = backend returns
   // rows in materialization order.
   private currentOrderBy = '';
+  // Active filters with widget aliases resolved to backend field
+  // names. Empty = no filter sent on the wire. Kept in structured
+  // form so we can hand it straight to `fetchResults`; the matching
+  // `currentFilterKey` is the JSON-stringified form for cheap
+  // equality comparison against the next render's filters.
+  private currentFilter: ReadonlyArray<Filter> = [];
+  private currentFilterKey = '';
+  // Post-filter row count from the most recent fetch, used to size
+  // the DataGrid's virtual scrollbar. Undefined until the first
+  // fetch completes (or after a filter change clears it pending the
+  // next response); `useRows` falls back to `getTotalRows()` in
+  // that interval so the scrollbar doesn't collapse.
+  private filteredTotalRows: number | undefined;
 
   // The signal is plumbed through to every fetchResults call. Owners
   // (typically a tab) abort it on close so we don't write into a
@@ -97,24 +138,39 @@ export class BigtraceAsyncDataSource implements DataSource {
   useRows(_model: DataSourceModel): DataSourceRows {
     const model = _model as ModelWithColumns;
     const wantedOrderBy = this.formatOrderBy(model);
+    const wantedFilter = this.formatFilter(model);
+    const wantedFilterKey = encodeFilters(wantedFilter);
     const wantedOffset = model.pagination?.offset ?? 0;
     const wantedLimit = model.pagination?.limit ?? 0;
 
-    // Decide whether to fire a fetch. Three triggers:
+    // Decide whether to fire a fetch. Four triggers:
     //  1. Sort spec changed.
-    //  2. The Grid's viewport range no longer overlaps what's loaded.
-    //  3. We never fetched at all (initial render).
+    //  2. Filter spec changed.
+    //  3. The Grid's viewport range no longer overlaps what's loaded.
+    //  4. We never fetched at all (initial render).
     // Skip if a fetch is already in flight — the in-flight fetch will
     // settle and trigger another `useRows`, at which point we
     // re-evaluate. This prevents redraw storms.
     const sortChanged = wantedOrderBy !== this.currentOrderBy;
+    const filterChanged = wantedFilterKey !== this.currentFilterKey;
     const rangeChanged =
       this.hasInitialFetchCompleted &&
       (wantedOffset !== this.loadedOffset ||
         (wantedLimit > 0 && wantedLimit !== this.loadedLimit));
     const needsInitial = !this.hasInitialFetchCompleted && wantedLimit > 0;
-    if ((sortChanged || rangeChanged || needsInitial) && !this.isFetching) {
+    if (
+      (sortChanged || filterChanged || rangeChanged || needsInitial) &&
+      !this.isFetching
+    ) {
       this.currentOrderBy = wantedOrderBy;
+      if (filterChanged) {
+        this.currentFilter = wantedFilter;
+        this.currentFilterKey = wantedFilterKey;
+        // Clear the cached count so the scrollbar reverts to the
+        // unfiltered total until the response arrives with a fresh
+        // `totalFilteredRows`. Briefly oversized > briefly collapsed.
+        this.filteredTotalRows = undefined;
+      }
       // Use the Grid's requested range. On the very first render the
       // limit may be 0 (model not fully populated yet); fall back to
       // a small default so the schema can come back.
@@ -138,9 +194,12 @@ export class BigtraceAsyncDataSource implements DataSource {
 
     return {
       rows: mappedRows,
-      // Real total so the Grid sizes its scrollbar over the full
-      // dataset, not just the loaded window.
-      totalRows: this.getTotalRows(),
+      // Prefer the post-filter count when available so the Grid
+      // sizes its scrollbar over the visible (filtered) set, not
+      // the materialized total. Falls back to the unfiltered total
+      // before the first fetch completes or while a filter-change
+      // refetch is in flight.
+      totalRows: this.filteredTotalRows ?? this.getTotalRows(),
       // Where the loaded rows start in the full result. The Grid uses
       // this to position the rows correctly within its virtualized
       // scroll area.
@@ -158,6 +217,21 @@ export class BigtraceAsyncDataSource implements DataSource {
     const col = model.columns?.find((c) => c.alias === sort.alias);
     const field = col?.field ?? sort.alias;
     return `${field} ${sort.direction.toLowerCase()}`;
+  }
+
+  // Same alias→field remap as `formatOrderBy`. The widget's filter
+  // chips reference columns by alias; the backend whitelists on the
+  // original SELECT field names, so we rewrite each entry's `field`
+  // before sending. Returns the structured array (not the JSON
+  // string) — `fetchResults` does the encoding itself.
+  private formatFilter(model: ModelWithColumns): ReadonlyArray<Filter> {
+    const filters = model.filters ?? [];
+    if (filters.length === 0) return [];
+    return filters.map((f) => {
+      const col = model.columns?.find((c) => c.alias === f.field);
+      const field = col?.field ?? f.field;
+      return {...f, field};
+    });
   }
 
   /**
@@ -182,11 +256,17 @@ export class BigtraceAsyncDataSource implements DataSource {
     this.isFetching = true;
     // Single funnel for every :fetch_results call we make. Logged at
     // info level so it shows up in DevTools without enabling debug
-    // verbosity. `[bigtrace]` prefix is grep-friendly.
+    // verbosity. `[bigtrace]` prefix is grep-friendly. The filter
+    // string is truncated because IN-lists can get long.
+    const filterLog =
+      this.currentFilterKey.length > 80
+        ? this.currentFilterKey.slice(0, 77) + '...'
+        : this.currentFilterKey;
     console.log(
       `[bigtrace] fetch_results uuid=${this.queryUuid.slice(0, 8)} ` +
         `offset=${offset} limit=${limit} ` +
-        `order_by=${JSON.stringify(this.currentOrderBy)}`,
+        `order_by=${JSON.stringify(this.currentOrderBy)} ` +
+        `filter=${filterLog}`,
     );
     m.redraw();
     try {
@@ -196,11 +276,13 @@ export class BigtraceAsyncDataSource implements DataSource {
         offset,
         this.signal,
         this.currentOrderBy,
+        this.currentFilter,
       );
       this.loadedRows = [...result.rows];
       this.loadedOffset = offset;
       this.loadedLimit = limit;
       this.hasInitialFetchCompleted = true;
+      this.filteredTotalRows = result.totalFilteredRows;
 
       if (this.columns.length === 0 && result.columns.length > 0) {
         this.columns = [...result.columns];
@@ -241,7 +323,14 @@ export class BigtraceAsyncDataSource implements DataSource {
   useDistinctValues(
     _column: string | undefined,
   ): QueryResult<readonly SqlValue[]> {
-    return {data: undefined, isPending: false, isFresh: true};
+    // Distinct-values picker is intentionally not implemented for the
+    // HTTP-backed source. Returning `data: []` (rather than `undefined`)
+    // is what stops the column-filter menu's "Equals" submenu from
+    // rendering a permanent "Loading..." — an empty list is honest about
+    // there being nothing to pick from. Users can still filter via the
+    // cell-context menu (right-click a value → "Add filter > equals"),
+    // which goes straight to `model.filters` without touching this path.
+    return {data: [], isPending: false, isFresh: true};
   }
 
   useParameterKeys(

@@ -13,7 +13,9 @@
 // limitations under the License.
 
 import {Row as DataGridRow} from '../../trace_processor/query_result';
+import {Filter} from '../../components/widgets/datagrid/model';
 import {SettingFilter} from '../settings/settings_types';
+import {encodeFilters} from './filter_encoding';
 import {RawQueryExecution} from './query_history_storage';
 
 // Wire-shape of a tabular response. The backend serializes each row as a
@@ -30,13 +32,32 @@ import {RawQueryExecution} from './query_history_storage';
 interface QueryResponsePayload {
   queryUuid?: string;
   columnNames?: string[];
+  // Modern backends ship every value as a JSON string (always-
+  // strings response contract; see ~/Projects/CLAUDE.md "Response
+  // value contract"). The `number` variant stays here because
+  // (a) older / mock backends still send typed JSON, and
+  // (b) a follow-up will add per-column schema info in the
+  // response that lets the UI coerce strings back to typed JS
+  // values — that's where the always-strings shape will lock in
+  // on the UI side too. Until then, `parseQueryResponse` passes
+  // values through whichever shape the backend sends.
   rows?: Array<{values: Array<string | number | null>}>;
+  // Modern :fetch_results responses carry the filtered row count so
+  // the DataGrid can size its virtual scrollbar over the filtered
+  // set. Older / mock backends omit it; clients fall back to the
+  // unfiltered total in that case.
+  totalFilteredRows?: number;
 }
 
 export interface QueryResultPage {
   readonly rows: ReadonlyArray<DataGridRow>;
   readonly columns: ReadonlyArray<string>;
   readonly queryUuid?: string;
+  // Present on `:fetch_results` responses from modern backends. The
+  // post-filter row count when a filter is set; the materialized
+  // table size otherwise. Undefined for `executeSync`/`executeAsync`
+  // responses (which have no notion of a filter).
+  readonly totalFilteredRows?: number;
 }
 
 // Thrown when a request is aborted via its AbortSignal. Callers should treat
@@ -121,14 +142,20 @@ export class BigtraceQueryClient {
    * Page through a finished (or in-flight) async query's materialized
    * result table.
    *
-   * - `limit` / `offset` apply **after** ordering, so flipping
-   *   direction starts the user at the top of the new ordering.
+   * - `limit` / `offset` apply **after** ordering and filtering, so
+   *   flipping direction starts the user at the top of the new
+   *   ordering, and filtering shrinks the universe paginated over.
    * - `orderBy` follows
    *   [AIP-132 §Ordering](https://google.aip.dev/132#ordering):
    *   comma-separated list of `"<field> [asc|desc]"` entries; default
    *   `asc`. Field names must match the materialized table's
    *   columns; the backend rejects unknown fields and malformed
    *   directions with HTTP 400.
+   * - `filter` is the DataGrid widget's `Filter[]` shape. We
+   *   JSON-serialize it via `encodeFilters` (always-strings wire,
+   *   canonical key order) and ship it as the `filter` query param.
+   *   Multi-entry arrays are AND'd by the backend. Same 400 error
+   *   surface as `orderBy` for malformed input or unknown columns.
    * - Mid-flight queries (status=IN_PROGRESS) return whatever rows
    *   workers have merged so far. Empty body is normal during the
    *   merge gap.
@@ -139,10 +166,14 @@ export class BigtraceQueryClient {
     offset: number,
     signal?: AbortSignal,
     orderBy?: string,
+    filter?: ReadonlyArray<Filter>,
   ): Promise<QueryResultPage> {
     let path = `/query_executions/${uuid}:fetch_results?limit=${limit}&offset=${offset}`;
     if (orderBy && orderBy.length > 0) {
       path += `&order_by=${encodeURIComponent(orderBy)}`;
+    }
+    if (filter && filter.length > 0) {
+      path += `&filter=${encodeURIComponent(encodeFilters(filter))}`;
     }
     const result = await this.requestJson<QueryResponsePayload>(path, {signal});
     return parseQueryResponse(result);
@@ -306,5 +337,10 @@ export function parseQueryResponse(
     const v = rows[0]['queryUuid'];
     if (typeof v === 'string') queryUuid = v;
   }
-  return {rows, columns, queryUuid};
+  return {
+    rows,
+    columns,
+    queryUuid,
+    totalFilteredRows: result.totalFilteredRows,
+  };
 }
