@@ -15,6 +15,7 @@
 import m from 'mithril';
 import {Icons} from '../../base/semantic_icons';
 import {Button} from '../../widgets/button';
+import {Intent} from '../../widgets/common';
 import {Stack} from '../../widgets/stack';
 import {queryHistoryStorage} from './query_history_storage';
 import {queryStore, QueryExecution} from './query_store';
@@ -24,17 +25,19 @@ import {formatDate} from '../../base/time';
 import {Spinner} from '../../widgets/spinner';
 import {EmptyState} from '../../widgets/empty_state';
 
+// Open-an-existing-history-entry callback.
+type OpenQueryFn = (
+  query: string,
+  uuid: string,
+  materialize: boolean,
+  forceNew?: boolean,
+  limit?: number,
+  startTime?: number,
+) => void;
+
 interface QueryHistoryComponentAttrs {
   readonly className?: string;
-  setQuery: (query: string) => void;
-  openQuery: (
-    query: string,
-    uuid: string,
-    materialize: boolean,
-    forceNew?: boolean,
-    limit?: number,
-    startTime?: number,
-  ) => void;
+  openQuery: OpenQueryFn;
   readonly refreshSignal?: number;
 }
 
@@ -44,19 +47,31 @@ interface QueryHistoryComponentAttrs {
 // the backend's IN_PROGRESS insert to land before refetching.
 const HISTORY_REFRESH_DEBOUNCE_MS = 1000;
 
-// Compact format for sidebar history rows. Examples:
-//   - same year: "5/4 3:47 PM"
-//   - other year: "5/4/25 3:47 PM"
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+// Sidebar history-row date format: "May 9, 2026, 6:01 PM".
 function formatCompactDate(d: Date): string {
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  const date = sameYear
-    ? `${d.getMonth() + 1}/${d.getDate()}`
-    : `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`;
+  const month = MONTH_NAMES[d.getMonth()];
+  const day = d.getDate();
+  const year = d.getFullYear();
   let h = d.getHours();
   const m12 = h >= 12 ? 'PM' : 'AM';
   h = h % 12 || 12;
   const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${date} ${h}:${mm} ${m12}`;
+  return `${month} ${day}, ${year}, ${h}:${mm} ${m12}`;
 }
 
 // Module-level state. Survives `QueryHistoryComponent` mount/unmount
@@ -69,7 +84,8 @@ class HistoryStore {
   history: QueryExecution[] = [];
   isLoading = true;
   error: string | null = null;
-  activeTabKey = 'materialized';
+  // Default to Ephemeral, matching the Persistent toggle's default-off.
+  activeTabKey = 'standard';
   private lastRefreshSignal = -1;
   private debounceTimer?: number;
   private hasEverLoaded = false;
@@ -127,6 +143,15 @@ class HistoryStore {
 
 const historyStore = new HistoryStore();
 
+// Steer the History sidebar to the tab matching the run the user is
+// about to do. Keys: 'materialized' / 'standard'.
+export function setHistoryActiveTab(materialize: boolean): void {
+  const key = materialize ? 'materialized' : 'standard';
+  if (historyStore.activeTabKey === key) return;
+  historyStore.activeTabKey = key;
+  m.redraw();
+}
+
 export class QueryHistoryComponent
   implements m.ClassComponent<QueryHistoryComponentAttrs>
 {
@@ -167,31 +192,41 @@ export class QueryHistoryComponent
       (h) => h.materialized,
     );
 
+    // Tab titles wrap in a span so hover tooltips can explain what
+    // each category holds (the labels alone are jargon).
     const tabs: TabsTab[] = [
       {
         key: 'standard',
-        title: `Ephemeral (${standardQueries.length})`,
+        title: m(
+          'span',
+          {
+            title:
+              'Queries run with Persistent OFF — results were shown ' +
+              'inline at run time and not saved. Reopen here to see the ' +
+              'SQL again or rerun.',
+          },
+          `Ephemeral (${standardQueries.length})`,
+        ),
         content: this.renderHistoryList(standardQueries, false, openQuery),
       },
       {
         key: 'materialized',
-        title: `Persistent (${materializedQueries.length})`,
+        title: m(
+          'span',
+          {
+            title:
+              'Queries run with Persistent ON — results saved to a ' +
+              'temporary backend table you can reopen and browse here.',
+          },
+          `Persistent (${materializedQueries.length})`,
+        ),
         content: this.renderHistoryList(materializedQueries, true, openQuery),
       },
     ];
 
-    return m('.pf-query-history', {...rest, style: {position: 'relative'}}, [
-      m(
-        'div',
-        {style: {position: 'absolute', top: '5px', right: '5px', zIndex: 10}},
-        [
-          m(Button, {
-            icon: 'refresh',
-            title: 'Refresh history',
-            onclick: () => historyStore.refreshNow(),
-          }),
-        ],
-      ),
+    return m(
+      '.pf-query-history',
+      rest,
       m(Tabs, {
         tabs: tabs,
         activeTabKey: historyStore.activeTabKey,
@@ -199,21 +234,19 @@ export class QueryHistoryComponent
           historyStore.activeTabKey = key;
           m.redraw();
         },
+        rightContent: m(Button, {
+          icon: 'refresh',
+          title: 'Refresh history',
+          onclick: () => historyStore.refreshNow(),
+        }),
       }),
-    ]);
+    );
   }
 
   private renderHistoryList(
     queries: QueryExecution[],
     isMaterialized: boolean,
-    openQuery?: (
-      query: string,
-      uuid: string,
-      materialize: boolean,
-      forceNew?: boolean,
-      limit?: number,
-      startTime?: number,
-    ) => void,
+    openQuery?: OpenQueryFn,
   ): m.Children {
     if (queries.length === 0) {
       return m(
@@ -281,20 +314,42 @@ export class QueryHistoryComponent
 
             m(Button, {
               onclick: async () => {
-                if (uuid) {
-                  await queryHistoryStorage.deleteQuery(uuid);
-                  historyStore.refreshNow();
+                if (!uuid) return;
+                // Confirm — the trash icon is 4px from Open and the
+                // delete is irreversible.
+                const oneLine = queryText
+                  .split('\n')
+                  .map((s) => s.trim())
+                  .filter((s) => s.length > 0)[0];
+                const preview =
+                  oneLine && oneLine.length > 60
+                    ? oneLine.slice(0, 59) + '…'
+                    : oneLine ?? uuid;
+                if (
+                  !window.confirm(
+                    `Delete this query from history?\n\n${preview}`,
+                  )
+                ) {
+                  return;
                 }
+                await queryHistoryStorage.deleteQuery(uuid);
+                historyStore.refreshNow();
               },
               icon: Icons.Delete,
+              // Danger intent — hover state goes red so the
+              // destructive nature is visible BEFORE the click. Was
+              // visually identical to the gray Open button right next
+              // to it. Confirm dialog still backs it up.
+              intent: Intent.Danger,
               title: 'Delete query',
             }),
           ],
         ),
         m('.pf-query-history__item-meta', [
+          // Row 1: status pill (left) + start timestamp (right).
+          // Pairing them keeps the high-signal "what / when" together;
+          // the status colour + colored left bar do the visual lift.
           m('div.pf-query-history__item-header', [
-            // Status leads — it mirrors the colored left bar and is the
-            // most scannable element. Date and rows follow.
             m(
               'span.pf-query-history__item-status',
               {
@@ -304,33 +359,27 @@ export class QueryHistoryComponent
                 // prefix would be noise.
                 title: `Status: ${entry.status}`,
               },
-              // Display: "IN_PROGRESS" → "IN PROGRESS".
-              entry.status.replace(/_/g, ' '),
+              // Display: "IN_PROGRESS" → "IN PROGRESS". The transient
+              // "UNKNOWN" state (newly-submitted query whose first
+              // status poll hasn't returned yet, or a legacy row with
+              // a null status) reads as alarming user-facing — show
+              // it as "STARTING" instead so the badge matches the
+              // body's "Loading query status…" message.
+              entry.status === 'UNKNOWN'
+                ? 'STARTING'
+                : entry.status.replace(/_/g, ' '),
             ),
-            m('span', {title: `UTC: ${utcString}`}, `Started: ${localString}`),
-            isMaterialized &&
-              m(
-                'span.pf-query-history__item-rows',
-                {
-                  // Dim the row count when it's zero so empty results
-                  // recede; non-zero counts stay at full opacity. The
-                  // colored left bar + status pill already do the
-                  // "succeeded" signalling.
-                  className:
-                    rows === 0
-                      ? 'pf-query-history__item-rows--empty'
-                      : undefined,
-                },
-                // Split label + value so "Rows:" sits at a consistent x
-                // across rows; the value right-aligns in its own slot
-                // so trailing edges align too.
-                m('span.pf-query-history__item-rows-label', 'Rows:'),
-                m(
-                  'span.pf-query-history__item-rows-value',
-                  rows.toLocaleString(),
-                ),
-              ),
+            m(
+              'span.pf-query-history__item-date',
+              {title: `UTC: ${utcString}`},
+              localString,
+            ),
           ]),
+          // Row 2 (materialized only): table link (left) + rows count
+          // (right). Table + rows are the "what got produced" pair —
+          // grouping them lets the eye take in the result summary at
+          // a glance, and saves a row of vertical space vs the
+          // previous status/rows + date + table layout.
           isMaterialized &&
             m('div.pf-query-history__item-details', [
               m('span.pf-query-history__item-table-row', [
@@ -352,9 +401,83 @@ export class QueryHistoryComponent
                   entry.tableName || 'N/A',
                 ),
               ]),
+              m(
+                'span.pf-query-history__item-rows',
+                {
+                  // Dim the row count when it's zero so empty results
+                  // recede; non-zero counts stay at full opacity. The
+                  // colored left bar + status pill already do the
+                  // "succeeded" signalling.
+                  className:
+                    rows === 0
+                      ? 'pf-query-history__item-rows--empty'
+                      : undefined,
+                },
+                m('span.pf-query-history__item-rows-label', 'Rows:'),
+                m(
+                  'span.pf-query-history__item-rows-value',
+                  rows.toLocaleString(),
+                ),
+              ),
             ]),
         ]),
-        m('pre', queryText),
+        // Clamp the query preview to ~4 lines so a long INCLUDE +
+        // multi-column SELECT doesn't dominate the sidebar (each row
+        // was eating ~half the viewport for any non-trivial query).
+        // Click toggles a `--expanded` class for full text. The
+        // collapsed state shows a gradient fade-out at the bottom edge
+        // so it reads as truncated rather than fixed-height.
+        //
+        // Empty queryText (a non-UI client submitted `{}`, or a
+        // legacy/corrupt history row) renders an italic placeholder
+        // instead of an empty <pre> — the empty <pre> made the card
+        // visibly shorter than its peers, reading as a broken render.
+        queryText === '' &&
+          m(
+            'span.pf-query-history__item-query',
+            {
+              style: {
+                fontStyle: 'italic',
+                opacity: 0.5,
+              },
+            },
+            '(no query text)',
+          ),
+        queryText !== '' &&
+          m(
+            'pre.pf-query-history__item-query',
+            {
+              style: {
+                maxHeight: '4.5em',
+                overflow: 'hidden',
+                cursor: 'pointer',
+                position: 'relative',
+                maskImage:
+                  'linear-gradient(to bottom, black 70%, transparent 100%)',
+                WebkitMaskImage:
+                  'linear-gradient(to bottom, black 70%, transparent 100%)',
+              },
+              title: 'Click to toggle full query',
+              onclick: (e: Event) => {
+                const el = e.currentTarget as HTMLElement;
+                const expanded = el.classList.toggle(
+                  'pf-query-history__item-query--expanded',
+                );
+                if (expanded) {
+                  el.style.maxHeight = '';
+                  el.style.maskImage = '';
+                  el.style.webkitMaskImage = '';
+                } else {
+                  el.style.maxHeight = '4.5em';
+                  el.style.maskImage =
+                    'linear-gradient(to bottom, black 70%, transparent 100%)';
+                  el.style.webkitMaskImage =
+                    'linear-gradient(to bottom, black 70%, transparent 100%)';
+                }
+              },
+            },
+            queryText,
+          ),
       );
     });
   }

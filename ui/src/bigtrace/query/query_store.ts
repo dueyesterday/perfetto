@@ -12,6 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Wire-level statuses for which a query is final and no further
+// polling is needed.
+export const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  'SUCCESS',
+  'FAILED',
+  'CANCELLED',
+]);
+
 // In-memory representation of a single query execution as the UI thinks of
 // it. Times are epoch milliseconds (numbers), not ISO strings — the
 // QueryHistoryStorage layer is responsible for ISO-to-epoch conversion at
@@ -90,9 +98,7 @@ export class QueryStore {
     incoming: Partial<QueryExecution>,
   ): void {
     const incomingIsTerminal =
-      incoming.status === 'SUCCESS' ||
-      incoming.status === 'FAILED' ||
-      incoming.status === 'CANCELLED';
+      incoming.status !== undefined && TERMINAL_STATUSES.has(incoming.status);
     const objIsLive = obj.status === 'IN_PROGRESS' || obj.status === 'UNKNOWN';
     const rowCountIncreased =
       (incoming.processedRows ?? 0) >= obj.processedRows;

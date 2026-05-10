@@ -40,20 +40,16 @@ import {Duration} from '../../base/time';
 import {endpointStorage} from '../settings/endpoint_storage';
 import {SettingFilter} from '../settings/settings_types';
 import {BigtraceAsyncDataSource} from '../query/bigtrace_async_data_source';
+import {setHistoryActiveTab} from '../query/query_history';
 import {BigtraceQueryClient} from '../query/bigtrace_query_client';
 import {QueryRunner} from '../query/query_runner';
-import {queryStore} from '../query/query_store';
+import {queryStore, TERMINAL_STATUSES} from '../query/query_store';
 import {
   BigTraceEditorTab,
   QueryResponse,
   QueryTabsState,
+  deriveTitleFromQuery,
 } from './query_tabs_state';
-
-const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
-  'SUCCESS',
-  'FAILED',
-  'CANCELLED',
-]);
 
 export interface EditorTabViewAttrs {
   readonly tab: BigTraceEditorTab;
@@ -120,7 +116,14 @@ function renderEditorPanel(
               icon: 'play_arrow',
               intent: Intent.Primary,
               variant: ButtonVariant.Filled,
-              onclick: () => runner.run(tab, tab.editorText),
+              // Disable when nothing executable remains
+              // (whitespace + SQL line comments).
+              disabled: deriveTitleFromQuery(tab.editorText) === undefined,
+              onclick: () => {
+                setHistoryActiveTab(tab.materialize);
+                tabsState.maybeAutoNameTab(tab.id, tab.editorText);
+                runner.run(tab, tab.editorText);
+              },
             }),
         m(
           Stack,
@@ -137,20 +140,16 @@ function renderEditorPanel(
           // easy to miss.
           m(Switch, {
             label: 'Persistent',
-            // Native browser tooltip on hover — explains both states
-            // without needing a separate help icon. Kept terse so the
-            // tooltip surface stays readable.
             title:
-              'ON: query runs in the background. Progress is shown above ' +
-              'the results, and results are saved as a temporary table ' +
-              'you can reopen later from the History sidebar. Use for ' +
-              'long-running queries over many traces.\n\n' +
-              'OFF: query blocks until it finishes, then results appear ' +
-              'inline. Nothing is saved. Suitable for small queries on ' +
-              'few traces.',
+              'ON: results saved to History (Persistent tab) — reopen later. ' +
+              'OFF: results shown inline and discarded when the tab closes.',
             checked: tab.materialize,
+            // Mode is captured at submit time; disable mid-run so
+            // the toggle isn't a false-affordance.
+            disabled: tab.isLoading,
             onchange: (e: Event) => {
               tab.materialize = (e.target as HTMLInputElement).checked;
+              setHistoryActiveTab(tab.materialize);
               tabsState.markDirty();
             },
           }),
@@ -158,11 +157,13 @@ function renderEditorPanel(
           // Run behaves), Result limit is a numeric param. They affect
           // the next run differently; the rule makes that visual.
           m('span.pf-query-page__toolbar-divider', {'aria-hidden': 'true'}),
-          m('span', 'Result limit:'),
+          m('span', 'Limit:'),
           m(TextInput, {
             type: 'number',
             value: String(tab.limit),
             placeholder: 'Limit',
+            // Captured at submit time; disable mid-run.
+            disabled: tab.isLoading,
             onInput: (value: string) => {
               const newLimit = parseInt(value, 10);
               if (!isNaN(newLimit) && newLimit > 0) {
@@ -184,27 +185,37 @@ function renderEditorPanel(
     m(Editor, {
       text: tab.editorText,
       language: 'perfetto-sql',
+      autofocus: true,
+      // Swallow Ctrl/Cmd+S so the browser's "Save Page As…" doesn't
+      // open. Auto-save already runs on every keystroke; the handler
+      // is just here to claim the keybinding.
+      onSave: () => {},
       onUpdate: (text: string) => {
         tab.editorText = text;
         tabsState.markDirty();
       },
-      onExecute: (query: string) => runner.run(tab, query),
+      onExecute: (query: string) => {
+        setHistoryActiveTab(tab.materialize);
+        tabsState.maybeAutoNameTab(tab.id, query);
+        runner.run(tab, query);
+      },
     }),
   ]);
 }
 
-// "Running query…" indicator with a live-ticking elapsed-time
-// readout. Used while `tab.isLoading` is true and there's no
-// dataSource/queryResult yet (sync request in flight, or the brief
-// window between async submit and the first poll). Sync queries
-// have no polling loop to drive periodic redraws, so the component
-// owns its own setInterval — torn down on unmount.
+// Round to the nearest second for display. "<1s" for sub-500ms runs
+// so the user sees the query actually ran.
+function formatDurationS(ms: number): string {
+  if (ms < 500) return '<1s';
+  return Duration.format(Duration.fromMillis(Math.round(ms / 1000) * 1000));
+}
+
+// "Running query…" with a live elapsed-time readout. Owns its own
+// setInterval since sync queries don't drive periodic redraws.
 class RunningQuerySpinner implements m.ClassComponent<{startMs: number}> {
   private timer: number | null = null;
 
   oncreate(): void {
-    // 100 ms gives a smooth tenths-of-a-second tick without burning
-    // CPU. The Mithril global redraw is cheap (one component).
     this.timer = window.setInterval(() => m.redraw(), 100);
   }
 
@@ -216,10 +227,8 @@ class RunningQuerySpinner implements m.ClassComponent<{startMs: number}> {
   }
 
   view({attrs: {startMs}}: m.Vnode<{startMs: number}>): m.Children {
-    // Reuse the async status-bar's formatter so a sync query that
-    // somehow ran for an hour reads "1h 2m 3s" rather than "3723s".
     const elapsedMs = Math.max(0, Date.now() - startMs);
-    const durationStr = Duration.format(Duration.fromMillis(elapsedMs));
+    const durationStr = formatDurationS(elapsedMs);
     return m(
       EmptyState,
       {
@@ -285,11 +294,17 @@ function renderResultsPanel(
   // fetch fires → spinner never resolves. Detect upfront and show
   // a recovery hint. Errors fall through (the error banner shows
   // them).
+  // Only treat as "cleared" once terminal — mid-run, the table is
+  // still being built and "Results no longer available" misleads.
+  const isTerminalStatus =
+    tab.execution?.status !== undefined &&
+    TERMINAL_STATUSES.has(tab.execution.status);
   const isAsyncTableCleared =
     tab.materialize &&
     Boolean(tab.queryUuid) &&
     !tab.execution?.tableName &&
-    !tab.queryResult.error;
+    !tab.queryResult.error &&
+    isTerminalStatus;
 
   // Whether to render the grid. For async, gate on the live
   // processedRows from the materialized table; for sync (whose
@@ -306,13 +321,18 @@ function renderResultsPanel(
       errorBanner,
       isSyncReopenNoRerun
         ? m(EmptyState, {
-            title: "Sync query results aren't persisted",
+            title: 'Re-run the query to see results',
             icon: 'refresh',
             fillHeight: true,
           })
         : isAsyncTableCleared
           ? m(EmptyState, {
-              title: 'Results no longer available',
+              // CANCELLED = user-driven; generic message covers TTL
+              // expiry / post-failure cleanup.
+              title:
+                tab.execution?.status === 'CANCELLED'
+                  ? 'Query was cancelled'
+                  : 'Results no longer available',
               icon: 'refresh',
               fillHeight: true,
             })
@@ -359,17 +379,14 @@ function renderStatusBox(tab: BigTraceEditorTab): m.Children {
   const status = tab.execution?.status ?? 'UNKNOWN';
   const processedTraces = tab.execution?.processedTraces ?? 0;
   const totalTraces = tab.execution?.totalTraces ?? 0;
-  // `Duration.humanise` caps the unit at `s`, so a long-running query
-  // (e.g. 13,300s) renders as the unfriendly "13300s". `Duration.format`
-  // breaks into y/d/h/m/s/ms/µs/ns instead, giving "3h 41m 40s".
-  const durationStr = Duration.format(Duration.fromMillis(durationMs));
+  const durationStr = formatDurationS(durationMs);
 
   return m(
     Box,
     {className: 'pf-query-page__status-bar'},
     m(
       Stack,
-      {orientation: 'horizontal', gap: '12px', alignItems: 'center'},
+      {orientation: 'horizontal', gap: '16px', alignItems: 'center'},
       m(
         'div.pf-query-page__status-bar-refresh',
         m(Button, {
@@ -388,8 +405,10 @@ function renderStatusBox(tab: BigTraceEditorTab): m.Children {
         'span.pf-query-page__status-bar-pill',
         {className: `pf-status-${status.toLowerCase().replace(/_/g, '-')}`},
         // Wire value uses underscores ("IN_PROGRESS"); display swaps
-        // them for spaces so the pill reads naturally.
-        status.replace(/_/g, ' '),
+        // them for spaces so the pill reads naturally. The transient
+        // "UNKNOWN" state (pre-first-poll) shows as "STARTING" so the
+        // pill matches the body's "Loading query status…" copy.
+        status === 'UNKNOWN' ? 'STARTING' : status.replace(/_/g, ' '),
       ),
       // Duration leads the stats with its own dedicated chip: a clock
       // icon + larger, monospaced value. It's the metric users care
@@ -406,11 +425,9 @@ function renderStatusBox(tab: BigTraceEditorTab): m.Children {
         }),
         m('span.pf-query-page__status-bar-duration-value', durationStr),
       ),
-      // Traces: denominator is firm (totalTraces is fixed once the trace
-      // list is resolved); numerator (processedTraces) lags the 3s poll
-      // cadence and may be a few traces behind reality while running.
-      // Dim only the numerator until terminal so the live-ness shows
-      // without making the whole stat look uncertain.
+      m('span.pf-query-page__toolbar-divider', {'aria-hidden': 'true'}),
+      // Traces: denominator is firm; the numerator lags the 3s poll
+      // and is dimmed while live.
       m(
         'span.pf-query-page__status-bar-stat',
         m('span.pf-query-page__status-bar-stat-label', 'Traces'),
@@ -435,10 +452,6 @@ function renderStatusBox(tab: BigTraceEditorTab): m.Children {
         ),
         renderInlineProgressBar(processedTraces, totalTraces, !isTerminal),
       ),
-      // Vertical rule between the Traces and Rows groups — they are
-      // independent metrics (one is over the trace pool, one is over
-      // the user's result limit), so a divider helps them read as
-      // separate stats rather than one continuous string of numbers.
       m('span.pf-query-page__toolbar-divider', {'aria-hidden': 'true'}),
       m(
         'span.pf-query-page__status-bar-stat',
@@ -533,6 +546,21 @@ function extractErrorHeadline(errorStr: string): string {
   return errorStr;
 }
 
+// Strip leaked transport/status prefixes from error headlines:
+//   "HTTP error! status: 400, message: <real msg>"
+//   "INVALID_ARGUMENT: <real msg>"
+//   "status: 400 detail: NOT_FOUND <real msg>"
+const _GRPC_STATUS_RE =
+  /^\s*(?:status\s*:\s*\d+\s*[,:]?\s*)?(?:detail\s*:\s*)?(?:OK|CANCELLED|UNKNOWN|INVALID_ARGUMENT|DEADLINE_EXCEEDED|NOT_FOUND|ALREADY_EXISTS|PERMISSION_DENIED|RESOURCE_EXHAUSTED|FAILED_PRECONDITION|ABORTED|OUT_OF_RANGE|UNIMPLEMENTED|INTERNAL|UNAVAILABLE|DATA_LOSS|UNAUTHENTICATED)\s*[:\-]?\s*/i;
+const _HTTP_ERROR_RE =
+  /^\s*HTTP error!\s*status\s*:\s*\d+\s*,\s*message\s*:\s*/i;
+function stripGrpcStatus(text: string): string {
+  let stripped = text.replace(_HTTP_ERROR_RE, '');
+  stripped = stripped.replace(_GRPC_STATUS_RE, '').trim();
+  // Fall back to original if stripping consumed everything.
+  return stripped.length === 0 ? text : stripped;
+}
+
 function renderErrorBanner(tab: BigTraceEditorTab): m.Children {
   const errorStr = tab.queryResult?.error;
   if (errorStr === undefined) return false;
@@ -546,7 +574,7 @@ function renderErrorBanner(tab: BigTraceEditorTab): m.Children {
   const headline = isPreconditionFailure
     ? 'The persistent results table for this query has expired. You may need to ' +
       'run the query again.'
-    : extractErrorHeadline(errorStr);
+    : stripGrpcStatus(extractErrorHeadline(errorStr));
   const fullText = errorStr
     .replaceAll('\\n', '\n')
     .replaceAll('\\t', '  ')
@@ -562,18 +590,16 @@ function renderErrorBanner(tab: BigTraceEditorTab): m.Children {
     }),
     m('.pf-results-table__error-body', [
       m('.pf-results-table__error-title', displayTitle),
-      // Title + collapsed details only — no inline headline outside the
-      // <details>. Long tracebacks were eating most of the results
-      // pane; users expand when they want the detail.
-      m(
-        'details',
+      // Headline always visible; full traceback collapsed in <details>.
+      m('.pf-results-table__error-headline', headline),
+      showDetailsToggle &&
         m(
-          'summary',
-          {style: {cursor: 'pointer', opacity: 0.7, fontSize: '0.85em'}},
-          'Show more',
-        ),
-        m('.pf-results-table__error-headline', headline),
-        showDetailsToggle &&
+          'details',
+          m(
+            'summary',
+            {style: {cursor: 'pointer', opacity: 0.7, fontSize: '0.85em'}},
+            'Show full error',
+          ),
           m(
             'pre.pf-results-table__error-message',
             {
@@ -588,7 +614,7 @@ function renderErrorBanner(tab: BigTraceEditorTab): m.Children {
             },
             fullText,
           ),
-      ),
+        ),
     ]),
   );
 }
@@ -633,14 +659,20 @@ function renderResultsGrid(
 
   const tableContent: m.Children[] = [];
 
-  if (queryResult.statementWithOutputCount > 1) {
+  // Heuristic statement count by `;` splitting — the runner doesn't
+  // populate queryResult.statementCount.
+  const statementCount = queryResult.query
+    .split(';')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0).length;
+  if (statementCount > 1) {
     tableContent.push(
       m(Box, [
-        m(Callout, {icon: 'warning', intent: Intent.None}, [
-          `${queryResult.statementWithOutputCount} out of ${queryResult.statementCount} `,
-          'statements returned a result. ',
-          'Only the results for the last statement are displayed.',
-        ]),
+        m(
+          Callout,
+          {icon: 'warning', intent: Intent.None},
+          'Only the results from the last statement are displayed.',
+        ),
       ]),
     );
   }
@@ -816,7 +848,8 @@ function renderResultsSummary(
   queryResult: QueryResponse,
 ): string {
   if (!tab.materialize) {
-    return `Returned ${queryResult.totalRowCount.toLocaleString()} rows in ${Math.round(queryResult.durationMs).toLocaleString()} ms`;
+    const durationStr = formatDurationS(Math.max(0, queryResult.durationMs));
+    return `Returned ${queryResult.totalRowCount.toLocaleString()} rows in ${durationStr}`;
   }
   const processedRows = tab.execution?.processedRows ?? 0;
   const isTerminal =

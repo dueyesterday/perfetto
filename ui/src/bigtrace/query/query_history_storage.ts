@@ -60,6 +60,11 @@ export class QueryHistoryStorage {
   }
 
   async getAllHistory(): Promise<QueryExecution[]> {
+    // No endpoint → return empty so the sidebar shows its "no queries
+    // yet" empty state instead of a 404 from the static UI server.
+    const setting = endpointStorage.get('bigtraceEndpoint');
+    const endpoint = setting ? (setting.get() as string) : '';
+    if (endpoint.trim() === '') return [];
     const list = await this.client().listQueryExecutions();
     const mapped = list.map(toQueryExecution);
     mapped.sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0));

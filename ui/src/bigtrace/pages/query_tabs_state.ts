@@ -23,10 +23,28 @@ import {SettingFilter} from '../settings/settings_types';
 const QUERY_TABS_STORAGE_KEY = 'bigtraceQueryTabs';
 const DEFAULT_SQL = '';
 const DEFAULT_LIMIT = 100;
+const TAB_TITLE_MAX_CHARS = 32;
 
-// Result of a single query execution as the editor tab understands it.
-// `rows` and `columns` are populated for sync queries; for async queries
-// they remain empty and the data is read from `tab.dataSource` on demand.
+// First non-empty, comment-stripped line of `sql`, clipped to
+// TAB_TITLE_MAX_CHARS. Returns undefined if nothing's left. Heuristic —
+// `/* … */` blocks aren't stripped (rare; worst case is an ugly title).
+export function deriveTitleFromQuery(sql: string): string | undefined {
+  const stripped = sql
+    .split('\n')
+    .map((line) => {
+      const idx = line.indexOf('--');
+      return idx === -1 ? line : line.slice(0, idx);
+    })
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (stripped.length === 0) return undefined;
+  const firstLine = stripped[0];
+  if (firstLine.length <= TAB_TITLE_MAX_CHARS) return firstLine;
+  return firstLine.slice(0, TAB_TITLE_MAX_CHARS - 1) + '…';
+}
+
+// Sync queries populate rows/columns; async queries leave them empty
+// and the editor tab reads from `tab.dataSource` instead.
 export interface QueryResponse {
   query: string;
   error?: string;
@@ -39,9 +57,27 @@ export interface QueryResponse {
   lastStatementSql: string;
 }
 
-// All state for one editor tab. Declared mutable for ergonomic in-place
-// updates from the runner; the QueryTabsState class is the only thing that
-// creates and destroys these objects.
+// QueryResponse with sensible defaults; callers spread real values via `partial`.
+export function makeQueryResponse(
+  query: string,
+  partial: Partial<Omit<QueryResponse, 'query' | 'lastStatementSql'>> = {},
+): QueryResponse {
+  return {
+    query,
+    lastStatementSql: query,
+    statementCount: 1,
+    statementWithOutputCount: 0,
+    totalRowCount: 0,
+    durationMs: 0,
+    columns: [],
+    rows: [],
+    error: undefined,
+    ...partial,
+  };
+}
+
+// State for one editor tab. Mutated in-place by the runner; only
+// QueryTabsState creates and destroys these.
 export interface BigTraceEditorTab {
   readonly id: string;
   title: string;
@@ -72,9 +108,7 @@ export interface BigTraceEditorTab {
   pollGeneration: number;
 }
 
-// Persisted shape of a tab in localStorage. Subset of BigTraceEditorTab —
-// transient runtime state (lifecycle, dataSource, polling, etc.) is
-// recreated on load.
+// Persisted subset of BigTraceEditorTab. Transient state is rebuilt on load.
 interface StoredTab {
   readonly id: string;
   readonly title: string;
@@ -140,9 +174,17 @@ export class QueryTabsState {
       }
     }
 
+    // Caller-supplied title wins. Otherwise, derive from the
+    // initialQuery (SQL → first non-comment line, clipped) so tabs
+    // opened from History or example-query buttons get meaningful
+    // labels for free, instead of falling all the way through to
+    // "Query N". A run-time auto-name (`maybeAutoNameTab`) still
+    // refines the title once the user actually runs something.
+    const derivedTitle =
+      title ?? (initialQuery && deriveTitleFromQuery(initialQuery));
     const tab: BigTraceEditorTab = {
       id: shortUuid(),
-      title: title ?? this.nextTabName(),
+      title: derivedTitle || this.nextTabName(),
       editorText: initialQuery ?? '',
       limit: limit ?? DEFAULT_LIMIT,
       queryResult: undefined,
@@ -151,7 +193,9 @@ export class QueryTabsState {
       querySettings: [],
       lifecycle: new AbortController(),
       activeRequest: undefined,
-      materialize: materialize ?? (queryUuid ? true : false),
+      // History-reopen (uuid present) → Persistent; brand-new (no
+      // uuid) → sync. Caller can override.
+      materialize: materialize ?? Boolean(queryUuid),
       lastProcessedRows: 0,
       queryUuid,
       pollGeneration: 0,
@@ -193,6 +237,22 @@ export class QueryTabsState {
       tab.title = newTitle;
       this.markDirty();
     }
+  }
+
+  // Auto-derive a tab title from the query text when the tab still has
+  // its default placeholder name ("Query N"). Skipped when the user has
+  // manually renamed the tab (renameTab) — that title wins. Called by
+  // QueryRunner.run before submitting; the title shows up in the tab
+  // strip on the next render so users can tell tabs apart by content
+  // instead of "Query 1" / "Query 2" / "Query 3".
+  maybeAutoNameTab(tabId: string, queryText: string): void {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    if (!/^Query \d+$/.test(tab.title)) return;
+    const derived = deriveTitleFromQuery(queryText);
+    if (derived === undefined) return;
+    tab.title = derived;
+    this.markDirty();
   }
 
   reorderTab(draggedId: string, beforeId: string | undefined): void {
@@ -249,17 +309,7 @@ export class QueryTabsState {
         t.materialize,
       );
       if (t.error !== undefined && t.error !== '') {
-        tab.queryResult = {
-          rows: [],
-          columns: [],
-          error: t.error,
-          totalRowCount: 0,
-          durationMs: 0,
-          statementWithOutputCount: 0,
-          statementCount: 1,
-          lastStatementSql: tab.editorText,
-          query: tab.editorText,
-        };
+        tab.queryResult = makeQueryResponse(tab.editorText, {error: t.error});
       }
     }
     if (typeof parsed.activeTabId === 'string') {

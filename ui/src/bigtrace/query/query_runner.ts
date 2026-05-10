@@ -25,16 +25,12 @@ import {
 } from './bigtrace_query_client';
 import {forwardAbort} from './abort_utils';
 import {isoToEpochMs, RawQueryExecution} from './query_history_storage';
-import {queryStore} from './query_store';
+import {queryStore, TERMINAL_STATUSES} from './query_store';
+import {makeQueryResponse} from '../pages/query_tabs_state';
 import type {BigTraceEditorTab} from '../pages/query_tabs_state';
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_RETRY_MS = 1000;
-const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
-  'SUCCESS',
-  'FAILED',
-  'CANCELLED',
-]);
 
 interface QueryRunnerCallbacks {
   // Called whenever the runner makes a change that should be reflected in
@@ -73,6 +69,20 @@ export class QueryRunner {
     this.cb.onHistoryChanged();
     const endpointSetting = endpointStorage.get('bigtraceEndpoint');
     const endpoint = endpointSetting ? (endpointSetting.get() as string) : '';
+
+    // Empty endpoint → relative URL → 404 against the UI server.
+    // Surface a clear message instead.
+    if (endpoint.trim() === '') {
+      tab.queryResult = makeQueryResponse(query, {
+        error: 'Set the BigTrace Endpoint in Settings before running queries.',
+      });
+      // renderResultsPanel needs both queryResult AND dataSource to
+      // show the error banner.
+      tab.dataSource = new InMemoryDataSource([]);
+      tab.isLoading = false;
+      this.redraw();
+      return;
+    }
 
     await bigTraceSettingsStorage.loadSettings();
 
@@ -116,17 +126,10 @@ export class QueryRunner {
         this.redraw();
         return;
       }
-      tab.queryResult = {
-        rows: [],
-        columns: [],
+      tab.queryResult = makeQueryResponse(query, {
         error: e instanceof Error ? e.message : String(e),
-        totalRowCount: 0,
         durationMs: performance.now() - wallStartMs,
-        statementWithOutputCount: 0,
-        statementCount: 1,
-        lastStatementSql: query,
-        query,
-      };
+      });
       tab.isLoading = false;
     } finally {
       cancelForward();
@@ -155,6 +158,14 @@ export class QueryRunner {
     if (tab.pollInterval !== undefined) {
       window.clearTimeout(tab.pollInterval);
       tab.pollInterval = undefined;
+    }
+
+    // Reflect the cancellation locally so the status pill flips
+    // immediately; the next poll replaces this with the server's
+    // truth.
+    if (tab.execution && tab.execution.status === 'IN_PROGRESS') {
+      tab.execution.status = 'CANCELLED';
+      tab.execution.endTime = Date.now();
     }
 
     if (tab.materialize && queryUuid && tab.queryClient) {
@@ -245,17 +256,11 @@ export class QueryRunner {
         : 0;
 
     if (!tab.queryResult) {
-      tab.queryResult = {
-        rows: [],
-        columns: [],
-        error: undefined,
+      tab.queryResult = makeQueryResponse(tab.editorText, {
         totalRowCount: exec.processedRows,
         durationMs,
         statementWithOutputCount: 1,
-        statementCount: 1,
-        lastStatementSql: tab.editorText,
-        query: tab.editorText,
-      };
+      });
     } else {
       // Only sync `totalRowCount` from `exec.processedRows` for
       // materialized (async) tabs — that's the live count from the
@@ -426,17 +431,9 @@ export class QueryRunner {
         tab.lifecycle.signal,
       );
     }
-    tab.queryResult = {
-      rows: [],
-      columns: [],
-      error: undefined,
-      totalRowCount: 0,
+    tab.queryResult = makeQueryResponse(query, {
       durationMs: performance.now() - wallStartMs,
-      statementWithOutputCount: 0,
-      statementCount: 1,
-      lastStatementSql: query,
-      query,
-    };
+    });
   }
 
   private async runSync(
@@ -459,17 +456,13 @@ export class QueryRunner {
       tab.queryUuid = result.queryUuid;
       tab.execution = queryStore.getOrCreate(tab.queryUuid, tab.execution);
     }
-    tab.queryResult = {
+    tab.queryResult = makeQueryResponse(query, {
       rows: [...result.rows],
       columns: [...result.columns],
-      error: undefined,
       totalRowCount: result.rows.length,
       durationMs: performance.now() - wallStartMs,
       statementWithOutputCount: 1,
-      statementCount: 1,
-      lastStatementSql: query,
-      query,
-    };
+    });
     queryStore.update(tab.queryUuid || tab.id, {
       processedRows: result.rows.length,
     });
@@ -529,18 +522,11 @@ export class QueryRunner {
     if (isFailed) {
       const startMs = tab.execution?.startTime;
       const endMs = tab.execution?.endTime;
-      tab.queryResult = {
-        rows: [],
-        columns: [],
+      tab.queryResult = makeQueryResponse(tab.editorText, {
         error: 'Fetching error details...',
-        totalRowCount: 0,
         durationMs:
           startMs !== undefined && endMs !== undefined ? endMs - startMs : 0,
-        statementWithOutputCount: 0,
-        statementCount: 1,
-        lastStatementSql: tab.editorText,
-        query: tab.editorText,
-      };
+      });
       this.redraw();
     }
 

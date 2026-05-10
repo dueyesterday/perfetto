@@ -65,8 +65,12 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
     if (attrs.initialQuery) {
       const activeTab = sharedTabsState.getActiveTab();
       if (activeTab && activeTab.editorText.trim() === '') {
+        // Reuse the empty active tab and derive its title manually
+        // (addNewTab's title path doesn't fire on this branch).
         activeTab.editorText = attrs.initialQuery;
+        sharedTabsState.maybeAutoNameTab(activeTab.id, attrs.initialQuery);
       } else {
+        // addNewTab already derives the title from initialQuery (B62).
         sharedTabsState.addNewTab(undefined, attrs.initialQuery);
       }
       sharedTabsState.markDirty();
@@ -78,13 +82,13 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
   }
 
   view() {
-    const activeTab = sharedTabsState.getActiveTab();
-
     // Build editor tabs for the Tabs widget.
     const editorTabs: TabsTab[] = sharedTabsState.tabs.map((tab) => ({
       key: tab.id,
       title: tab.title,
-      leftIcon: 'code',
+      // Spinner on tabs with a query in flight, so tab-switching
+      // doesn't make the running query "disappear".
+      leftIcon: tab.isLoading ? 'progress_activity' : 'code',
       closeButton: sharedTabsState.tabs.length > 1,
       content: m(EditorTabView, {
         tab,
@@ -104,7 +108,21 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
         sharedTabsState.markDirty();
       },
       onTabRename: (key, newTitle) => sharedTabsState.renameTab(key, newTitle),
-      onTabClose: (key) => sharedTabsState.closeTab(key),
+      onTabClose: (key) => {
+        // closeTab is a no-op when only one tab remains; bail before
+        // the confirm so middle-click doesn't dead-end.
+        if (sharedTabsState.tabs.length <= 1) return;
+        // Confirm before closing a tab with an in-flight sync query
+        // (Persistent queries keep running on the backend).
+        const tab = sharedTabsState.tabs.find((t) => t.id === key);
+        if (
+          tab?.isLoading &&
+          !window.confirm('A query is still running in this tab. Close anyway?')
+        ) {
+          return;
+        }
+        sharedTabsState.closeTab(key);
+      },
       onTabReorder: (draggedKey, beforeKey) =>
         sharedTabsState.reorderTab(draggedKey, beforeKey),
       newTabContent: [
@@ -130,14 +148,12 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
       tabs: [
         {
           key: 'history',
+          // No leftIcon — the ~20px is better spent on the label at
+          // narrow viewports.
           title: 'History',
-          leftIcon: 'history',
           content: m(QueryHistoryComponent, {
             className: 'pf-query-page__history',
             refreshSignal: sharedHistoryRefreshSignal,
-            setQuery: (query: string) => {
-              if (activeTab) activeTab.editorText = query;
-            },
             openQuery: async (
               query: string,
               uuid: string,
@@ -165,8 +181,12 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
         },
         {
           key: 'tables',
-          title: 'Stdlib Schemas',
-          leftIcon: 'table_chart',
+          // Hide the count until the loader settles so we don't
+          // flash "(0)" on mount.
+          title:
+            sqlTablesLoader.modules && !sqlTablesLoader.isLoading
+              ? `Stdlib Schemas (${sqlTablesLoader.modules.listTables().length})`
+              : 'Stdlib Schemas',
           content: this.renderTablesTab(),
         },
       ],
@@ -182,7 +202,9 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
         direction: 'horizontal',
         initialSplit: {percent: 25},
         controlledPanel: 'second',
-        minSize: 100,
+        // Floor for the History meta-band layout; dismiss the
+        // sidebar entirely (Ctrl+Shift+B) for narrower screens.
+        minSize: 280,
         firstPanel: leftPanel,
         secondPanel: sidebarPanel,
       }),
