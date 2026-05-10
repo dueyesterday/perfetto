@@ -634,6 +634,46 @@ verifies:
 
 If no traces are available it prints `SKIP` and returns 0.
 
+## Unit tests
+
+```sh
+.venv/bin/python -m unittest discover -p '*_unittest.py'
+```
+
+Six test files, ~220 tests total, runs in under 2 seconds. Each test
+that needs a DB uses a fresh `tempfile.mkdtemp` + `Database(...)`
+(no shared state, no pollution of `~/.cache/bigtrace_local/`):
+
+- `db_unittest.py` — parsers (`parse_filter`, `parse_order_by`,
+  `compile_where`), formatters (`_ts_to_iso`), type inference
+  (`_infer_column_types`), `safe_table_id`.
+- `db_state_unittest.py` — Database state-machine transitions
+  (insert / mark_success / mark_failed / mark_cancelled with the
+  conditional-on-IN_PROGRESS invariant), soft-delete, list_qes,
+  get_status, merge_trace_atomic (including the `'skipped'` outcome
+  on CANCELLED — the cancel-protocol cornerstone), TTL sweep and
+  startup recovery, fetch_paginated end-to-end, sync timing.
+- `server_unittest.py` — wire helpers (`_truncate`, `_value_to_wire`,
+  `_wire_rows`), response shape (`_qe_to_status` strict-five-fields,
+  `_qe_to_raw` conditional optionals), trace-dir resolvers
+  (existence, kind, permissions), `_get_db` / `_get_snapshot_or_404`
+  HTTP error contracts, async-runner error-message format.
+- `query_executor_unittest.py` — `_trace_id_for`, `list_matching_traces`
+  (extension whitelist, regex narrow, regex-error fallback),
+  `_TRACE_EXTS` ordering invariant, `RunContext.should_stop`
+  (cap + cancel branches, short-circuit ordering).
+- `trace_pool_unittest.py` — LRU acquire/eviction with
+  `TraceProcessor` mocked out; race-loser path closes outside the
+  pool lock; close-failure swallowing.
+- `settings_unittest.py` — settings extraction with strict
+  snake_case `setting_id` (camelCase `settingId` ignored), default
+  fallbacks, type coercion edge cases.
+
+The smoke test (above) covers HTTP-layer behavior end-to-end against
+a real backend; these unit tests localize regressions to the
+function level so a failure points at the line of intent rather
+than a phase number.
+
 ## Cleanup / resetting state
 
 Everything the backend writes is local-only and safe to wipe.

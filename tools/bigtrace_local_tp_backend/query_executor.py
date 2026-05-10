@@ -47,7 +47,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from perfetto.trace_processor import TraceProcessorException
 
@@ -56,13 +56,18 @@ from db import Database
 
 log = logging.getLogger('bigtrace_local.executor')
 
+# Recognized trace extensions. Files without an extension are also
+# accepted. Order matters: `_trace_id_for` strips longest-first so
+# `.perfetto-trace` wins over `.trace`.
+_TRACE_EXTS: tuple[str, ...] = ('.perfetto-trace', '.pftrace', '.pb', '.trace')
+
 
 def list_matching_traces(traces_dir: str, pattern: str) -> list[str]:
   """Return absolute paths of trace files in `traces_dir` matching `pattern`.
 
-    Recognized extensions: .pftrace, .perfetto-trace, .pb, .trace.
-    A non-recognized extension is allowed if the file has no extension at
-    all (some users dump raw protos without one).
+    Recognized extensions: see `_TRACE_EXTS`. A non-recognized
+    extension is allowed if the file has no extension at all (some
+    users dump raw protos without one).
     """
   if not os.path.isdir(traces_dir):
     return []
@@ -71,13 +76,12 @@ def list_matching_traces(traces_dir: str, pattern: str) -> list[str]:
   except re.error as e:
     log.warning('Invalid trace_filter regex %r: %s', pattern, e)
     regex = re.compile('.*')
-  EXTS = ('.pftrace', '.perfetto-trace', '.pb', '.trace')
   out: list[str] = []
   for name in sorted(os.listdir(traces_dir)):
     full = os.path.join(traces_dir, name)
     if not os.path.isfile(full):
       continue
-    if not (name.endswith(EXTS) or '.' not in name):
+    if not (name.endswith(_TRACE_EXTS) or '.' not in name):
       continue
     if not regex.search(name):
       continue
@@ -87,7 +91,7 @@ def list_matching_traces(traces_dir: str, pattern: str) -> list[str]:
 
 def _trace_id_for(path: str) -> str:
   base = os.path.basename(path)
-  for ext in ('.perfetto-trace', '.pftrace', '.pb', '.trace'):
+  for ext in _TRACE_EXTS:
     if base.endswith(ext):
       return base[:-len(ext)]
   return os.path.splitext(base)[0]
@@ -208,20 +212,15 @@ def _process_one_trace(
     except Exception as e:  # noqa: BLE001
       err_msg = f'{type(e).__name__}: {e}'
 
-  # Pre-build prefixed rows OUTSIDE any merge lock so the lock-held
-  # window stays microseconds even when local_rows is large.
-  prefixed = ([[trace_id] + r for r in local_rows] if err_msg is None else [])
-
+  # Async path: merge_trace_atomic does cancel-check + insert + bumps
+  # in one DB call so a CANCELLED query short-circuits before insert.
   if ctx.db is not None and ctx.query_uuid is not None:
-    # Async path: one atomic DB call covers cancel-check, lazy
-    # CREATE TABLE on first merge, bulk insert (Arrow fast-path),
-    # global-cap truncation, and `processed_traces` /
-    # `processed_rows` bumps. After the cancel handler released
-    # the DB lock and returned 200, this call sees CANCELLED and
-    # returns 'skipped' before inserting.
     if err_msg is not None:
       ctx.errors.append(f'[{trace_id}] {err_msg}')
       return
+    # Build prefixed rows OUTSIDE the merge lock to keep the lock
+    # window microseconds-short.
+    prefixed = [[trace_id] + r for r in local_rows]
     sample_no_prefix: list[Any] = (
         local_rows[0] if local_rows else [None] * len(cols))
     outcome, new_traces, new_rows = ctx.db.merge_trace_atomic(
@@ -247,6 +246,7 @@ def _process_one_trace(
     return
 
   # Sync path: in-memory accumulation under ctx.lock.
+  prefixed = ([[trace_id] + r for r in local_rows] if err_msg is None else [])
   with ctx.lock:
     if err_msg is not None:
       ctx.errors.append(f'[{trace_id}] {err_msg}')
@@ -301,10 +301,8 @@ async def run_query_across_traces(
   if not trace_paths:
     return ctx.columns, ctx.inline_rows or [], None
 
-  loop = asyncio.get_event_loop()
-  # Dedicated executor so we can size workers to max_concurrency
-  # independent of asyncio's default executor (which serves all
-  # run_in_executor calls in the process).
+  loop = asyncio.get_running_loop()
+  # Dedicated pool so worker count is independent of asyncio's default.
   with ThreadPoolExecutor(
       max_workers=max(1, max_concurrency),
       thread_name_prefix='bigtrace-worker',

@@ -24,12 +24,16 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import datetime
 
 from db import (
     ParsedFilter,
+    _infer_column_types,
+    _ts_to_iso,
     compile_where,
     parse_filter,
     parse_order_by,
+    safe_table_id,
 )
 
 # ---------------------------------------------------------------------------
@@ -300,6 +304,134 @@ class ParseOrderByTest(unittest.TestCase):
   def test_invalid_direction_raises(self):
     with self.assertRaises(ValueError):
       parse_order_by('name sideways')
+
+  def test_direction_is_case_insensitive(self):
+    # Wire spec mirrors AIP-132 §Ordering: "asc"/"desc" canonical,
+    # but accepting any case is friendlier for hand-rolled callers
+    # and matches how DuckDB itself accepts "ASC"/"asc"/"Asc".
+    for d in ('ASC', 'Asc', 'aSc', 'DESC', 'Desc', 'dEsC'):
+      with self.subTest(direction=d):
+        result = parse_order_by(f'name {d}')
+        self.assertEqual(result, [('name', d.upper())])
+
+  def test_more_than_two_tokens_raises(self):
+    # "a b c" → field/direction/?? — third token is meaningless,
+    # reject rather than silently dropping it.
+    with self.assertRaises(ValueError):
+      parse_order_by('name asc extra')
+
+  def test_empty_entry_between_commas_raises(self):
+    # ",name" / "a,,b" / "name," — each empty slot is a client bug.
+    # The parser refuses to silently swallow them.
+    for s in (',name', 'a,,b', 'name,', ' , '):
+      with self.subTest(input=s):
+        with self.assertRaises(ValueError):
+          parse_order_by(s)
+
+  def test_extra_whitespace_is_tolerated(self):
+    # Real callers may stuff in leading/trailing/inter-token
+    # whitespace — split() collapses runs, strip() handles edges.
+    # Pinning this so a future "tighten the parser" refactor can't
+    # regress it.
+    self.assertEqual(
+        parse_order_by('  name   desc  ,  dur   asc  '), [('name', 'DESC'),
+                                                          ('dur', 'ASC')])
+
+
+class TsToIsoTest(unittest.TestCase):
+  """`_ts_to_iso` formats DuckDB TIMESTAMP back to ISO-8601 with
+    *millisecond* precision. The previous `.000Z` (whole-second)
+    format made the UI render a flat 0s duration for every query
+    that completed in under a second; pinning the ms-precision
+    contract guards against regression."""
+
+  def test_none_passes_through(self):
+    self.assertIsNone(_ts_to_iso(None))
+
+  def test_zero_microseconds_renders_as_000(self):
+    ts = datetime(2026, 5, 10, 12, 34, 56, 0)
+    self.assertEqual(_ts_to_iso(ts), '2026-05-10T12:34:56.000Z')
+
+  def test_millisecond_aligned_microseconds_round_trip(self):
+    # 123_000 µs = 123 ms exactly. Should land as `.123Z`.
+    ts = datetime(2026, 5, 10, 12, 34, 56, 123_000)
+    self.assertEqual(_ts_to_iso(ts), '2026-05-10T12:34:56.123Z')
+
+  def test_sub_millisecond_microseconds_truncate_not_round(self):
+    # 999 µs is below 1 ms. Truncation (// 1000) → 0 ms, so `.000Z`.
+    # If we ever switch to round-to-nearest, the contract changes.
+    ts = datetime(2026, 5, 10, 12, 34, 56, 999)
+    self.assertEqual(_ts_to_iso(ts), '2026-05-10T12:34:56.000Z')
+
+  def test_microsecond_precision_truncates_to_milliseconds(self):
+    # 123_456 µs → 123 ms (the 456 sub-ms is dropped).
+    ts = datetime(2026, 5, 10, 12, 34, 56, 123_456)
+    self.assertEqual(_ts_to_iso(ts), '2026-05-10T12:34:56.123Z')
+
+  def test_low_millisecond_values_zero_pad(self):
+    # 5_000 µs = 5 ms. Must format as `.005Z`, not `.5Z`.
+    ts = datetime(2026, 5, 10, 12, 34, 56, 5_000)
+    self.assertEqual(_ts_to_iso(ts), '2026-05-10T12:34:56.005Z')
+
+
+class InferColumnTypesTest(unittest.TestCase):
+  """`_infer_column_types` picks the DuckDB column type for each
+    Python value in the first sample row. Drives lazy CREATE TABLE
+    in `merge_trace_atomic`; getting it wrong means the table is
+    created with the wrong type and subsequent inserts may fail."""
+
+  def test_empty_row_returns_empty(self):
+    self.assertEqual(_infer_column_types([]), [])
+
+  def test_each_python_type_maps_to_expected_duckdb_type(self):
+    row = [True, 1, 1.5, 'hi', b'\x00']
+    self.assertEqual(
+        _infer_column_types(row),
+        ['BOOLEAN', 'BIGINT', 'DOUBLE', 'VARCHAR', 'BLOB'])
+
+  def test_none_falls_back_to_varchar(self):
+    # NULL columns can't be type-inferred; VARCHAR accepts any
+    # castable value going forward (DuckDB coerces on insert).
+    self.assertEqual(_infer_column_types([None]), ['VARCHAR'])
+
+  def test_unknown_type_falls_back_to_varchar(self):
+    # A type not in _TYPE_MAP (e.g., a custom object) lands as
+    # VARCHAR rather than crashing the merge step.
+    self.assertEqual(_infer_column_types([object()]), ['VARCHAR'])
+
+  def test_bool_check_precedes_int(self):
+    # Python `bool` is a subclass of `int`. Without an explicit
+    # bool entry in _TYPE_MAP, `True` would land as BIGINT —
+    # confusing for the user and wrong for booleans-with-NULL.
+    self.assertEqual(_infer_column_types([True, False]), ['BOOLEAN', 'BOOLEAN'])
+
+  def test_mixed_row_per_position(self):
+    row = [None, 42, 'x', None, 3.14]
+    self.assertEqual(
+        _infer_column_types(row),
+        ['VARCHAR', 'BIGINT', 'VARCHAR', 'VARCHAR', 'DOUBLE'])
+
+
+class SafeTableIdTest(unittest.TestCase):
+  """`safe_table_id` builds a DuckDB-compatible identifier from a
+    UUID. Hyphens aren't legal in unquoted identifiers; the wire
+    `tableName` is exactly this string and clients paste it into
+    SQL editors."""
+
+  def test_simple_uuid(self):
+    self.assertEqual(safe_table_id('abc-1234-5678'), 'bigtrace_abc_1234_5678')
+
+  def test_all_hyphens_replaced(self):
+    self.assertEqual(safe_table_id('a-b-c-d-e'), 'bigtrace_a_b_c_d_e')
+
+  def test_no_hyphens_passes_through(self):
+    self.assertEqual(safe_table_id('plain'), 'bigtrace_plain')
+
+  def test_real_uuid_format(self):
+    # The actual UUIDv4 shape we ship.
+    self.assertEqual(
+        safe_table_id('e44b41f0-a0ea-4960-8411-4bad75ea97a9'),
+        'bigtrace_e44b41f0_a0ea_4960_8411_4bad75ea97a9')
 
 
 if __name__ == '__main__':

@@ -50,7 +50,6 @@ import json
 import logging
 import os
 import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -114,13 +113,16 @@ def utcnow() -> datetime:
   return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# DuckDB-compatible identifier from a UUID. Hyphens aren't allowed in
-# unquoted identifiers; quoting works but makes the SQL noisier and
-# less portable to other tools the user might point at the file. The
-# wire-protocol `tableName` is exactly this string — `tableLink` is
-# derived mechanically from `tableName`, so clients can paste either
-# directly into a SQL editor.
 def safe_table_id(query_uuid: str) -> str:
+  """DuckDB-compatible identifier from a UUID.
+
+    Hyphens aren't allowed in unquoted identifiers; quoting works
+    but makes the SQL noisier and less portable to other tools the
+    user might point at the file. The wire-protocol `tableName` is
+    exactly this string — `tableLink` is derived mechanically from
+    `tableName`, so clients can paste either directly into a SQL
+    editor.
+    """
   return 'bigtrace_' + query_uuid.replace('-', '_')
 
 
@@ -372,7 +374,11 @@ class Database:
 
   def __init__(self, path: str) -> None:
     self.path = path
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # Skip mkdir when path has no parent component (relative bare
+    # filename); `os.makedirs('', exist_ok=True)` raises.
+    parent = os.path.dirname(path)
+    if parent:
+      os.makedirs(parent, exist_ok=True)
     self._lock = threading.Lock()
     # Single connection. DuckDB's Python connection isn't safe to
     # share across threads without external sync, but our `_lock`
@@ -634,7 +640,11 @@ class Database:
       return True
 
   def _drop_materialized_locked(self, query_uuid: str) -> None:
-    # Must be called with self._lock already held.
+    """Drop the materialized table for `query_uuid`. No-op if absent.
+
+        Caller must hold `self._lock`. Failures are logged at
+        WARNING and swallowed.
+        """
     try:
       self._conn.execute(f'DROP TABLE IF EXISTS {safe_table_id(query_uuid)}')
     except duckdb.Error as e:
@@ -665,26 +675,16 @@ class Database:
       ).fetchone()
     return row[0] if row else None
 
-  def get_qe(self, query_uuid: str) -> Optional[QESnapshot]:
-    """Return a snapshot. None if not found OR soft-deleted.
+  # SELECT projection shared by `get_qe` and `list_qes`. Tuple
+  # positions in `_row_to_snapshot` must match this column order.
+  _QE_SELECT_COLS = (
+      'query_uuid, status, start_time, end_time, '
+      'perfetto_sql, query_limit, materialized, table_name, '
+      'processed_traces, total_traces, processed_rows, error_message')
 
-        Soft-deleted rows are treated as gone for handler purposes —
-        callers 404. The internal hard state of the row stays in the DB.
-        """
-    with self._lock:
-      row = self._conn.execute(
-          """
-                SELECT query_uuid, status, start_time, end_time,
-                       perfetto_sql, query_limit, materialized, table_name,
-                       processed_traces, total_traces, processed_rows,
-                       error_message
-                  FROM query_executions
-                 WHERE query_uuid = ? AND deleted = FALSE
-                """,
-          [query_uuid],
-      ).fetchone()
-    if row is None:
-      return None
+  @staticmethod
+  def _row_to_snapshot(row: tuple) -> QESnapshot:
+    """Map a `_QE_SELECT_COLS` row tuple to a `QESnapshot`."""
     return QESnapshot(
         query_uuid=row[0],
         status=row[1],
@@ -700,35 +700,29 @@ class Database:
         error_message=row[11],
     )
 
+  def get_qe(self, query_uuid: str) -> Optional[QESnapshot]:
+    """Return a snapshot. None if not found OR soft-deleted.
+
+        Soft-deleted rows are treated as gone for handler purposes —
+        callers 404. The internal hard state of the row stays in the DB.
+        """
+    with self._lock:
+      row = self._conn.execute(
+          f'SELECT {self._QE_SELECT_COLS} FROM query_executions '
+          'WHERE query_uuid = ? AND deleted = FALSE',
+          [query_uuid],
+      ).fetchone()
+    if row is None:
+      return None
+    return self._row_to_snapshot(row)
+
   def list_qes(self) -> list[QESnapshot]:
     """All non-deleted executions, newest first."""
     with self._lock:
       rows = self._conn.execute(
-          """
-                SELECT query_uuid, status, start_time, end_time,
-                       perfetto_sql, query_limit, materialized, table_name,
-                       processed_traces, total_traces, processed_rows,
-                       error_message
-                  FROM query_executions
-                 WHERE deleted = FALSE
-                 ORDER BY start_time DESC
-                """,).fetchall()
-    return [
-        QESnapshot(
-            query_uuid=r[0],
-            status=r[1],
-            start_time=_ts_to_iso(r[2]) or '',
-            end_time=_ts_to_iso(r[3]),
-            perfetto_sql=r[4] or '',
-            query_limit=r[5] or 0,
-            materialized=bool(r[6]),
-            table_name=r[7],
-            processed_traces=r[8],
-            total_traces=r[9],
-            processed_rows=r[10],
-            error_message=r[11],
-        ) for r in rows
-    ]
+          f'SELECT {self._QE_SELECT_COLS} FROM query_executions '
+          'WHERE deleted = FALSE ORDER BY start_time DESC').fetchall()
+    return [self._row_to_snapshot(r) for r in rows]
 
   # ------------------------------------------------------------------
   # Materialized tables: writes

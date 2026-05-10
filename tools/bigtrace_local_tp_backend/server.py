@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import sys
 import urllib.parse
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 import duckdb
@@ -57,7 +59,39 @@ from trace_pool import TracePool  # noqa: E402
 
 log = logging.getLogger('bigtrace_local')
 
-app = FastAPI(title='BigTrace Local TP Backend')
+
+# References to CONFIG, POOL, DB and the _ttl_sweep / datasette helpers
+# resolve at call time — those names are defined later in the file.
+@contextlib.asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+  global _TTL_TASK, DB, _DATASETTE_TASK
+  DB = Database(CONFIG.db_path)
+  recovered = DB.recover_stale_in_progress()
+  if recovered:
+    log.info('Recovered %d stale IN_PROGRESS rows as FAILED', recovered)
+  if CONFIG.db_ui_port > 0:
+    DB.start_db_ui(CONFIG.db_ui_port)
+  if CONFIG.datasette_port > 0:
+    _DATASETTE_TASK = asyncio.create_task(_run_datasette(CONFIG.datasette_port))
+  _TTL_TASK = asyncio.create_task(_ttl_sweep_loop())
+  log.info(
+      'BigTrace local TP backend ready: db=%s ttl=%ds sweep=%ds',
+      CONFIG.db_path,
+      CONFIG.table_ttl_seconds,
+      CONFIG.table_ttl_sweep_seconds,
+  )
+  yield
+  log.info('Shutting down: closing %d TPs', POOL.size())
+  if _TTL_TASK is not None and not _TTL_TASK.done():
+    _TTL_TASK.cancel()
+  if _DATASETTE_TASK is not None and not _DATASETTE_TASK.done():
+    _DATASETTE_TASK.cancel()
+  POOL.close_all()
+  if DB is not None:
+    DB.close()
+
+
+app = FastAPI(title='BigTrace Local TP Backend', lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],
@@ -109,22 +143,24 @@ DB: Database | None = None
 LIST_TEXT_MAX = 200
 
 
-def _truncate(s: str) -> tuple[str, bool]:
+def _truncate(s: str) -> str:
   """Clip `s` to LIST_TEXT_MAX, ending on a whitespace boundary.
 
     A naive `s[:N]` cut leaves dangling fragments mid-token (e.g. `d…`
     from `depth,`). We back off to the last whitespace before the cut so
     the visible text ends on a complete token. If there's no whitespace
     in the first half (one giant token), we fall back to the hard cut so
-    we don't return an empty preview.
+    we don't return an empty preview. Returns `s` unchanged when it's
+    already within the cap — the caller doesn't need a was-truncated
+    flag (every call site previously discarded it as `_`).
     """
   if len(s) <= LIST_TEXT_MAX:
-    return s, False
+    return s
   cut = s[:LIST_TEXT_MAX]
   last_ws = max(cut.rfind(' '), cut.rfind('\n'), cut.rfind('\t'))
   if last_ws >= LIST_TEXT_MAX // 2:
     cut = cut[:last_ws]
-  return cut.rstrip() + '…', True
+  return cut.rstrip() + '…'
 
 
 def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
@@ -136,7 +172,7 @@ def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
     """
   sql_text = snap.perfetto_sql
   if truncate:
-    sql_text, _ = _truncate(sql_text)
+    sql_text = _truncate(sql_text)
   d: dict[str, Any] = {
       'queryUuid': snap.query_uuid,
       'status': snap.status,
@@ -153,7 +189,7 @@ def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
   if snap.error_message is not None:
     err_text = snap.error_message
     if truncate:
-      err_text, _ = _truncate(err_text)
+      err_text = _truncate(err_text)
     d['errorMessage'] = err_text
   if snap.table_name is not None:
     d['tableName'] = snap.table_name
@@ -213,6 +249,15 @@ def _value_to_wire(v: Any) -> Any:
   return str(v)
 
 
+def _wire_rows(rows: list[list[Any]]) -> list[dict[str, Any]]:
+  """Serialize a row list to the always-strings `[{values: [...]}]`
+    wire shape. Shared by `_rows_response` (paginated path) and
+    `execute_sync` (inline response) so the two paths can't drift on
+    int64/bool coercion behaviour.
+    """
+  return [{'values': [_value_to_wire(v) for v in r]} for r in rows]
+
+
 def _rows_response(
     columns: list[str],
     rows: list[list[Any]],
@@ -232,9 +277,7 @@ def _rows_response(
     """
   return {
       'columnNames': columns,
-      'rows': [{
-          'values': [_value_to_wire(v) for v in r]
-      } for r in rows],
+      'rows': _wire_rows(rows),
       # Always present so the UI never has to branch. Equals the
       # materialized table size when no filter is applied; equals the
       # post-filter row count otherwise. The DataGrid uses this to
@@ -286,10 +329,22 @@ def _resolve_trace_dir(settings: list[dict[str, Any]]) -> str:
         status_code=400,
         detail='No traces directory configured (set Trace Directory in settings)',
     )
-  if not os.path.isdir(path):
+  if not os.path.exists(path):
     raise HTTPException(
         status_code=400,
         detail=f"Trace Directory '{path}' does not exist",
+    )
+  if not os.path.isdir(path):
+    raise HTTPException(
+        status_code=400,
+        detail=f"Trace Directory '{path}' is not a directory",
+    )
+  # Fail at validate time so listdir doesn't PermissionError mid-request.
+  if not os.access(path, os.R_OK | os.X_OK):
+    raise HTTPException(
+        status_code=400,
+        detail=f"Trace Directory '{path}' is not readable "
+        '(check permissions)',
     )
   return path
 
@@ -386,6 +441,10 @@ async def _run_async_query(
       db.mark_failed(query_uuid, ctx.errors[0])
     else:
       db.mark_success(query_uuid, snap.processed_rows)
+  except HTTPException as e:
+    # Bare detail mirrors what sync would surface at submit time.
+    log.warning('async query validation failed: %s', e.detail)
+    db.mark_failed(query_uuid, str(e.detail))
   except Exception as e:  # noqa: BLE001
     log.exception('async query failed')
     db.mark_failed(query_uuid, f'{type(e).__name__}: {e}')
@@ -396,12 +455,40 @@ async def _run_async_query(
 # ---------------------------------------------------------------------------
 
 
+async def _parse_query_body(
+    request: Request,) -> tuple[str, int, list[dict[str, Any]]]:
+  """Pull `(perfetto_sql, limit, settings)` from the request JSON.
+
+    Shared by `execute_async` and `execute_sync` so the field names
+    and defaults can't drift between the two endpoints. Defaults
+    (`''`, `100`, `[]`) match what the UI sends when the user hasn't
+    overridden a setting.
+    """
+  body = await request.json()
+  return (
+      body.get('perfetto_sql', ''),
+      body.get('limit', 100),
+      body.get('settings', []),
+  )
+
+
 @app.post('/execute_bigtrace_query_async')
 async def execute_async(request: Request) -> dict[str, Any]:
-  body = await request.json()
-  perfetto_sql = body.get('perfetto_sql', '')
-  limit = body.get('limit', 100)
-  settings = body.get('settings', [])
+  """Submit a query for background execution.
+
+    Returns `{queryUuid}` immediately after validating the trace
+    directory and inserting an IN_PROGRESS row. The actual fan-out
+    across traces happens in `_run_async_query`, scheduled as an
+    asyncio.create_task. The client polls `:status` until terminal,
+    then fetches results via `:fetch_results`.
+
+    Up-front validation (trace_directory) gives the user a 400 at
+    submit time rather than a 200 followed by a FAILED poll. A
+    failure here marks the just-inserted row FAILED in the DB so
+    the history list still shows the entry — same lifecycle as the
+    sync path.
+    """
+  perfetto_sql, limit, settings = await _parse_query_body(request)
   db = _get_db()
 
   new_uuid = str(uuid.uuid4())
@@ -453,10 +540,7 @@ async def execute_sync(request: Request) -> dict[str, Any]:
     `:fetch_results` on a sync UUID returns 404 because tableName is
     NULL.
     """
-  body = await request.json()
-  perfetto_sql = body.get('perfetto_sql', '')
-  limit = body.get('limit', 100)
-  settings = body.get('settings', [])
+  perfetto_sql, limit, settings = await _parse_query_body(request)
   db = _get_db()
 
   new_uuid = str(uuid.uuid4())
@@ -536,10 +620,9 @@ async def execute_sync(request: Request) -> dict[str, Any]:
     raise
   finally:
     watcher.cancel()
-    try:
+    # CancelledError isn't an Exception in 3.8+, hence the explicit pair.
+    with contextlib.suppress(asyncio.CancelledError, Exception):
       await watcher
-    except (asyncio.CancelledError, Exception):
-      pass
 
   if err is not None:
     db.mark_failed(new_uuid, err)
@@ -563,9 +646,7 @@ async def execute_sync(request: Request) -> dict[str, Any]:
   return {
       'queryUuid': new_uuid,
       'columnNames': cols,
-      'rows': [{
-          'values': [_value_to_wire(v) for v in r]
-      } for r in rows],
+      'rows': _wire_rows(rows),
   }
 
 
@@ -698,17 +779,11 @@ async def cancel_query(uuid: str) -> Response:
     tp.query() calls already in flight finish naturally; their results
     are dropped at the merge step.
     """
-  db = _get_db()
-  snap = db.get_qe(uuid)
-  if snap is None:
-    raise HTTPException(
-        status_code=404,
-        detail=f'Query {uuid} not found',
-    )
+  snap = _get_snapshot_or_404(uuid)
   if snap.status != 'IN_PROGRESS':
     # Already terminal — idempotent 200 no-op.
     return Response(status_code=200)
-  db.mark_cancelled(
+  _get_db().mark_cancelled(
       uuid,
       processed_rows=snap.processed_rows,
       clear_table=(snap.processed_rows == 0),
@@ -743,16 +818,13 @@ async def delete_execution(uuid: str) -> Response:
     audit; the materialized table is dropped; subsequent reads of this
     UUID through any per-uuid endpoint return 404.
     """
-  db = _get_db()
-  snap = db.get_qe(uuid)
-  if snap is None:
-    raise HTTPException(status_code=404, detail=f'Query {uuid} not found')
+  snap = _get_snapshot_or_404(uuid)
   if snap.status == 'IN_PROGRESS':
     raise HTTPException(
         status_code=409,
         detail=f'Query {uuid} is still running; cancel it before deleting',
     )
-  db.soft_delete(uuid)
+  _get_db().soft_delete(uuid)
   return Response(status_code=200)
 
 
@@ -825,7 +897,11 @@ def _patch_duckdb_for_plugin() -> None:
     return
   _orig_connect = _duckdb.connect
 
-  def _patched_connect(database: str = ':memory:', *args, **kwargs):
+  def _patched_connect(database: str = ':memory:',
+                       *args: Any,
+                       **kwargs: Any) -> Any:
+    # Return type is duckdb.DuckDBPyConnection; `Any` avoids importing
+    # a class that some DuckDB versions don't expose.
     try:
       same_file = (
           database and CONFIG.db_path and
@@ -876,38 +952,6 @@ async def _run_datasette(port: int) -> None:
       CONFIG.db_path,
   )
   await server.serve()
-
-
-@app.on_event('startup')
-async def _on_startup() -> None:
-  global _TTL_TASK, DB, _DATASETTE_TASK
-  DB = Database(CONFIG.db_path)
-  recovered = DB.recover_stale_in_progress()
-  if recovered:
-    log.info('Recovered %d stale IN_PROGRESS rows as FAILED', recovered)
-  if CONFIG.db_ui_port > 0:
-    DB.start_db_ui(CONFIG.db_ui_port)
-  if CONFIG.datasette_port > 0:
-    _DATASETTE_TASK = asyncio.create_task(_run_datasette(CONFIG.datasette_port))
-  _TTL_TASK = asyncio.create_task(_ttl_sweep_loop())
-  log.info(
-      'BigTrace local TP backend ready: db=%s ttl=%ds sweep=%ds',
-      CONFIG.db_path,
-      CONFIG.table_ttl_seconds,
-      CONFIG.table_ttl_sweep_seconds,
-  )
-
-
-@app.on_event('shutdown')
-async def _on_shutdown() -> None:
-  log.info('Shutting down: closing %d TPs', POOL.size())
-  if _TTL_TASK is not None and not _TTL_TASK.done():
-    _TTL_TASK.cancel()
-  if _DATASETTE_TASK is not None and not _DATASETTE_TASK.done():
-    _DATASETTE_TASK.cancel()
-  POOL.close_all()
-  if DB is not None:
-    DB.close()
 
 
 # ---------------------------------------------------------------------------

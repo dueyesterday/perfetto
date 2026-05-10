@@ -34,6 +34,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any, Callable
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PERFETTO_DATA = os.path.expanduser('~/Projects/perfetto/test/data')
@@ -43,29 +44,39 @@ DATASETTE_PORT = 18103
 BASE = f'http://127.0.0.1:{PORT}'
 DS_BASE = f'http://127.0.0.1:{DATASETTE_PORT}'
 
+# Mirrors `query_executor._TRACE_EXTS`; we don't import to avoid
+# pulling in perfetto.trace_processor at smoke startup. If the
+# upstream constant grows, mirror it here.
+_TRACE_EXTS = ('.perfetto-trace', '.pftrace', '.pb', '.trace')
 
-def http(method: str, path: str, body=None, timeout: float = 30.0):
-  data = None
-  headers = {'content-type': 'application/json'}
-  if body is not None:
-    data = json.dumps(body).encode('utf-8')
-  req = urllib.request.Request(
-      BASE + path, data=data, headers=headers, method=method)
-  with urllib.request.urlopen(req, timeout=timeout) as resp:
+
+def _build_request(method: str, path: str, body) -> urllib.request.Request:
+  """Shared Request builder for the three http* helpers below."""
+  data = json.dumps(body).encode('utf-8') if body is not None else None
+  return urllib.request.Request(
+      BASE + path,
+      data=data,
+      headers={'content-type': 'application/json'},
+      method=method,
+  )
+
+
+def http(method: str,
+         path: str,
+         body=None,
+         timeout: float = 30.0) -> tuple[int, Any]:
+  """Open a request and return (status, parsed_json). Raises on non-2xx."""
+  with urllib.request.urlopen(
+      _build_request(method, path, body), timeout=timeout) as resp:
     raw = resp.read()
     return resp.status, json.loads(raw) if raw else None
 
 
 def http_status(method: str, path: str, body=None) -> int:
   """Like http() but returns the status code even for non-2xx."""
-  data = None
-  headers = {'content-type': 'application/json'}
-  if body is not None:
-    data = json.dumps(body).encode('utf-8')
-  req = urllib.request.Request(
-      BASE + path, data=data, headers=headers, method=method)
   try:
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(
+        _build_request(method, path, body), timeout=30) as resp:
       return resp.status
   except urllib.error.HTTPError as e:
     return e.code
@@ -73,14 +84,9 @@ def http_status(method: str, path: str, body=None) -> int:
 
 def http_status_and_body(method: str, path: str, body=None) -> tuple[int, str]:
   """Like http_status() but also returns the response body as text."""
-  data = None
-  headers = {'content-type': 'application/json'}
-  if body is not None:
-    data = json.dumps(body).encode('utf-8')
-  req = urllib.request.Request(
-      BASE + path, data=data, headers=headers, method=method)
   try:
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(
+        _build_request(method, path, body), timeout=30) as resp:
       return resp.status, resp.read().decode('utf-8', 'replace')
   except urllib.error.HTTPError as e:
     return e.code, e.read().decode('utf-8', 'replace')
@@ -95,7 +101,7 @@ def pick_trace_files(src_dir: str, dst_dir: str, n: int = 2) -> list[str]:
     full = os.path.join(src_dir, name)
     if not os.path.isfile(full):
       continue
-    if not (name.endswith(('.pftrace', '.perfetto-trace', '.pb'))):
+    if not name.endswith(_TRACE_EXTS):
       continue
     size = os.path.getsize(full)
     # Avoid huge traces — they slow the smoke down a lot.
@@ -111,7 +117,8 @@ def pick_trace_files(src_dir: str, dst_dir: str, n: int = 2) -> list[str]:
   return picked
 
 
-def wait_until(predicate, timeout: float, label: str):
+def wait_until(predicate: Callable[[], bool], timeout: float,
+               label: str) -> None:
   deadline = time.time() + timeout
   last_err = None
   while time.time() < deadline:
@@ -176,7 +183,7 @@ def main() -> int:
   # settings array (the BigTrace Settings page persists it in
   # localStorage and re-sends it on every submit). The smoke does
   # the same — no server-side default exists.
-  def with_traces(extra=None):
+  def with_traces(extra: list | None = None) -> list[dict]:
     out = [{
         'setting_id': 'trace_directory',
         'values': [traces_dir],
@@ -199,7 +206,8 @@ def main() -> int:
       print('--- server output ---')
       try:
         print(server.stdout.read().decode('utf-8', 'replace'))
-      except Exception:
+      except Exception:  # noqa: BLE001
+        # Already failing; don't compound it.
         pass
       return 1
 
@@ -310,7 +318,7 @@ def main() -> int:
     src_trace = next(
         (os.path.join(traces_dir, n)
          for n in os.listdir(traces_dir)
-         if n.endswith(('.pftrace', '.perfetto-trace', '.pb'))),
+         if n.endswith(_TRACE_EXTS)),
         None,
     )
     assert src_trace is not None, (
@@ -342,8 +350,8 @@ def main() -> int:
     assert cols_alt and cols_alt[0] == 'trace_id', (
         f'unexpected columns: {cols_alt}')
     expected_tid = os.path.splitext(os.path.basename(alt_trace))[0]
-    # Strip multi-extension cases the backend handles.
-    for ext in ('.perfetto-trace', '.pftrace', '.pb'):
+    # Mirror `_trace_id_for`'s longest-first stripping.
+    for ext in _TRACE_EXTS:
       if os.path.basename(alt_trace).endswith(ext):
         expected_tid = os.path.basename(alt_trace)[:-len(ext)]
         break
@@ -400,7 +408,7 @@ def main() -> int:
     print(f'    uuid={async_uuid}')
 
     # Poll status.
-    def is_terminal():
+    def is_terminal() -> bool:
       _, s = http('GET', f'/query_executions/{async_uuid}:status')
       return s.get('status') in ('SUCCESS', 'FAILED', 'CANCELLED')
 
@@ -521,7 +529,7 @@ def main() -> int:
     assert fcode == 400, (
         f'FAILED :fetch_results expected 400 FAILED_PRECONDITION, '
         f'got {fcode}: {fbody}')
-    print(f'    FAILED fetch_results=400 (tableName cleared on failure)')
+    print('    FAILED fetch_results=400 (tableName cleared on failure)')
 
     # 5. Cancellation.
     print('[7] cancel mid-flight')
@@ -1077,7 +1085,7 @@ def main() -> int:
         f'expected totalTraces=0, got {nm["totalTraces"]}')
     assert nm['processedRows'] == 0, (
         f'expected processedRows=0, got {nm["processedRows"]}')
-    print(f'    SUCCESS, totalTraces=0, processedRows=0')
+    print('    SUCCESS, totalTraces=0, processedRows=0')
 
     # 19. Cancel idempotency on already-terminal queries.
     # Per the contract: cancel on a SUCCESS/FAILED/CANCELLED query
@@ -1126,6 +1134,9 @@ def main() -> int:
       # which isn't what we want to test.
       server.kill()
       server.wait(timeout=10)
+      # Close the now-defunct pipe to release its fd.
+      if server.stdout is not None:
+        server.stdout.close()
       # Restart on the SAME port + db_path. Same CLI as before.
       server = subprocess.Popen(
           [
@@ -1306,8 +1317,8 @@ def main() -> int:
     assert 'does_not_exist' in bad_col_body, (
         f'expected error to mention the offending column; got: '
         f'{bad_col_body}')
-    print(f'    asc/desc/multi all sort correctly; bad direction + '
-          f'unknown column both return 400')
+    print('    asc/desc/multi all sort correctly; bad direction + '
+          'unknown column both return 400')
 
     # 23. filter end-to-end on :fetch_results.
     #   Submit a query that yields rows we can predicate against,
@@ -1516,8 +1527,12 @@ def main() -> int:
     try:
       server.send_signal(signal.SIGINT)
       server.wait(timeout=10)
-    except Exception:
+    except Exception:  # noqa: BLE001
+      # SIGINT didn't land cleanly; fall back to SIGKILL.
       server.kill()
+    # Close stdout so the pipe fd doesn't leak to interpreter exit.
+    if server.stdout is not None:
+      server.stdout.close()
     if cleanup_dir and not args.keep_traces:
       shutil.rmtree(cleanup_dir, ignore_errors=True)
     # Always clean up the DuckDB temp dir, regardless of --keep-traces.

@@ -101,16 +101,25 @@ class TracePool:
     tp = TraceProcessor(trace=path, config=config)
     new_entry = PooledTP(path=path, tp=tp, lock=threading.Lock())
 
+    winner: PooledTP
+    race_loser: PooledTP | None = None
     with self._mu:
       existing = self._entries.get(path)
       if existing is not None:
-        # Lost the race — drop the one we just loaded.
-        tp.close()
-        self._entries.move_to_end(path)
-        return existing
-      self._entries[path] = new_entry
+        # Lost the race; defer close to outside the lock (same as
+        # the eviction path).
+        race_loser = new_entry
+        winner = existing
+      else:
+        self._entries[path] = new_entry
+        winner = new_entry
       self._entries.move_to_end(path)
-      return new_entry
+    if race_loser is not None:
+      try:
+        race_loser.tp.close()
+      except Exception as ex:  # noqa: BLE001
+        log.warning('Error closing race-loser TP for %s: %s', path, ex)
+    return winner
 
   def close_all(self) -> None:
     """Close every TP. Called on server shutdown."""

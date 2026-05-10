@@ -87,20 +87,31 @@ EXECUTION_SETTINGS: list[dict[str, Any]] = [
 TRACE_METADATA_SETTINGS: list[dict[str, Any]] = []
 
 
+def _first_setting_value(
+    settings: list[dict[str, Any]],
+    setting_id: str,
+) -> Any:
+  """Look up a setting by `setting_id` and return `values[0]`.
+
+    Returns None if missing, empty, or `values[0]` is falsy.
+    Strict snake_case match — `settingId`/`id` are ignored.
+    """
+  for s in settings or []:
+    if s.get('setting_id') == setting_id:
+      values = s.get('values') or []
+      if values and isinstance(values, list) and values[0]:
+        return values[0]
+  return None
+
+
 def trace_filter_regex(settings: list[dict[str, Any]]) -> str:
   """Pull the `trace_filter` regex out of a settings request body.
 
     Defaults to '.*' (match everything) if not supplied or if the value
-    is empty. The wire-format key is `setting_id` (snake_case) — what
-    the BigTrace UI emits and what `~/Projects/CLAUDE.md` documents.
-    Strict matching: any other key (e.g. `settingId`, `id`) is ignored.
+    is empty.
     """
-  for s in settings or []:
-    if s.get('setting_id') == 'trace_filter':
-      values = s.get('values') or []
-      if values and isinstance(values, list) and values[0]:
-        return str(values[0])
-  return '.*'
+  v = _first_setting_value(settings, 'trace_filter')
+  return str(v) if v is not None else '.*'
 
 
 def trace_limit(settings: list[dict[str, Any]]) -> int:
@@ -112,15 +123,13 @@ def trace_limit(settings: list[dict[str, Any]]) -> int:
     omitting the setting entirely. The caller should treat the
     returned value as "if > 0, truncate the trace list to this many".
     """
-  for s in settings or []:
-    if s.get('setting_id') == 'trace_limit':
-      values = s.get('values') or []
-      if values and isinstance(values, list):
-        try:
-          return max(0, int(values[0]))
-        except (TypeError, ValueError):
-          return 0
-  return 0
+  v = _first_setting_value(settings, 'trace_limit')
+  if v is None:
+    return 0
+  try:
+    return max(0, int(v))
+  except (TypeError, ValueError):
+    return 0
 
 
 def trace_directory(settings: list[dict[str, Any]]) -> str:
@@ -128,12 +137,6 @@ def trace_directory(settings: list[dict[str, Any]]) -> str:
 
     Returns '' when the setting is missing or empty — the caller
     (`server._resolve_trace_dir`) translates that into a 400 response.
-    Wire-format key is `setting_id` (snake_case) — see
-    `trace_filter_regex` for the rationale.
     """
-  for s in settings or []:
-    if s.get('setting_id') == 'trace_directory':
-      values = s.get('values') or []
-      if values and isinstance(values, list) and values[0]:
-        return str(values[0])
-  return ''
+  v = _first_setting_value(settings, 'trace_directory')
+  return str(v) if v is not None else ''
