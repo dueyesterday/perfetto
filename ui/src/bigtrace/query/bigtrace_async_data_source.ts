@@ -118,7 +118,11 @@ export class BigtraceAsyncDataSource implements DataSource {
   // fetch completes (or after a filter change clears it pending the
   // next response); `useRows` falls back to `getTotalRows()` in
   // that interval so the scrollbar doesn't collapse.
-  private filteredTotalRows: number | undefined;
+  private _filteredTotalRows: number | undefined;
+
+  get filteredTotalRows(): number | undefined {
+    return this._filteredTotalRows;
+  }
 
   // The signal is plumbed through to every fetchResults call. Owners
   // (typically a tab) abort it on close so we don't write into a
@@ -169,7 +173,7 @@ export class BigtraceAsyncDataSource implements DataSource {
         // Clear the cached count so the scrollbar reverts to the
         // unfiltered total until the response arrives with a fresh
         // `totalFilteredRows`. Briefly oversized > briefly collapsed.
-        this.filteredTotalRows = undefined;
+        this._filteredTotalRows = undefined;
       }
       // Use the Grid's requested range. On the very first render the
       // limit may be 0 (model not fully populated yet); fall back to
@@ -199,7 +203,7 @@ export class BigtraceAsyncDataSource implements DataSource {
       // the materialized total. Falls back to the unfiltered total
       // before the first fetch completes or while a filter-change
       // refetch is in flight.
-      totalRows: this.filteredTotalRows ?? this.getTotalRows(),
+      totalRows: this._filteredTotalRows ?? this.getTotalRows(),
       // Where the loaded rows start in the full result. The Grid uses
       // this to position the rows correctly within its virtualized
       // scroll area.
@@ -282,7 +286,7 @@ export class BigtraceAsyncDataSource implements DataSource {
       this.loadedOffset = offset;
       this.loadedLimit = limit;
       this.hasInitialFetchCompleted = true;
-      this.filteredTotalRows = result.totalFilteredRows;
+      this._filteredTotalRows = result.totalFilteredRows;
 
       if (this.columns.length === 0 && result.columns.length > 0) {
         this.columns = [...result.columns];

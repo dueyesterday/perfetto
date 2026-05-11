@@ -851,11 +851,17 @@ function renderResultsSummary(
     const durationStr = formatDurationS(Math.max(0, queryResult.durationMs));
     return `Returned ${queryResult.totalRowCount.toLocaleString()} rows in ${durationStr}`;
   }
-  const processedRows = tab.execution?.processedRows ?? 0;
+  // Prefer the post-filter count so the toolbar matches the Grid;
+  // fall back to live progress before the first fetch lands.
+  const asyncDs =
+    tab.dataSource instanceof BigtraceAsyncDataSource
+      ? tab.dataSource
+      : undefined;
+  const count = asyncDs?.filteredTotalRows ?? tab.execution?.processedRows ?? 0;
   const isTerminal =
     tab.execution?.status !== undefined &&
     TERMINAL_STATUSES.has(tab.execution.status);
-  const text = `${processedRows.toLocaleString()} rows`;
+  const text = `${count.toLocaleString()} rows`;
   return isTerminal ? text : `${text} · running…`;
 }
 
