@@ -26,6 +26,11 @@ interface QueryResponsePayload {
   rows?: Array<{values: Array<string | null>}>;
   // Filtered count for scrollbar sizing.
   totalFilteredRows?: number;
+  // Full union of (result table cols ∪ sidecar metadata cols),
+  // surfaced on :fetch_results so the UI's column picker can offer
+  // sidecar columns even when the current projection doesn't
+  // include them. Undefined on every other endpoint.
+  availableColumns?: string[];
 }
 
 export interface QueryResultPage {
@@ -34,6 +39,23 @@ export interface QueryResultPage {
   readonly queryUuid?: string;
   // Post-filter count from `:fetch_results`; undefined elsewhere.
   readonly totalFilteredRows?: number;
+  // Full schema returned by `:fetch_results`; see the wire field.
+  readonly availableColumns?: ReadonlyArray<string>;
+}
+
+// One row of the `/traces_schema` response. Mirrors the wire shape
+// emitted by server.py: `name` and `type` are required, `default`
+// flags the columns the grid shows on first render, `description` is
+// optional tooltip copy.
+export interface TraceColumnDescriptor {
+  readonly name: string;
+  readonly type: string;
+  readonly default: boolean;
+  readonly description?: string;
+}
+
+export interface TracesSchemaResponse {
+  readonly columns: ReadonlyArray<TraceColumnDescriptor>;
 }
 
 // Request aborted via AbortSignal — treat as cancellation, not an error.
@@ -64,6 +86,8 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal?: AbortSignal,
+    traceFilter?: ReadonlyArray<Filter>,
+    traceMetadataColumns?: ReadonlyArray<string>,
   ): Promise<QueryResultPage> {
     return this.executeAt(
       '/execute_bigtrace_query',
@@ -71,6 +95,8 @@ export class BigtraceQueryClient {
       limit,
       settings,
       signal,
+      traceFilter,
+      traceMetadataColumns,
     );
   }
 
@@ -79,6 +105,8 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal?: AbortSignal,
+    traceFilter?: ReadonlyArray<Filter>,
+    traceMetadataColumns?: ReadonlyArray<string>,
   ): Promise<QueryResultPage> {
     return this.executeAt(
       '/execute_bigtrace_query_async',
@@ -86,7 +114,85 @@ export class BigtraceQueryClient {
       limit,
       settings,
       signal,
+      traceFilter,
+      traceMetadataColumns,
     );
+  }
+
+  // Trace-selection grid backing `/traces`. Mirrors `fetchResults`:
+  // paged metadata with the same always-strings wire shape. The Settings
+  // page embeds a DataGrid driven by `BigtraceTraceListDataSource`, whose
+  // filter state then ships back as `traceFilter` on the execute call —
+  // "filter on the grid is the trace set the query runs over".
+  //
+  // `columns` is an optional field-mask: when set, only those columns
+  // appear in the response (in the given order). When omitted, the
+  // backend returns every column flagged `default: true` in its schema
+  // (see `listTracesSchema`). `filter` / `orderBy` may reference
+  // columns outside the projection — the underlying scan still sees
+  // them so the predicates apply.
+  async listTraces(
+    settings: ReadonlyArray<SettingFilter>,
+    limit: number,
+    offset: number,
+    signal?: AbortSignal,
+    orderBy?: string,
+    filter?: ReadonlyArray<Filter>,
+    columns?: ReadonlyArray<string>,
+  ): Promise<QueryResultPage> {
+    const body: Record<string, unknown> = {
+      settings: settings.map((s) => ({
+        setting_id: s.settingId,
+        values: s.values,
+        category: s.category,
+      })),
+      limit,
+      offset,
+    };
+    if (orderBy && orderBy.length > 0) {
+      body.order_by = orderBy;
+    }
+    if (filter && filter.length > 0) {
+      // Structured array, not an encoded string — the server JSON-decodes
+      // the body directly. `encodeFilters` only matters for the URL-encoded
+      // `:fetch_results?filter=` path.
+      body.filter = filter;
+    }
+    if (columns && columns.length > 0) {
+      body.columns = [...columns];
+    }
+    const result = await this.requestJson<QueryResponsePayload>('/traces', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+      signal,
+    });
+    return parseQueryResponse(result);
+  }
+
+  // Describes the columns the `/traces` endpoint can return for the
+  // current trace source. Called once on Settings-page load to build
+  // the SchemaRegistry that drives the trace-list grid and the
+  // column-picker widget. The response shape is `{columns: [{name,
+  // type, default, description?}]}`. `settings` is passed to forward-
+  // compat backends whose schema depends on the trace source.
+  async listTracesSchema(
+    settings: ReadonlyArray<SettingFilter>,
+    signal?: AbortSignal,
+  ): Promise<TracesSchemaResponse> {
+    const body = JSON.stringify({
+      settings: settings.map((s) => ({
+        setting_id: s.settingId,
+        values: s.values,
+        category: s.category,
+      })),
+    });
+    return this.requestJson<TracesSchemaResponse>('/traces_schema', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body,
+      signal,
+    });
   }
 
   async getStatus(
@@ -111,6 +217,9 @@ export class BigtraceQueryClient {
   // Page the materialized table; `limit`/`offset` apply after orderBy/filter.
   // `orderBy` is AIP-132; `filter` is the DataGrid `Filter[]` shape encoded
   // via `encodeFilters`. Mid-flight calls return whatever rows have merged.
+  // `columns` is an optional field-mask over the union of (result-table
+  // columns ∪ sidecar metadata columns) — set to project a subset; omitted
+  // means "every result-table column, no sidecar JOIN".
   async fetchResults(
     uuid: string,
     limit: number,
@@ -118,6 +227,7 @@ export class BigtraceQueryClient {
     signal?: AbortSignal,
     orderBy?: string,
     filter?: ReadonlyArray<Filter>,
+    columns?: ReadonlyArray<string>,
   ): Promise<QueryResultPage> {
     let path = `/query_executions/${uuid}:fetch_results?limit=${limit}&offset=${offset}`;
     if (orderBy && orderBy.length > 0) {
@@ -125,6 +235,13 @@ export class BigtraceQueryClient {
     }
     if (filter && filter.length > 0) {
       path += `&filter=${encodeURIComponent(encodeFilters(filter))}`;
+    }
+    if (columns && columns.length > 0) {
+      // Comma-separated bare names — every entry is a column
+      // identifier (validated server-side), no quoting needed. URL-
+      // encode to escape commas-inside-names just in case (DuckDB
+      // allows them in quoted identifiers).
+      path += `&columns=${encodeURIComponent(columns.join(','))}`;
     }
     const result = await this.requestJson<QueryResponsePayload>(path, {signal});
     return parseQueryResponse(result);
@@ -166,8 +283,10 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal | undefined,
+    traceFilter?: ReadonlyArray<Filter>,
+    traceMetadataColumns?: ReadonlyArray<string>,
   ): Promise<QueryResultPage> {
-    const body = JSON.stringify({
+    const body: Record<string, unknown> = {
       limit,
       perfetto_sql: query,
       settings: settings.map((s) => ({
@@ -175,11 +294,25 @@ export class BigtraceQueryClient {
         values: s.values,
         category: s.category,
       })),
-    });
+    };
+    // Top-level structured field — replaces the legacy `trace_filter`
+    // regex setting. Same JSON shape as `:fetch_results?filter=`, but
+    // shipped as the decoded array (the body is JSON-parsed by the
+    // server, so no URL-encoding here).
+    if (traceFilter && traceFilter.length > 0) {
+      body.trace_filter = traceFilter;
+    }
+    // Trace-metadata columns to staple onto each result row (between
+    // `trace_id` and the SQL-result columns). Omitted when empty so
+    // the legacy `[trace_id, *sql_cols]` shape is preserved for
+    // clients that don't opt in.
+    if (traceMetadataColumns && traceMetadataColumns.length > 0) {
+      body.trace_metadata_columns = [...traceMetadataColumns];
+    }
     const result = await this.requestJson<QueryResponsePayload>(path, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body,
+      body: JSON.stringify(body),
       signal,
     });
     return parseQueryResponse(result);
@@ -270,5 +403,6 @@ export function parseQueryResponse(
     columns,
     queryUuid: result.queryUuid,
     totalFilteredRows: result.totalFilteredRows,
+    availableColumns: result.availableColumns,
   };
 }

@@ -17,6 +17,9 @@ import {InMemoryDataSource} from '../../components/widgets/datagrid/in_memory_da
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {endpointStorage} from '../settings/endpoint_storage';
 import {SettingFilter} from '../settings/settings_types';
+import {traceFilterState} from '../settings/trace_filter_state';
+import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
+import {Filter} from '../../components/widgets/datagrid/model';
 import {BigtraceAsyncDataSource} from './bigtrace_async_data_source';
 import {
   BigtraceQueryClient,
@@ -79,6 +82,15 @@ export class QueryRunner {
 
     const settings = bigTraceSettingsStorage.buildSettingFilters();
     tab.querySettings = settings;
+    // Snapshot the active trace-grid filter at submit time so an edit
+    // mid-flight can't change the trace set under a running query.
+    // Empty array → backend treats it as "no filter" and runs over
+    // every recognized trace in the directory (subject to trace_limit).
+    const traceFilter = traceFilterState.get();
+    // Same snapshot strategy for the metadata-columns the user wants
+    // stapled onto each result row. Empty list → result shape is the
+    // legacy `[trace_id, *sql_cols]`.
+    const traceMetadataColumns = traceQueryColumnsState.get();
 
     const queryClient = new BigtraceQueryClient(endpoint);
     tab.queryClient = queryClient;
@@ -97,6 +109,8 @@ export class QueryRunner {
           settings,
           requestController.signal,
           wallStartMs,
+          traceFilter,
+          traceMetadataColumns,
         );
       } else {
         await this.runSync(
@@ -106,6 +120,8 @@ export class QueryRunner {
           settings,
           requestController.signal,
           wallStartMs,
+          traceFilter,
+          traceMetadataColumns,
         );
       }
     } catch (e) {
@@ -346,8 +362,17 @@ export class QueryRunner {
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal,
     wallStartMs: number,
+    traceFilter: ReadonlyArray<Filter>,
+    traceMetadataColumns: ReadonlyArray<string>,
   ): Promise<void> {
-    const data = await client.executeAsync(query, tab.limit, settings, signal);
+    const data = await client.executeAsync(
+      query,
+      tab.limit,
+      settings,
+      signal,
+      traceFilter,
+      traceMetadataColumns,
+    );
     if (data.queryUuid === undefined || data.queryUuid === '') {
       throw new Error('Backend did not return a queryUuid for async execute');
     }
@@ -388,8 +413,17 @@ export class QueryRunner {
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal,
     wallStartMs: number,
+    traceFilter: ReadonlyArray<Filter>,
+    traceMetadataColumns: ReadonlyArray<string>,
   ): Promise<void> {
-    const result = await client.executeSync(query, tab.limit, settings, signal);
+    const result = await client.executeSync(
+      query,
+      tab.limit,
+      settings,
+      signal,
+      traceFilter,
+      traceMetadataColumns,
+    );
     if (result.queryUuid === undefined || result.queryUuid === '') {
       throw new Error('Backend did not return a queryUuid for sync execute');
     }

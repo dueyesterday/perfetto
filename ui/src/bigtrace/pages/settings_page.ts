@@ -18,6 +18,12 @@ import {Intent} from '../../widgets/common';
 import m from 'mithril';
 import {SettingsShell} from '../../widgets/settings_shell';
 import {Switch} from '../../widgets/switch';
+import {
+  MultiSelectDiff,
+  MultiSelectOption,
+  PopupMultiSelect,
+} from '../../widgets/multiselect';
+import {PopupPosition} from '../../widgets/popup';
 import {Card, CardStack} from '../../widgets/card';
 import {Icon} from '../../widgets/icon';
 import {classNames} from '../../base/classnames';
@@ -31,6 +37,26 @@ import {Setting} from '../../public/settings';
 
 import {TextInput} from '../../widgets/text_input';
 import {Stack, StackAuto} from '../../widgets/stack';
+
+import {DataGrid} from '../../components/widgets/datagrid/datagrid';
+import {
+  ColumnSchema,
+  SchemaRegistry,
+} from '../../components/widgets/datagrid/datagrid_schema';
+import {
+  Column,
+  Filter,
+  SortDirection,
+} from '../../components/widgets/datagrid/model';
+import {
+  BigtraceQueryClient,
+  TraceColumnDescriptor,
+  TracesSchemaResponse,
+} from '../query/bigtrace_query_client';
+import {BigtraceTraceListDataSource} from '../query/bigtrace_trace_list_data_source';
+import {traceFilterState} from '../settings/trace_filter_state';
+import {traceColumnsState} from '../settings/trace_columns_state';
+import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
 
 interface BigTraceSettingsCardAttrs extends m.Attributes {
   id?: string;
@@ -114,9 +140,60 @@ class BigTraceSettingsCard
   }
 }
 
+// Display category name for the section that hosts the trace-selection
+// grid. Must match the localised label in CATEGORY_DISPLAY_NAMES so the
+// renderer can branch on it.
+const TRACE_ADDRESS_DISPLAY = 'Trace Address';
+
+const SCHEMA_ROOT = 'trace_list';
+
+// Build a SchemaRegistry from the backend's /traces_schema response.
+// One entry per declared column; cellRenderer stays undefined so the
+// DataGrid uses its default string renderer (every cell is a string
+// on the wire per the always-strings contract).
+function buildSchemaRegistry(
+  schema: ReadonlyArray<TraceColumnDescriptor>,
+): SchemaRegistry {
+  const columnSchema: ColumnSchema = {};
+  for (const c of schema) {
+    columnSchema[c.name] = {cellRenderer: undefined};
+  }
+  return {[SCHEMA_ROOT]: columnSchema};
+}
+
+interface SchemaError {
+  readonly kind: 'error';
+  readonly message: string;
+}
+type SchemaState = undefined | 'loading' | SchemaError | TracesSchemaResponse;
+
 export class SettingsPage implements m.ClassComponent {
   private searchQuery = '';
-
+  // Trace-list grid state. The DataSource is rebuilt whenever the
+  // backend endpoint changes (its BigtraceQueryClient binds to one
+  // endpoint at construction). Same with `traceFilters` — kept in
+  // component state for controlled-mode rendering, but the source of
+  // truth is `traceFilterState` (LocalStorage) so it survives reloads
+  // and is visible to QueryRunner across pages.
+  private traceListDataSource: BigtraceTraceListDataSource | undefined;
+  private traceListEndpoint: string | undefined;
+  private traceFilters: readonly Filter[] = traceFilterState.get();
+  // Per-session sort state for the trace grid. The DataGrid carries
+  // sort on the `Column` object itself, so when we run in
+  // controlled-mode `columns` we have to splice it back onto the
+  // matching column on every render — otherwise the click that set
+  // it gets discarded on the next redraw. In-memory (not
+  // persisted): sort is naturally ephemeral, filter / chosen
+  // columns survive reload via LocalStorage.
+  private traceListSortField: string | undefined;
+  private traceListSortDirection: SortDirection | undefined;
+  // /traces_schema response, refetched whenever the endpoint changes
+  // (or trace_directory changes — a backend with a metadata index
+  // could vary the schema per source). `undefined` = not yet
+  // requested; 'loading' = in flight; SchemaError = the request
+  // failed; otherwise the resolved response.
+  private schemaState: SchemaState = undefined;
+  private schemaEndpoint: string | undefined;
   oninit() {
     bigTraceSettingsStorage.loadSettings();
   }
@@ -124,13 +201,429 @@ export class SettingsPage implements m.ClassComponent {
   private static readonly CATEGORY_DISPLAY_NAMES: ReadonlyMap<string, string> =
     new Map([
       ['General', 'General'],
-      ['TRACE_ADDRESS', 'Trace Address'],
+      ['TRACE_ADDRESS', TRACE_ADDRESS_DISPLAY],
       ['TRACE_METADATA', 'Trace Metadata'],
       ['BIGTRACE_QUERY_OPTIONS', 'Query Options'],
     ]);
 
   private displayCategory(raw: string): string {
     return SettingsPage.CATEGORY_DISPLAY_NAMES.get(raw) ?? raw;
+  }
+
+  // Lazily build / re-build the trace-list data source. The
+  // BigtraceQueryClient binds to one endpoint at construction, so a
+  // change to bigtraceEndpoint requires a fresh DataSource (and a
+  // fresh grid lifecycle — the caller keys the DataGrid on the
+  // endpoint so Mithril rebuilds it).
+  private getTraceListDataSource(
+    endpoint: string,
+  ): BigtraceTraceListDataSource | undefined {
+    if (endpoint === '') {
+      this.traceListDataSource = undefined;
+      this.traceListEndpoint = undefined;
+      return undefined;
+    }
+    if (
+      this.traceListDataSource === undefined ||
+      this.traceListEndpoint !== endpoint
+    ) {
+      const client = new BigtraceQueryClient(endpoint);
+      this.traceListDataSource = new BigtraceTraceListDataSource(client, () =>
+        bigTraceSettingsStorage.buildSettingFilters(),
+      );
+      this.traceListEndpoint = endpoint;
+    }
+    return this.traceListDataSource;
+  }
+
+  // Resolved schema or `undefined` while loading / errored. The
+  // toggle widget and the column-picker menu both go through this so
+  // a single fetch backs both UIs.
+  private resolvedSchema(): TracesSchemaResponse | undefined {
+    const s = this.schemaState;
+    if (s === undefined || s === 'loading') return undefined;
+    if ('kind' in s) return undefined;
+    return s;
+  }
+
+  // Kick off /traces_schema once per endpoint. Idempotent — repeated
+  // calls with the same endpoint are no-ops while a fetch is in
+  // flight or after one has resolved.
+  private ensureSchemaFetched(endpoint: string): void {
+    if (endpoint === '') {
+      this.schemaState = undefined;
+      this.schemaEndpoint = undefined;
+      return;
+    }
+    if (this.schemaEndpoint === endpoint && this.schemaState !== undefined) {
+      return;
+    }
+    this.schemaEndpoint = endpoint;
+    this.schemaState = 'loading';
+    const client = new BigtraceQueryClient(endpoint);
+    client
+      .listTracesSchema(bigTraceSettingsStorage.buildSettingFilters())
+      .then((resp) => {
+        // Stale-response guard: only commit if the endpoint hasn't
+        // changed under us mid-fetch.
+        if (this.schemaEndpoint !== endpoint) return;
+        this.schemaState = resp;
+        m.redraw();
+      })
+      .catch((e: unknown) => {
+        if (this.schemaEndpoint !== endpoint) return;
+        this.schemaState = {
+          kind: 'error',
+          message: e instanceof Error ? e.message : String(e),
+        };
+        m.redraw();
+      });
+  }
+
+  // Build the controlled-mode `columns` array for the trace grid.
+  // Splices the per-session sort state onto the column it applies
+  // to so the DataGrid's header sort indicator survives our redraws.
+  // Without this, the controlled-mode reset wipes sort on every
+  // render and the user perceives "sort doesn't work".
+  private buildTraceListColumns(names: ReadonlyArray<string>): Column[] {
+    return names.map((n) => {
+      const base: Column = {id: n, field: n};
+      if (
+        this.traceListSortField === n &&
+        this.traceListSortDirection !== undefined
+      ) {
+        return {...base, sort: this.traceListSortDirection};
+      }
+      return base;
+    });
+  }
+
+  // Apply a column-set change coming from either UI affordance
+  // (toggle row or DataGrid header menu). The two routes converge
+  // here so they can't drift.
+  private updateChosenColumns(names: readonly string[]): void {
+    // The DataGrid emits onColumnsChanged with the new visible-set
+    // (which may include an aliased column if the user renamed one).
+    // We don't alias trace-list columns, so id === field for every
+    // entry; we just normalise to a string list.
+    if (names.length === 0) {
+      // Defend against a degenerate state — at least one column has
+      // to be visible. Reset to defaults instead.
+      traceColumnsState.clear();
+    } else {
+      traceColumnsState.set(names);
+    }
+    m.redraw();
+  }
+
+  // Renders the embedded "Traces" card. The card has three parts:
+  // (a) a caption pinning the implicit-selection contract; (b) a
+  // toggle row letting the user check the columns they want; (c) a
+  // DataGrid driven by the trace-list DataSource. Both the toggle
+  // row and the grid's built-in "Add column" menu write through the
+  // same `traceColumnsState`, so they stay in sync.
+  private renderTraceListCard(endpoint: string): m.Children {
+    const ds = this.getTraceListDataSource(endpoint);
+    if (ds === undefined) {
+      return m(
+        Card,
+        {className: 'pf-settings-card'},
+        m('.pf-settings-card__details', [
+          m('.pf-settings-card__title', 'Traces'),
+          m(
+            '.pf-settings-card__description',
+            'Set the BigTrace Endpoint above to load traces from your ' +
+              'configured directory.',
+          ),
+        ]),
+      );
+    }
+    this.ensureSchemaFetched(endpoint);
+    const schema = this.resolvedSchema();
+    const schemaState = this.schemaState;
+
+    const header: m.Children = [
+      m('.pf-settings-card__title', 'Traces'),
+      m(
+        '.pf-settings-card__description',
+        'Filter or sort to select which traces the query runs over.',
+      ),
+    ];
+
+    if (schemaState === 'loading' || schemaState === undefined) {
+      return m(
+        Card,
+        {className: 'pf-settings-card', style: {display: 'block'}},
+        [
+          header,
+          m(EmptyState, {title: 'Loading schema…', icon: 'hourglass_empty'}),
+        ],
+      );
+    }
+    if (schemaState !== undefined && 'kind' in schemaState) {
+      return m(
+        Card,
+        {className: 'pf-settings-card', style: {display: 'block'}},
+        [
+          header,
+          m(
+            Callout,
+            {
+              intent: Intent.Danger,
+              icon: 'error',
+              title: 'Failed to load trace schema',
+            },
+            schemaState.message,
+          ),
+        ],
+      );
+    }
+
+    // schema is resolved here; build the controlled-mode column list
+    // from the effective selection.
+    const chosen = traceColumnsState.effective(schema!.columns);
+    const schemaRegistry = buildSchemaRegistry(schema!.columns);
+
+    return m(
+      Card,
+      {
+        className: 'pf-settings-card pf-bt-trace-card',
+        // Extra top margin separates this richer compound widget
+        // from the plain key-value cards above (Trace Directory,
+        // Trace Limit). Without it the grid sits flush against the
+        // settings list and the visual hierarchy collapses.
+        // padding-bottom keeps the grid's bottom edge clear of the
+        // card border.
+        style: {
+          display: 'block',
+          marginTop: '32px',
+          paddingBottom: '16px',
+        },
+      },
+      [
+        header,
+        this.renderColumnPicker(schema!.columns, chosen),
+        m(
+          '.pf-bt-trace-list-grid',
+          {
+            // Small floor so the grid still has presence on
+            // single-row results, but no large fixed minHeight that
+            // would leave a visible void below sparsely-populated
+            // directories.
+            style: {minHeight: '120px', marginTop: '16px'},
+          },
+          m(DataGrid, {
+            schema: schemaRegistry,
+            rootSchema: SCHEMA_ROOT,
+            data: ds,
+            // Controlled-mode columns: the grid renders exactly what
+            // the user picked, in their preferred order. Its built-in
+            // header menus ("Add column", "Remove column") emit
+            // onColumnsChanged with the new list, which we persist
+            // back to traceColumnsState — same write path as the
+            // toggle widget above.
+            columns: this.buildTraceListColumns(chosen),
+            onColumnsChanged: (cols: ReadonlyArray<Column>) => {
+              // Sort lives on the Column object — extract it before
+              // we collapse cols to a string[] so the next render
+              // can splice it back. Without this the user's
+              // header click reverts on every redraw.
+              const sorted = cols.find((c) => c.sort);
+              this.traceListSortField = sorted?.field;
+              this.traceListSortDirection = sorted?.sort;
+              this.updateChosenColumns(cols.map((c) => c.field));
+            },
+            canAddColumns: true,
+            canRemoveColumns: true,
+            // Controlled-mode filter: source of truth is
+            // traceFilterState; the grid emits onFiltersChanged and
+            // we persist immediately so a navigation away (Run Query)
+            // sees the latest selection.
+            filters: this.traceFilters,
+            onFiltersChanged: (filters: readonly Filter[]) => {
+              this.traceFilters = filters;
+              traceFilterState.set(filters);
+            },
+            emptyStateMessage:
+              'No traces match your filter (or Trace Directory is empty).',
+            enablePivotControls: false,
+            // Inline match-count so users see at a glance how many
+            // traces the current filter (or trace_directory alone)
+            // selects. Backed by the data source's
+            // filteredTotalRows, refreshed on every successful
+            // fetch.
+            toolbarItemsLeft: [this.renderTraceMatchCount(ds)],
+          }),
+        ),
+      ],
+    );
+  }
+
+  // Sibling card to the Traces card. Lives below it in the
+  // TRACE_ADDRESS section. Separate visual unit — its own title +
+  // description — so the "what shows up in the grid" picker and the
+  // "what gets attached to query results" picker don't look like
+  // duplicates of each other. Renders nothing while the schema is
+  // still loading.
+  private renderQueryColumnsCard(): m.Children {
+    const schema = this.resolvedSchema();
+    if (schema === undefined) return null;
+    return m(
+      Card,
+      {
+        className: 'pf-settings-card pf-bt-query-columns-card',
+        style: {
+          display: 'block',
+          marginTop: '24px',
+          paddingBottom: '16px',
+        },
+      },
+      [
+        m('.pf-settings-card__title', 'Query Result Columns'),
+        m(
+          '.pf-settings-card__description',
+          'Trace metadata to attach to every query result row.',
+        ),
+        this.renderQueryColumnsPicker(schema.columns),
+      ],
+    );
+  }
+
+  // Single-line summary of how many traces currently match. Sits in
+  // the grid's toolbar so it's visible alongside the filter chips
+  // and the search-result feel mirrors the query-page results
+  // summary. Uses `filteredTotalRows` from the data source (post-
+  // filter count; equal to the trace-directory total when no filter
+  // is active).
+  private renderTraceMatchCount(ds: BigtraceTraceListDataSource): m.Children {
+    const n = ds.filteredTotalRows;
+    const hasFilter = this.traceFilters.length > 0;
+    const text =
+      n === undefined
+        ? 'Counting traces…'
+        : hasFilter
+          ? `${n.toLocaleString()} trace${n === 1 ? '' : 's'} match`
+          : `${n.toLocaleString()} trace${n === 1 ? '' : 's'}`;
+    // Subtle filled label — small radius, low-contrast background,
+    // inherits the font family. Reads as a "status" rather than as
+    // a clickable chip.
+    return m(
+      'span.pf-bt-trace-match-count',
+      {
+        style: {
+          display: 'inline-flex',
+          alignItems: 'center',
+          padding: '2px 8px',
+          borderRadius: '4px',
+          fontSize: '12px',
+          fontWeight: '500',
+          background: 'var(--pf-color-background-tertiary, #e3e9eb)',
+          color: 'var(--pf-color-text-muted, #555)',
+        },
+      },
+      text,
+    );
+  }
+
+  // Checkboxes for the "Query Result Columns" card. Picks which
+  // trace-metadata columns get stapled onto every QUERY RESULT row
+  // (stored server-side in the per-query metadata sidecar, projected
+  // at fetch time). Distinct state from `traceColumnsState` — these
+  // checkboxes never affect the trace-list grid above. Default is
+  // empty so a user who never touches the picker pays zero overhead
+  // on backends with expensive per-trace metadata.
+  private renderQueryColumnsPicker(
+    schemaCols: ReadonlyArray<TraceColumnDescriptor>,
+  ): m.Children {
+    const chosen = traceQueryColumnsState.get();
+    const chosenSet = new Set(chosen);
+    const options: MultiSelectOption[] = schemaCols.map((col) => ({
+      id: col.name,
+      name: col.name,
+      checked: chosenSet.has(col.name),
+      details: col.description,
+    }));
+    return m(
+      '.pf-bt-trace-query-columns',
+      {style: {marginTop: '16px'}},
+      m(PopupMultiSelect, {
+        label: 'Columns to attach',
+        icon: 'label',
+        showNumSelected: true,
+        showSelectAllButton: true,
+        position: PopupPosition.Bottom,
+        options,
+        onChange: (diffs: ReadonlyArray<MultiSelectDiff>) => {
+          let next = [...chosen];
+          for (const d of diffs) {
+            if (d.checked) {
+              if (!next.includes(d.id)) next.push(d.id);
+            } else {
+              next = next.filter((n) => n !== d.id);
+            }
+          }
+          traceQueryColumnsState.set(next);
+          m.redraw();
+        },
+      }),
+    );
+  }
+
+  // Compact popup multi-select for the trace grid's visible columns.
+  // Each column = one checkable option in the popup; the button face
+  // shows "Shown columns (N selected)". Scales gracefully when Phase
+  // 2 introduces more metadata — no row-wrapping noise — and reuses
+  // the multiselect widget's built-in search + select-all.
+  //
+  // `description` from /traces_schema becomes the per-option
+  // tooltip (the multiselect widget surfaces `details` as the
+  // hover title), so users can still discover what each column
+  // means without leaving the popup.
+  private renderColumnPicker(
+    schemaCols: ReadonlyArray<TraceColumnDescriptor>,
+    chosen: ReadonlyArray<string>,
+  ): m.Children {
+    const chosenSet = new Set(chosen);
+    const options: MultiSelectOption[] = schemaCols.map((col) => ({
+      id: col.name,
+      name: col.name,
+      checked: chosenSet.has(col.name),
+      details: col.description,
+    }));
+    return m(
+      '.pf-bt-trace-columns',
+      {style: {marginTop: '20px'}},
+      m(PopupMultiSelect, {
+        label: 'Shown columns',
+        icon: 'view_column',
+        showNumSelected: true,
+        showSelectAllButton: true,
+        position: PopupPosition.Bottom,
+        options,
+        onChange: (diffs: ReadonlyArray<MultiSelectDiff>) => {
+          this.applyColumnDiffs(chosen, diffs);
+        },
+      }),
+    );
+  }
+
+  // Apply MultiSelect diffs to the persisted shown-columns set.
+  // Preserves the order users implicitly create by checking columns
+  // in sequence (newly-checked ones are appended; unchecked ones
+  // are removed in place).
+  private applyColumnDiffs(
+    chosen: ReadonlyArray<string>,
+    diffs: ReadonlyArray<MultiSelectDiff>,
+  ): void {
+    let next = [...chosen];
+    for (const d of diffs) {
+      if (d.checked) {
+        if (!next.includes(d.id)) next.push(d.id);
+      } else {
+        next = next.filter((n) => n !== d.id);
+      }
+    }
+    this.updateChosenColumns(next);
   }
 
   view() {
@@ -272,6 +765,20 @@ export class SettingsPage implements m.ClassComponent {
             for (const setting of catSettings) {
               cards.push(this.renderBigTraceSettingCard(setting));
             }
+            // Append the trace-list grid + the result-columns
+            // picker below the trace_directory / trace_limit cards.
+            // Two sibling cards: "Traces" picks WHICH traces; "Query
+            // Result Columns" picks WHAT metadata is attached to
+            // each row of query results. Both omitted while the
+            // user is searching the settings list (the grid + grid-
+            // schema would noise up a search-results view).
+            if (category === TRACE_ADDRESS_DISPLAY && this.searchQuery === '') {
+              const endpoint = endpointSetting
+                ? (endpointSetting.get() as string) ?? ''
+                : '';
+              cards.push(this.renderTraceListCard(endpoint));
+              cards.push(this.renderQueryColumnsCard());
+            }
             categoryContent = m(CardStack, cards);
           }
 
@@ -402,16 +909,30 @@ export class SettingsPage implements m.ClassComponent {
             ),
           ]
         : setting.description;
+    // Hide the enable/disable Switch on TRACE_ADDRESS settings —
+    // those are required for any query to run, so the toggle is
+    // visual noise without a meaningful affordance (disabling
+    // trace_directory silently breaks the trace list with no
+    // recovery cue). Compound cards in this section don't have a
+    // Switch either, so dropping it here unifies the layout
+    // template across the section.
+    //
+    // `disabled: undefined` tells BigTraceSettingsCard to omit the
+    // Switch element entirely; non-TRACE_ADDRESS settings keep the
+    // existing toggle behaviour unchanged.
+    const isRequired = setting.category === 'TRACE_ADDRESS';
     return m(BigTraceSettingsCard, {
       id: setting.id,
       title: setting.name,
       description,
       controls: renderSetting(setting),
-      disabled,
+      disabled: isRequired ? undefined : disabled,
       fullWidthControls: fullWidth,
-      onChange: (newDisabled: boolean) => {
-        setting.setDisabled(newDisabled);
-      },
+      onChange: isRequired
+        ? undefined
+        : (newDisabled: boolean) => {
+            setting.setDisabled(newDisabled);
+          },
     });
   }
 }

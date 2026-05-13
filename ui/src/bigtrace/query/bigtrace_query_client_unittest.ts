@@ -213,6 +213,331 @@ describe('BigtraceQueryClient.fetchResults URL construction', () => {
     expect(url).toContain('order_by=name%20desc');
     expect(url).toContain('filter=');
   });
+
+  test('columns is omitted when empty, included as comma list when set', async () => {
+    const client = new BigtraceQueryClient('http://example/');
+    let fetchMock = captureFetch();
+    await client.fetchResults('uid', 50, 0);
+    expect((fetchMock.mock.calls[0] as unknown[])[0] as string).not.toContain(
+      'columns=',
+    );
+    fetchMock = captureFetch();
+    await client.fetchResults(
+      'uid',
+      50,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      [],
+    );
+    expect((fetchMock.mock.calls[0] as unknown[])[0] as string).not.toContain(
+      'columns=',
+    );
+    fetchMock = captureFetch();
+    await client.fetchResults('uid', 50, 0, undefined, undefined, undefined, [
+      'trace_id',
+      'name',
+      'file_name',
+    ]);
+    const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
+    // Comma-separated bare names; comma itself stays literal because
+    // URL-encoding leaves it untouched (it's not reserved in query
+    // strings) but the surrounding URL-encoding of the value is still
+    // applied.
+    expect(url).toContain(
+      `columns=${encodeURIComponent('trace_id,name,file_name')}`,
+    );
+  });
+
+  test('parseQueryResponse passes availableColumns through', async () => {
+    // The new field surfaces the union of result + sidecar columns
+    // so the UI's column-picker knows what's selectable.
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            columnNames: ['trace_id', 'name'],
+            rows: [{values: ['a', 'evt']}],
+            totalFilteredRows: 1,
+            availableColumns: ['trace_id', 'name', 'file_name', 'size_bytes'],
+          }),
+        ),
+      json: () =>
+        Promise.resolve({
+          columnNames: ['trace_id', 'name'],
+          rows: [{values: ['a', 'evt']}],
+          totalFilteredRows: 1,
+          availableColumns: ['trace_id', 'name', 'file_name', 'size_bytes'],
+        }),
+    }) as unknown as typeof fetch;
+    const client = new BigtraceQueryClient('http://example/');
+    const page = await client.fetchResults('uid', 50, 0);
+    expect(page.availableColumns).toEqual([
+      'trace_id',
+      'name',
+      'file_name',
+      'size_bytes',
+    ]);
+  });
+});
+
+describe('BigtraceQueryClient.listTraces body construction', () => {
+  // /traces is POST so the contract lives in the request body, not
+  // the URL. Pin (a) the endpoint, (b) settings array snake_case
+  // (matches /execute_*), (c) order_by/filter/columns inclusion rules.
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function captureFetch(): jest.Mock {
+    const fakeResp = {
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({columnNames: [], rows: [], totalFilteredRows: 0}),
+        ),
+      json: () =>
+        Promise.resolve({columnNames: [], rows: [], totalFilteredRows: 0}),
+    };
+    const fn = jest.fn().mockResolvedValue(fakeResp);
+    global.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function bodyFrom(fetchMock: jest.Mock): Record<string, unknown> {
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    return JSON.parse(init.body as string);
+  }
+
+  test('hits /traces with POST', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.listTraces([], 100, 0);
+    const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect(url).toBe('http://example//traces');
+    expect(init.method).toBe('POST');
+  });
+
+  test('settings are renamed to snake_case on the wire', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.listTraces(
+      [
+        {
+          settingId: 'trace_directory',
+          values: ['/tmp/x'],
+          category: 'TRACE_ADDRESS',
+        },
+      ],
+      100,
+      0,
+    );
+    const body = bodyFrom(fetchMock);
+    // Same rename rule as /execute_* (server uses _first_setting_value
+    // which is strict on snake_case `setting_id`).
+    expect(body.settings).toEqual([
+      {
+        setting_id: 'trace_directory',
+        values: ['/tmp/x'],
+        category: 'TRACE_ADDRESS',
+      },
+    ]);
+  });
+
+  test('order_by is omitted when empty, included when set', async () => {
+    const client = new BigtraceQueryClient('http://example/');
+    let fetchMock = captureFetch();
+    await client.listTraces([], 100, 0);
+    expect(bodyFrom(fetchMock).order_by).toBeUndefined();
+    fetchMock = captureFetch();
+    await client.listTraces([], 100, 0, undefined, 'file_name desc');
+    expect(bodyFrom(fetchMock).order_by).toBe('file_name desc');
+  });
+
+  test('filter is omitted when empty, included as structured array when set', async () => {
+    const client = new BigtraceQueryClient('http://example/');
+    let fetchMock = captureFetch();
+    await client.listTraces([], 100, 0, undefined, undefined, []);
+    expect(bodyFrom(fetchMock).filter).toBeUndefined();
+    fetchMock = captureFetch();
+    await client.listTraces([], 100, 0, undefined, undefined, [
+      {field: 'file_name', op: 'glob', value: 'a*'},
+    ]);
+    // Body is the JSON-decoded array — NOT a URL-encoded string. The
+    // server JSON-parses the body, so re-encoding via encodeFilters
+    // (which the :fetch_results path uses) would land a doubly-encoded
+    // string here.
+    expect(bodyFrom(fetchMock).filter).toEqual([
+      {field: 'file_name', op: 'glob', value: 'a*'},
+    ]);
+  });
+
+  test('columns is omitted when undefined or empty, included verbatim when set', async () => {
+    const client = new BigtraceQueryClient('http://example/');
+    let fetchMock = captureFetch();
+    await client.listTraces([], 100, 0);
+    expect(bodyFrom(fetchMock).columns).toBeUndefined();
+    fetchMock = captureFetch();
+    await client.listTraces([], 100, 0, undefined, undefined, undefined, []);
+    expect(bodyFrom(fetchMock).columns).toBeUndefined();
+    fetchMock = captureFetch();
+    // Set: shipped as an array in user-given order. The server projects
+    // exactly these columns; the array order also determines the
+    // response column order.
+    await client.listTraces([], 100, 0, undefined, undefined, undefined, [
+      'file_name',
+      'size_bytes',
+    ]);
+    expect(bodyFrom(fetchMock).columns).toEqual(['file_name', 'size_bytes']);
+  });
+});
+
+describe('BigtraceQueryClient.listTracesSchema body construction', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function captureFetch(): jest.Mock {
+    const fakeResp = {
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({columns: []})),
+      json: () => Promise.resolve({columns: []}),
+    };
+    const fn = jest.fn().mockResolvedValue(fakeResp);
+    global.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  test('hits /traces_schema with POST and snake_case settings', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.listTracesSchema([
+      {
+        settingId: 'trace_directory',
+        values: ['/tmp/x'],
+        category: 'TRACE_ADDRESS',
+      },
+    ]);
+    const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect(url).toBe('http://example//traces_schema');
+    expect(init.method).toBe('POST');
+    const body = JSON.parse(init.body as string);
+    expect(body.settings).toEqual([
+      {
+        setting_id: 'trace_directory',
+        values: ['/tmp/x'],
+        category: 'TRACE_ADDRESS',
+      },
+    ]);
+  });
+
+  test('returns the parsed columns array', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            columns: [
+              {name: 'file_name', type: 'VARCHAR', default: true},
+              {name: 'mtime', type: 'VARCHAR', default: false},
+            ],
+          }),
+        ),
+      json: () =>
+        Promise.resolve({
+          columns: [
+            {name: 'file_name', type: 'VARCHAR', default: true},
+            {name: 'mtime', type: 'VARCHAR', default: false},
+          ],
+        }),
+    }) as unknown as typeof fetch;
+    const client = new BigtraceQueryClient('http://example/');
+    const resp = await client.listTracesSchema([]);
+    expect(resp.columns).toHaveLength(2);
+    expect(resp.columns[0].name).toBe('file_name');
+    expect(resp.columns[0].default).toBe(true);
+    expect(resp.columns[1].default).toBe(false);
+  });
+});
+
+describe('BigtraceQueryClient executeSync/executeAsync trace_filter', () => {
+  // The top-level `trace_filter` field on /execute_* replaces the
+  // legacy regex setting and carries a structured Filter[] (same JSON
+  // shape as :fetch_results?filter=). Absence on the wire means
+  // "process every trace in the directory".
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function captureFetch(): jest.Mock {
+    const fakeResp = {
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({queryUuid: 'u', columnNames: [], rows: []}),
+        ),
+      json: () => Promise.resolve({queryUuid: 'u', columnNames: [], rows: []}),
+    };
+    const fn = jest.fn().mockResolvedValue(fakeResp);
+    global.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function bodyFrom(fetchMock: jest.Mock): Record<string, unknown> {
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    return JSON.parse(init.body as string);
+  }
+
+  test('omits trace_filter when undefined or empty', async () => {
+    const client = new BigtraceQueryClient('http://example/');
+    let fetchMock = captureFetch();
+    await client.executeSync('SELECT 1', 10, []);
+    expect(bodyFrom(fetchMock).trace_filter).toBeUndefined();
+    fetchMock = captureFetch();
+    await client.executeAsync('SELECT 1', 10, [], undefined, []);
+    expect(bodyFrom(fetchMock).trace_filter).toBeUndefined();
+  });
+
+  test('includes trace_filter as top-level structured array when set', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.executeAsync('SELECT 1', 10, [], undefined, [
+      {field: 'file_name', op: '=', value: 'a.pftrace'},
+    ]);
+    const body = bodyFrom(fetchMock);
+    expect(body.trace_filter).toEqual([
+      {field: 'file_name', op: '=', value: 'a.pftrace'},
+    ]);
+    // The "is" here is intentional: trace_filter sits at the same level
+    // as `perfetto_sql` and `settings`, not nested inside settings.
+    expect(body.perfetto_sql).toBe('SELECT 1');
+    expect(body.settings).toEqual([]);
+  });
+
+  test('sync and async share the trace_filter shape', async () => {
+    const filter = [{field: 'size_bytes', op: '>', value: '1024'}] as const;
+    const client = new BigtraceQueryClient('http://example/');
+    let fetchMock = captureFetch();
+    await client.executeSync('SELECT 1', 10, [], undefined, filter);
+    const syncBody = bodyFrom(fetchMock);
+    fetchMock = captureFetch();
+    await client.executeAsync('SELECT 1', 10, [], undefined, filter);
+    const asyncBody = bodyFrom(fetchMock);
+    expect(syncBody.trace_filter).toEqual(filter);
+    expect(asyncBody.trace_filter).toEqual(filter);
+  });
 });
 
 describe('BigtraceQueryClient 404 handling', () => {

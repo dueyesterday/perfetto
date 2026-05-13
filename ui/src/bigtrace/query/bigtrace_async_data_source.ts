@@ -49,9 +49,25 @@ export class BigtraceAsyncDataSource implements DataSource {
   private currentFilterKey = '';
   // `useRows` falls back to `getTotalRows()` when undefined.
   private _filteredTotalRows: number | undefined;
+  // Field-mask passed to `:fetch_results?columns=`. Tracks the
+  // visible-columns set on the results DataGrid so a column toggle
+  // refetches a narrower page (and pulls in sidecar metadata if the
+  // user just enabled one of those columns).
+  private currentColumns: readonly string[] = [];
+  private currentColumnsKey = '';
+  // Full union surface returned by the backend on every fetch — the
+  // results-page column picker reads this to know what's selectable.
+  private _availableColumns: ReadonlyArray<string> | undefined;
 
   get filteredTotalRows(): number | undefined {
     return this._filteredTotalRows;
+  }
+
+  // Result-table columns + sidecar metadata columns, as the backend
+  // declared on the last successful fetch. Empty array until a fetch
+  // lands. Used by the results page to populate its column picker.
+  get availableColumns(): ReadonlyArray<string> | undefined {
+    return this._availableColumns;
   }
 
   // `signal`: owner aborts on close. `getTotalRows`: scrollbar sizing.
@@ -69,17 +85,31 @@ export class BigtraceAsyncDataSource implements DataSource {
     const wantedFilterKey = encodeFilters(wantedFilter);
     const wantedOffset = model.pagination?.offset ?? 0;
     const wantedLimit = model.pagination?.limit ?? 0;
+    // FlatModel exposes columns the grid is currently displaying.
+    // Map back to field names for the wire — same alias→field
+    // remap the order/filter helpers do, only here we project not
+    // sort/select.
+    const wantedColumns = (model.columns ?? []).map((c) => c.field);
+    const wantedColumnsKey = JSON.stringify(wantedColumns);
 
-    // Fetch on sort/filter/range/initial change; skip if in flight (avoids redraw storms).
+    // Fetch on sort/filter/range/columns/initial change; skip if in
+    // flight (avoids redraw storms).
     const sortChanged = wantedOrderBy !== this.currentOrderBy;
     const filterChanged = wantedFilterKey !== this.currentFilterKey;
     const rangeChanged =
       this.hasInitialFetchCompleted &&
       (wantedOffset !== this.loadedOffset ||
         (wantedLimit > 0 && wantedLimit !== this.loadedLimit));
+    const columnsChanged =
+      this.hasInitialFetchCompleted &&
+      wantedColumnsKey !== this.currentColumnsKey;
     const needsInitial = !this.hasInitialFetchCompleted && wantedLimit > 0;
     if (
-      (sortChanged || filterChanged || rangeChanged || needsInitial) &&
+      (sortChanged ||
+        filterChanged ||
+        rangeChanged ||
+        columnsChanged ||
+        needsInitial) &&
       !this.isFetching
     ) {
       this.currentOrderBy = wantedOrderBy;
@@ -89,6 +119,8 @@ export class BigtraceAsyncDataSource implements DataSource {
         // Briefly oversized scrollbar > briefly collapsed while refetching.
         this._filteredTotalRows = undefined;
       }
+      this.currentColumns = wantedColumns;
+      this.currentColumnsKey = wantedColumnsKey;
       // First render may have limit=0; fall back so the schema comes back.
       const fetchLimit = wantedLimit > 0 ? wantedLimit : 100;
       this.fetchMoreRows(wantedOffset, fetchLimit);
@@ -168,6 +200,7 @@ export class BigtraceAsyncDataSource implements DataSource {
         this.signal,
         this.currentOrderBy,
         this.currentFilter,
+        this.currentColumns.length > 0 ? this.currentColumns : undefined,
       );
       this.loadedRows = [...result.rows];
       this.loadedOffset = offset;
@@ -178,6 +211,11 @@ export class BigtraceAsyncDataSource implements DataSource {
       if (this.columns.length === 0 && result.columns.length > 0) {
         this.columns = [...result.columns];
       }
+      // Always overwrite — `availableColumns` reflects the
+      // backend's current view of what's projectable. A change here
+      // (e.g. the sidecar was just dropped by a TTL sweep) needs to
+      // propagate to the picker.
+      this._availableColumns = result.availableColumns;
     } catch (e) {
       // Abort is expected when the owning tab closes; don't surface it.
       if (e instanceof QueryCancelledError) return;
