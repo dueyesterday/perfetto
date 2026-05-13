@@ -126,6 +126,20 @@ def safe_table_id(query_uuid: str) -> str:
   return 'bigtrace_' + query_uuid.replace('-', '_')
 
 
+def safe_meta_table_id(query_uuid: str) -> str:
+  """Sidecar metadata table name for `query_uuid`.
+
+    Holds one row per trace processed in the query: `(trace_id PK,
+    <selected trace_metadata_columns>...)`. `fetch_paginated` LEFT
+    JOINs this onto the main result table when a `columns`
+    projection references metadata columns, so the main table stays
+    free of per-row metadata duplication (huge win when metadata is
+    wide / queries return many rows). The two tables share lifecycle
+    — every place that drops the main table also drops the sidecar.
+    """
+  return safe_table_id(query_uuid) + '_meta'
+
+
 def parse_order_by(s: str) -> list[tuple[str, str]]:
   """Parse an AIP-132 `order_by` string into (field, direction) pairs.
 
@@ -335,6 +349,37 @@ def compile_where(
   return ' AND '.join(fragments), params
 
 
+def _qualify_predicate(
+    fragment: str,
+    result_tbl: str,
+    meta_tbl: str,
+    sidecar_cols: list[str],
+) -> str:
+  """Rewrite `"col"` references in a SQL fragment to `"tbl"."col"`.
+
+    `compile_where` and the ORDER BY builder emit column references
+    as bare quoted identifiers (`"col"`). When the page fetch needs
+    to JOIN the sidecar metadata table, those bare references become
+    ambiguous if `col` exists in both tables. This helper rewrites
+    them to qualified form, picking the result table by default and
+    the sidecar when `col` is in `sidecar_cols`.
+
+    Safe because `compile_where` never emits user-controlled strings
+    inside double-quotes — only column-name references. Values are
+    bound via `?` placeholders, so there's no risk of mis-replacing
+    a literal that happens to look like a quoted identifier.
+    """
+  import re as _re
+  sidecar_set = set(sidecar_cols)
+
+  def _repl(m: 're.Match[str]') -> str:
+    col = m.group(1)
+    owner = meta_tbl if col in sidecar_set else result_tbl
+    return f'"{owner}"."{col}"'
+
+  return _re.sub(r'"([^"]+)"', _repl, fragment)
+
+
 # Map Python types from the first sample row → DuckDB column types.
 _TYPE_MAP = {
     bool: 'BOOLEAN',
@@ -343,6 +388,126 @@ _TYPE_MAP = {
     str: 'VARCHAR',
     bytes: 'BLOB',
 }
+
+
+def query_trace_list(
+    traces: list[dict[str, Any]],
+    column_types: list[tuple[str, str]],
+    parsed_filter: list[ParsedFilter],
+    parsed_order: list[tuple[str, str]],
+    limit: Optional[int] = None,
+    offset: int = 0,
+    projected_columns: Optional[list[str]] = None,
+) -> tuple[list[str], list[list[Any]], int]:
+  """Filter, order, paginate an in-memory list of trace dicts via DuckDB.
+
+    Pivots through a fresh `:memory:` DuckDB connection so the
+    wire-level filter/order_by semantics are identical to
+    `Database.fetch_paginated` (which paginates over the materialized
+    table for a query result). Reusing `parse_filter` / `compile_where`
+    / `parse_order_by` means the `/traces` endpoint and the top-level
+    `trace_filter` on `/execute_*` see one parser implementation —
+    no second copy to drift.
+
+    Inputs:
+      - `traces`: rows as dicts. Keys must cover every column named in
+        `column_types`; extra keys are ignored.
+      - `column_types`: `[(name, duckdb_type), ...]` defining the
+        schema of the temp table. Order matters — it's the default
+        projection order when `projected_columns is None`.
+      - `parsed_filter`, `parsed_order`: outputs of `parse_filter` and
+        `parse_order_by` respectively. Field names are validated
+        against the full column list and `ValueError` is raised on
+        unknown columns (mirrors `fetch_paginated`). Validation
+        runs against the FULL schema, not the projection, so the
+        client can still filter on / sort by columns it hasn't asked
+        the response to include.
+      - `limit`/`offset`: pagination. `limit=None` returns every row
+        (used by the execute path, which wants the full filtered set
+        of trace files to fan out to).
+      - `projected_columns`: optional subset of the schema's column
+        names. When set, the response contains only these columns in
+        this order — used by the /traces endpoint to honour the
+        client's `columns` field-mask. Unknown / duplicate names raise
+        `ValueError`. Empty list raises (the client wanted *some*
+        column; an empty mask is almost certainly a bug). `None` means
+        "return every column from `column_types`".
+
+    Returns `(column_names, rows, total_filtered_rows)`. `column_names`
+    matches what was actually projected.
+
+    Caller responsibility: catch `duckdb.ConversionException` and
+    surface it as 400 INVALID_ARGUMENT — same shape as the
+    `:fetch_results` path. (e.g. user typed `> "abc"` into a numeric
+    column filter.)
+    """
+  import pyarrow as _pa
+  full_cols = [name for name, _ in column_types]
+  allowed = set(full_cols)
+  if parsed_order:
+    for field_name, _ in parsed_order:
+      if field_name not in allowed:
+        raise ValueError(f'unknown order_by column {field_name!r}; '
+                         f'available: {sorted(allowed)}')
+  where_frag, where_params = compile_where(parsed_filter, allowed)
+
+  # Validate the projection up-front so a bad `columns` field maps to
+  # 400 INVALID_ARGUMENT at the endpoint, same shape as filter /
+  # order_by errors. None means "all schema columns in declaration
+  # order"; an explicit empty list is rejected (almost always a bug).
+  if projected_columns is None:
+    out_cols_decl = list(full_cols)
+  else:
+    if not isinstance(projected_columns, list):
+      raise ValueError('columns must be a list of column names')
+    if not projected_columns:
+      raise ValueError('columns must not be empty')
+    seen: set[str] = set()
+    for c in projected_columns:
+      if not isinstance(c, str) or not c:
+        raise ValueError('columns entries must be non-empty strings')
+      if c not in allowed:
+        raise ValueError(f'unknown column {c!r}; '
+                         f'available: {sorted(allowed)}')
+      if c in seen:
+        raise ValueError(f'duplicate column {c!r} in projection')
+      seen.add(c)
+    out_cols_decl = list(projected_columns)
+
+  con = duckdb.connect(':memory:')
+  try:
+    col_decls = ', '.join(f'"{name}" {dtype}' for name, dtype in column_types)
+    con.execute(f'CREATE TABLE t ({col_decls})')
+    if traces:
+      # Insert every column the schema declares (even if the projection
+      # is smaller) so filter/order_by validations against unprojected
+      # columns still work.
+      data = {name: [t.get(name) for t in traces] for name in full_cols}
+      con.from_arrow(_pa.table(data)).insert_into('t')
+
+    quoted_cols = ', '.join(f'"{c}"' for c in out_cols_decl)
+    page_parts = [f'SELECT {quoted_cols} FROM t']
+    if where_frag:
+      page_parts.append(f'WHERE {where_frag}')
+    if parsed_order:
+      order_clause = ', '.join(f'"{f}" {d}' for f, d in parsed_order)
+      page_parts.append(f'ORDER BY {order_clause}')
+    params = list(where_params)
+    if limit is not None:
+      page_parts.append('LIMIT ? OFFSET ?')
+      params.extend([limit, offset])
+    cur = con.execute(' '.join(page_parts), params)
+    out_cols = [d[0] for d in cur.description]
+    rows = [list(r) for r in cur.fetchall()]
+
+    count_sql = 'SELECT COUNT(*) FROM t'
+    if where_frag:
+      count_sql += f' WHERE {where_frag}'
+    count_row = con.execute(count_sql, where_params).fetchone()
+    total = int(count_row[0]) if count_row else 0
+    return out_cols, rows, total
+  finally:
+    con.close()
 
 
 def _infer_column_types(sample_row: list[Any]) -> list[str]:
@@ -640,19 +805,86 @@ class Database:
       return True
 
   def _drop_materialized_locked(self, query_uuid: str) -> None:
-    """Drop the materialized table for `query_uuid`. No-op if absent.
+    """Drop the materialized table + metadata sidecar for `query_uuid`.
 
         Caller must hold `self._lock`. Failures are logged at
-        WARNING and swallowed.
+        WARNING and swallowed. Drops both tables together so callers
+        don't have to remember the sidecar — every lifecycle hook
+        (mark_failed, mark_cancelled, soft_delete, expire_terminal_
+        tables, recover_stale_in_progress) goes through this helper.
         """
-    try:
-      self._conn.execute(f'DROP TABLE IF EXISTS {safe_table_id(query_uuid)}')
-    except duckdb.Error as e:
-      log.warning(
-          'failed to drop materialized table for %s: %s',
-          query_uuid,
-          e,
-      )
+    for tbl in (safe_table_id(query_uuid), safe_meta_table_id(query_uuid)):
+      try:
+        self._conn.execute(f'DROP TABLE IF EXISTS {tbl}')
+      except duckdb.Error as e:
+        log.warning(
+            'failed to drop %s for %s: %s',
+            tbl,
+            query_uuid,
+            e,
+        )
+
+  def create_metadata_sidecar(
+      self,
+      query_uuid: str,
+      column_types: list[tuple[str, str]],
+      rows: list[tuple[Any, ...]],
+  ) -> None:
+    """Populate `bigtrace_<uuid>_meta` from `(trace_id, *meta_values)` rows.
+
+        Called at submit time when the client opted into
+        `trace_metadata_columns` on /execute_*. `column_types` is
+        `[("trace_id", "VARCHAR"), ("file_name", "VARCHAR"), ...]`
+        in projection order (trace_id is always first; the rest are
+        the columns from /traces_schema the client picked). `rows`
+        is one tuple per trace.
+
+        The table is created with NO PRIMARY KEY constraint — a
+        UNIQUE index on trace_id is sufficient for join correctness
+        and avoids DuckDB's constraint-validation overhead during
+        the bulk insert. (We control inserts; collisions never
+        happen because we feed the entries straight from
+        enumerate_traces, which dedupes by basename.)
+
+        No-op when `rows` is empty (no traces match the filter) —
+        the sidecar table just doesn't exist, and fetch_paginated's
+        column-resolution code treats absent sidecar columns as
+        unavailable.
+        """
+    if not rows:
+      return
+    tbl = safe_meta_table_id(query_uuid)
+    col_decls = ', '.join(f'"{n}" {t}' for n, t in column_types)
+    col_names = [n for n, _ in column_types]
+    with self._lock:
+      # Drop-and-recreate is simpler than CREATE IF NOT EXISTS +
+      # TRUNCATE; the sidecar is per-uuid and only written once at
+      # submit, so there's no concurrency to worry about.
+      self._conn.execute(f'DROP TABLE IF EXISTS {tbl}')
+      self._conn.execute(f'CREATE TABLE {tbl} ({col_decls})')
+      cols_data = list(zip(*rows))
+      arr = pa.table(
+          {col_names[i]: list(cols_data[i]) for i in range(len(col_names))})
+      self._conn.from_arrow(arr).insert_into(tbl)
+
+  def _sidecar_columns_locked(self, query_uuid: str) -> list[str]:
+    """Return the metadata sidecar's columns, excluding trace_id.
+
+        Empty list when the sidecar doesn't exist (the common case
+        — client didn't opt into trace_metadata_columns) so callers
+        can just `cols ∪ sidecar_cols` without a separate "exists?"
+        branch. Caller must hold `self._lock`.
+        """
+    tbl = safe_meta_table_id(query_uuid)
+    rows = self._conn.execute(
+        """
+            SELECT column_name FROM information_schema.columns
+             WHERE table_name = ?
+             ORDER BY ordinal_position
+            """,
+        [tbl],
+    ).fetchall()
+    return [r[0] for r in rows if r[0] != 'trace_id']
 
   # ------------------------------------------------------------------
   # query_executions: reads
@@ -863,8 +1095,10 @@ class Database:
       offset: int,
       order_by: str = '',
       filter_str: str = '',
-  ) -> tuple[list[str], list[list[Any]], int]:
-    """Return (column_names, rows[offset:offset+limit], total_filtered).
+      projected_columns: Optional[list[str]] = None,
+  ) -> tuple[list[str], list[list[Any]], int, list[str]]:
+    """Return (column_names, rows[offset:offset+limit], total_filtered,
+        available_columns).
 
         Caller is responsible for the precondition checks (entry
         exists, materialized=true, etc.) — this method only reads
@@ -903,8 +1137,9 @@ class Database:
     parsed_order = parse_order_by(order_by)
     parsed_filter = parse_filter(filter_str)
     tbl = safe_table_id(query_uuid)
+    meta_tbl = safe_meta_table_id(query_uuid)
     with self._lock:
-      # Resolve the table's columns up-front. Empty result =
+      # Resolve the result table's columns up-front. Empty result =
       # table doesn't exist — surface that as a CatalogException
       # rather than a misleading "unknown column" from the
       # order_by/filter validators below.
@@ -912,13 +1147,22 @@ class Database:
           """
                 SELECT column_name FROM information_schema.columns
                  WHERE table_name = ?
+                 ORDER BY ordinal_position
                 """,
           [tbl],
       ).fetchall()
       if not cols_res:
         raise duckdb.CatalogException(
             f'materialized table {tbl} does not exist')
-      allowed = {r[0] for r in cols_res}
+      result_cols = [r[0] for r in cols_res]
+      # Sidecar columns (per /traces_schema, excluding trace_id) —
+      # empty when the client didn't opt into trace_metadata_columns.
+      sidecar_cols = self._sidecar_columns_locked(query_uuid)
+      # Available = union of both tables' columns. trace_id appears
+      # exactly once (it's in result_cols). Order is result_cols
+      # first, sidecar_cols after — same as the JOIN's column order.
+      available = result_cols + sidecar_cols
+      allowed = set(available)
       if parsed_order:
         for field, _ in parsed_order:
           if field not in allowed:
@@ -928,27 +1172,84 @@ class Database:
       else:
         order_clause = ''
       where_frag, where_params = compile_where(parsed_filter, allowed)
-      # Page fetch: SELECT * [WHERE] [ORDER BY] LIMIT ? OFFSET ?
-      page_parts = [f'SELECT * FROM {tbl}']
+
+      # Validate the projection against the union, then build the
+      # SELECT list. None / [] keeps the legacy "everything" shape
+      # (every result column, no sidecar). Explicit list projects
+      # exactly the named columns in the given order — same
+      # semantics as /traces?columns=.
+      sidecar_referenced = False
+      if projected_columns is None:
+        out_cols = list(result_cols)
+        select_clause = '*'
+      else:
+        if not isinstance(projected_columns, list):
+          raise ValueError('columns must be a list of column names')
+        if not projected_columns:
+          raise ValueError('columns must not be empty')
+        seen: set[str] = set()
+        for c in projected_columns:
+          if not isinstance(c, str) or not c:
+            raise ValueError('columns entries must be non-empty strings')
+          if c not in allowed:
+            raise ValueError(f'unknown column {c!r}; '
+                             f'available: {sorted(allowed)}')
+          if c in seen:
+            raise ValueError(f'duplicate column {c!r} in projection')
+          seen.add(c)
+        out_cols = list(projected_columns)
+        sidecar_referenced = any(c in sidecar_cols for c in out_cols)
+        # Qualify column names to disambiguate when the JOIN is in
+        # play — `result.col` and `meta.col` could otherwise collide
+        # if a future schema lets the user pick a metadata column
+        # that shares a name with a SQL-result column.
+        select_clause = ', '.join(
+            f'"{meta_tbl}"."{c}"' if c in sidecar_cols else f'"{tbl}"."{c}"'
+            for c in out_cols)
+
+      # Detect filter/order_by references to sidecar columns so the
+      # JOIN is always emitted when needed. Cheap O(N).
+      if any(pf.field in sidecar_cols for pf in parsed_filter):
+        sidecar_referenced = True
+      if any(f in sidecar_cols for f, _ in parsed_order):
+        sidecar_referenced = True
+
+      join_clause = ''
+      if sidecar_referenced:
+        join_clause = (f'LEFT JOIN {meta_tbl} '
+                       f'ON {tbl}.trace_id = {meta_tbl}.trace_id')
+
+      page_parts = [f'SELECT {select_clause} FROM {tbl}']
+      if join_clause:
+        page_parts.append(join_clause)
       if where_frag:
-        page_parts.append(f'WHERE {where_frag}')
+        # Qualify filter columns with their source table — same
+        # disambiguation logic as the SELECT list.
+        page_parts.append(
+            f'WHERE {_qualify_predicate(where_frag, tbl, meta_tbl, sidecar_cols)}'
+        )
       if order_clause:
-        page_parts.append(f'ORDER BY {order_clause}')
+        page_parts.append(
+            f'ORDER BY {_qualify_predicate(order_clause, tbl, meta_tbl, sidecar_cols)}'
+        )
       page_parts.append('LIMIT ? OFFSET ?')
       page_sql = ' '.join(page_parts)
       cur = self._conn.execute(page_sql, where_params + [limit, offset])
       cols = [d[0] for d in cur.description]
       rows = cur.fetchall()
-      # Total count under the same lock: SELECT COUNT(*) [WHERE].
-      # Sharing the lock keeps the count consistent with the rows
-      # we just returned — without it, a TTL sweep between two
-      # independent calls could yield rows-but-no-count or vice versa.
-      count_sql = f'SELECT COUNT(*) FROM {tbl}'
+      # Total count under the same lock + same JOIN/WHERE so the
+      # number is consistent with the rows we just returned.
+      count_parts = [f'SELECT COUNT(*) FROM {tbl}']
+      if join_clause:
+        count_parts.append(join_clause)
       if where_frag:
-        count_sql += f' WHERE {where_frag}'
+        count_parts.append(
+            f'WHERE {_qualify_predicate(where_frag, tbl, meta_tbl, sidecar_cols)}'
+        )
+      count_sql = ' '.join(count_parts)
       count_row = self._conn.execute(count_sql, where_params).fetchone()
       total_filtered = int(count_row[0]) if count_row else 0
-    return cols, [list(r) for r in rows], total_filtered
+    return cols, [list(r) for r in rows], total_filtered, available
 
   # ------------------------------------------------------------------
   # Startup recovery + TTL sweep

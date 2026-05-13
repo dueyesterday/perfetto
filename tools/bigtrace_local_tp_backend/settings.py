@@ -13,8 +13,9 @@ client can speak to both backends without modification.
 
 The traces directory is supplied by the client on every request via the
 `trace_directory` setting (set in the BigTrace UI Settings page). The
-server has no startup-time fallback. `trace_filter` (regex over
-filenames) and `trace_limit` are also honored by the executor.
+server has no startup-time fallback. `trace_limit` caps the number of
+traces processed per query (applied AFTER the top-level structured
+`trace_filter` field — see server._resolve_traces_for).
 
 NOTE: `trace_directory` exposes an arbitrary filesystem path through an
 HTTP setting, which is UNSAFE in any multi-tenant deployment. This
@@ -25,24 +26,6 @@ never be ported verbatim into a real BigTrace backend.
 from typing import Any
 
 EXECUTION_SETTINGS: list[dict[str, Any]] = [
-    {
-        # Regex over filenames in the chosen `trace_directory`.
-        # query_executor.list_matching_traces narrows the candidate
-        # set with this before fanning out.
-        'id':
-            'trace_filter',
-        'name':
-            'Trace Filter',
-        'description':
-            'Filter traces by regex pattern (matched against filename)',
-        'disabled':
-            False,
-        'category':
-            'TRACE_ADDRESS',
-        'plainString': {
-            'defaultValue': '.*'
-        },
-    },
     {
         # On-disk directory the backend reads trace files from. Picked
         # by the user in the BigTrace UI; sent verbatim on every
@@ -60,14 +43,15 @@ EXECUTION_SETTINGS: list[dict[str, Any]] = [
     },
     {
         # Caps the number of trace files processed per query, applied AFTER
-        # `trace_filter` narrows the candidates. With 200 matching traces
-        # and trace_limit=20, only the first 20 (alphabetical order from
-        # `list_matching_traces`) are scheduled. 0 disables the cap.
+        # the structured top-level `trace_filter` field narrows the
+        # candidates. With 200 matching traces and trace_limit=20, only
+        # the first 20 (alphabetical by file_path) are scheduled. 0
+        # disables the cap.
         'id': 'trace_limit',
         'name': 'Trace Limit',
         'description':
-            ('Maximum number of traces to process. Applied after Trace '
-             'Filter; ignored if 0.'),
+            ('Maximum number of traces to process. Applied after the '
+             'trace grid filter; ignored if 0.'),
         'disabled': False,
         'category': 'TRACE_ADDRESS',
         'number': {
@@ -102,16 +86,6 @@ def _first_setting_value(
       if values and isinstance(values, list) and values[0]:
         return values[0]
   return None
-
-
-def trace_filter_regex(settings: list[dict[str, Any]]) -> str:
-  """Pull the `trace_filter` regex out of a settings request body.
-
-    Defaults to '.*' (match everything) if not supplied or if the value
-    is empty.
-    """
-  v = _first_setting_value(settings, 'trace_filter')
-  return str(v) if v is not None else '.*'
 
 
 def trace_limit(settings: list[dict[str, Any]]) -> int:

@@ -7,7 +7,7 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 """Unit tests for the pure helpers in query_executor.py.
 
-`_trace_id_for` and `list_matching_traces` are filesystem-bound but
+`_trace_id_for` and `enumerate_traces` are filesystem-bound but
 deterministic — covered here at the function level so failures
 localize to the line of intent. The threaded `_process_one_trace`
 worker is exercised end-to-end by smoke_local.py against a real
@@ -20,14 +20,16 @@ Run:
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import unittest
 
 from query_executor import (
     _TRACE_EXTS,
     RunContext,
+    TRACE_LIST_COLUMNS,
     _trace_id_for,
-    list_matching_traces,
+    enumerate_traces,
 )
 
 
@@ -80,16 +82,18 @@ class TraceIdForTest(unittest.TestCase):
     )
 
 
-class ListMatchingTracesTest(unittest.TestCase):
-  """`list_matching_traces` walks a directory once, filters by
-    extension whitelist (or no-extension), then by regex. Returns
-    absolute paths in alphabetical order."""
+class EnumerateTracesTest(unittest.TestCase):
+  """`enumerate_traces` walks a directory once, filters by extension
+    whitelist (or no-extension), and emits one metadata dict per
+    file. Filtering by regex/glob is no longer done here — it lives
+    on the wire as the structured `trace_filter` field handled by
+    db.query_trace_list. Pin the schema, the inclusion rules, and
+    the sort order."""
 
   def setUp(self):
     self._tmp = tempfile.mkdtemp(prefix='query_executor_unittest_')
     # Variety: each recognized extension + one no-extension + one
-    # unrecognized extension + a subdirectory + a regex-targetable
-    # name.
+    # unrecognized extension + a subdirectory.
     for name in (
         'a.pftrace',
         'b.perfetto-trace',
@@ -97,10 +101,10 @@ class ListMatchingTracesTest(unittest.TestCase):
         'd.trace',
         'no_ext',
         'ignore.json',
-        'matching.pftrace',
     ):
       with open(os.path.join(self._tmp, name), 'wb') as f:
-        f.write(b'')
+        # Distinct bytes per file so size_bytes is testable.
+        f.write(b'x' * len(name))
     os.mkdir(os.path.join(self._tmp, 'subdir'))
 
   def tearDown(self):
@@ -108,60 +112,64 @@ class ListMatchingTracesTest(unittest.TestCase):
     shutil.rmtree(self._tmp, ignore_errors=True)
 
   def test_nonexistent_dir_returns_empty(self):
-    self.assertEqual(list_matching_traces('/no/such/dir', '.*'), [])
+    self.assertEqual(enumerate_traces('/no/such/dir'), [])
 
-  def test_returns_absolute_paths_alphabetically(self):
-    out = list_matching_traces(self._tmp, '.*')
-    # Each entry must be absolute.
-    for p in out:
-      self.assertTrue(os.path.isabs(p), p)
-    # Order must be sorted-by-name (deterministic across runs so
-    # trace_limit truncation is reproducible).
-    self.assertEqual(out, sorted(out))
+  def test_returns_dicts_with_phase_one_schema(self):
+    out = enumerate_traces(self._tmp)
+    self.assertGreater(len(out), 0)
+    for entry in out:
+      self.assertEqual(set(entry.keys()), set(TRACE_LIST_COLUMNS))
+
+  def test_paths_are_absolute_and_sorted_by_name(self):
+    out = enumerate_traces(self._tmp)
+    for entry in out:
+      self.assertTrue(os.path.isabs(entry['file_path']), entry['file_path'])
+    names = [e['file_name'] for e in out]
+    # Order matches sorted(listdir) — deterministic so trace_limit
+    # truncation downstream is reproducible across runs.
+    self.assertEqual(names, sorted(names))
 
   def test_includes_each_recognized_extension(self):
-    out = list_matching_traces(self._tmp, '.*')
-    names = {os.path.basename(p) for p in out}
+    out = enumerate_traces(self._tmp)
+    names = {e['file_name'] for e in out}
     for ext_name in ('a.pftrace', 'b.perfetto-trace', 'c.pb', 'd.trace'):
       self.assertIn(ext_name, names)
 
   def test_includes_files_with_no_extension(self):
-    # The "raw proto without extension" fallback path.
-    out = list_matching_traces(self._tmp, '.*')
-    names = {os.path.basename(p) for p in out}
+    out = enumerate_traces(self._tmp)
+    names = {e['file_name'] for e in out}
     self.assertIn('no_ext', names)
 
   def test_excludes_files_with_unrecognized_extension(self):
-    out = list_matching_traces(self._tmp, '.*')
-    names = {os.path.basename(p) for p in out}
+    out = enumerate_traces(self._tmp)
+    names = {e['file_name'] for e in out}
     self.assertNotIn('ignore.json', names)
 
   def test_excludes_subdirectories(self):
-    # subdir would match the regex but isn't a file.
-    out = list_matching_traces(self._tmp, '.*')
-    names = {os.path.basename(p) for p in out}
+    out = enumerate_traces(self._tmp)
+    names = {e['file_name'] for e in out}
     self.assertNotIn('subdir', names)
 
-  def test_regex_narrows_match(self):
-    out = list_matching_traces(self._tmp, '^matching')
-    names = [os.path.basename(p) for p in out]
-    self.assertEqual(names, ['matching.pftrace'])
+  def test_size_bytes_reflects_actual_file_size(self):
+    out = enumerate_traces(self._tmp)
+    by_name = {e['file_name']: e for e in out}
+    self.assertEqual(by_name['a.pftrace']['size_bytes'], len('a.pftrace'))
+    self.assertEqual(by_name['no_ext']['size_bytes'], len('no_ext'))
 
-  def test_invalid_regex_falls_back_to_match_all(self):
-    # An unparseable regex shouldn't take down the run; the parser
-    # logs a warning and falls back to '.*' so the user still sees
-    # their trace list.
-    out = list_matching_traces(self._tmp, '[unterminated')
+  def test_mtime_is_iso_8601_utc_with_ms(self):
+    # Wire shape: YYYY-MM-DDTHH:MM:SS.sssZ. The format is shared
+    # with `_ts_to_iso` in db.py so the UI's date code can treat
+    # both uniformly. A regex pin makes the contract explicit.
+    out = enumerate_traces(self._tmp)
     self.assertGreater(len(out), 0)
-    # All recognized extensions + no_ext should be present.
-    names = {os.path.basename(p) for p in out}
-    self.assertIn('a.pftrace', names)
-    self.assertIn('no_ext', names)
+    pattern = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$')
+    for entry in out:
+      self.assertRegex(entry['mtime'], pattern)
 
   def test_empty_dir_returns_empty(self):
     empty = tempfile.mkdtemp(prefix='query_executor_unittest_empty_')
     try:
-      self.assertEqual(list_matching_traces(empty, '.*'), [])
+      self.assertEqual(enumerate_traces(empty), [])
     finally:
       os.rmdir(empty)
 

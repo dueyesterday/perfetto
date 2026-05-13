@@ -434,5 +434,423 @@ class SafeTableIdTest(unittest.TestCase):
         'bigtrace_e44b41f0_a0ea_4960_8411_4bad75ea97a9')
 
 
+# ---------------------------------------------------------------------------
+# query_trace_list — the in-memory filter/order/page helper used by
+# /list_traces and by execute_*'s top-level trace_filter.
+# ---------------------------------------------------------------------------
+
+
+class QueryTraceListTest(unittest.TestCase):
+  """Drives the in-memory DuckDB pivot. The columns mirror what the
+    /list_traces endpoint surfaces in Phase 1 (file_path, file_name,
+    size_bytes, mtime). The Filter[] semantics are pinned by
+    parse_filter+compile_where tests above; here we verify that
+    query_trace_list wires them up correctly over an in-memory list
+    of dicts and returns the always-strings-friendly tuple."""
+
+  _COLS = [
+      ('file_path', 'VARCHAR'),
+      ('file_name', 'VARCHAR'),
+      ('size_bytes', 'BIGINT'),
+      ('mtime', 'VARCHAR'),
+  ]
+  _ROWS = [
+      {
+          'file_path': '/t/a.pftrace',
+          'file_name': 'a.pftrace',
+          'size_bytes': 100,
+          'mtime': '2026-01-01T00:00:00.000Z',
+      },
+      {
+          'file_path': '/t/b.pftrace',
+          'file_name': 'b.pftrace',
+          'size_bytes': 2000,
+          'mtime': '2026-02-01T00:00:00.000Z',
+      },
+      {
+          'file_path': '/t/c.pftrace',
+          'file_name': 'c.pftrace',
+          'size_bytes': 30000,
+          'mtime': '2026-03-01T00:00:00.000Z',
+      },
+  ]
+
+  def _call(self, parsed_filter=None, parsed_order=None, limit=None, offset=0):
+    from db import query_trace_list
+    return query_trace_list(
+        self._ROWS,
+        self._COLS,
+        parsed_filter or [],
+        parsed_order or [],
+        limit=limit,
+        offset=offset,
+    )
+
+  def test_empty_filter_returns_all_rows(self):
+    cols, rows, total = self._call()
+    self.assertEqual(cols, ['file_path', 'file_name', 'size_bytes', 'mtime'])
+    self.assertEqual(len(rows), 3)
+    self.assertEqual(total, 3)
+
+  def test_glob_filter_on_file_name(self):
+    pf = parse_filter('[{"field":"file_name","op":"glob","value":"a*"}]')
+    cols, rows, total = self._call(parsed_filter=pf)
+    self.assertEqual(total, 1)
+    self.assertEqual(len(rows), 1)
+    # Column order: file_path[0], file_name[1].
+    self.assertEqual(rows[0][1], 'a.pftrace')
+
+  def test_numeric_comparison_against_string_value_coerces(self):
+    # The wire ships every value as a string (the UI's encoder uses
+    # `String(...)`), but DuckDB coerces it to the column's BIGINT
+    # type at bind time. This is the headline property of the
+    # always-strings filter wire.
+    pf = parse_filter('[{"field":"size_bytes","op":">","value":"1000"}]')
+    cols, rows, total = self._call(parsed_filter=pf)
+    self.assertEqual(total, 2)
+    names = sorted(r[1] for r in rows)
+    self.assertEqual(names, ['b.pftrace', 'c.pftrace'])
+
+  def test_in_filter_with_multiple_values(self):
+    pf = parse_filter('[{"field":"file_name","op":"in",'
+                      '"value":["a.pftrace","c.pftrace"]}]')
+    cols, rows, total = self._call(parsed_filter=pf)
+    self.assertEqual(total, 2)
+    self.assertEqual(sorted(r[1] for r in rows), ['a.pftrace', 'c.pftrace'])
+
+  def test_order_by_descending(self):
+    cols, rows, _ = self._call(parsed_order=[('size_bytes', 'DESC')])
+    sizes = [r[2] for r in rows]
+    self.assertEqual(sizes, [30000, 2000, 100])
+
+  def test_order_by_unknown_column_raises_value_error(self):
+    with self.assertRaises(ValueError):
+      self._call(parsed_order=[('no_such_col', 'ASC')])
+
+  def test_filter_on_unknown_column_raises_value_error(self):
+    pf = parse_filter('[{"field":"no_such_col","op":"=","value":"x"}]')
+    with self.assertRaises(ValueError):
+      self._call(parsed_filter=pf)
+
+  def test_pagination_limit_offset(self):
+    # Sort by name ASC and page through.
+    _, page1, total = self._call(
+        parsed_order=[('file_name', 'ASC')], limit=2, offset=0)
+    _, page2, total2 = self._call(
+        parsed_order=[('file_name', 'ASC')], limit=2, offset=2)
+    self.assertEqual(total, 3)
+    self.assertEqual(total2, 3)
+    self.assertEqual([r[1] for r in page1], ['a.pftrace', 'b.pftrace'])
+    self.assertEqual([r[1] for r in page2], ['c.pftrace'])
+
+  def test_limit_none_returns_all_rows(self):
+    # The execute path uses limit=None — it wants every matching
+    # trace, not a page.
+    _, rows, total = self._call(limit=None)
+    self.assertEqual(len(rows), 3)
+    self.assertEqual(total, 3)
+
+  def test_total_filtered_reflects_filter_not_full_table(self):
+    pf = parse_filter('[{"field":"file_name","op":"=","value":"a.pftrace"}]')
+    _, rows, total = self._call(parsed_filter=pf)
+    self.assertEqual(total, 1)
+    # Page limit truncates the rows, but the total is the filter
+    # match count — the UI uses it to size the scrollbar over the
+    # filtered set.
+    _, rows, total = self._call(parsed_filter=pf, limit=0)
+    self.assertEqual(total, 1)
+    self.assertEqual(len(rows), 0)
+
+  def test_empty_traces_yields_empty_result(self):
+    from db import query_trace_list
+    cols, rows, total = query_trace_list([], self._COLS, [], [], limit=10)
+    self.assertEqual(rows, [])
+    self.assertEqual(total, 0)
+    # Column names still come from the schema, not the data.
+    self.assertEqual(cols, ['file_path', 'file_name', 'size_bytes', 'mtime'])
+
+  def test_projection_subset_returns_only_named_columns(self):
+    from db import query_trace_list
+    cols, rows, total = query_trace_list(
+        self._ROWS,
+        self._COLS,
+        [],
+        [],
+        limit=10,
+        projected_columns=['file_name', 'size_bytes'],
+    )
+    self.assertEqual(cols, ['file_name', 'size_bytes'])
+    for r in rows:
+      self.assertEqual(len(r), 2)
+    self.assertEqual(total, 3)
+
+  def test_projection_can_filter_on_unprojected_column(self):
+    # Filter references a column that isn't in the projection — the
+    # underlying table still has every column, so the filter applies.
+    # This is the property the /traces endpoint relies on: the UI
+    # can collapse the visible columns without losing query power.
+    from db import query_trace_list
+    pf = parse_filter('[{"field":"size_bytes","op":">","value":"1000"}]')
+    cols, rows, total = query_trace_list(
+        self._ROWS,
+        self._COLS,
+        pf,
+        [],
+        limit=10,
+        projected_columns=['file_name'],
+    )
+    self.assertEqual(cols, ['file_name'])
+    self.assertEqual(total, 2)
+    self.assertEqual(sorted(r[0] for r in rows), ['b.pftrace', 'c.pftrace'])
+
+  def test_projection_can_order_by_unprojected_column(self):
+    # Same property for order_by — the sort still applies.
+    from db import query_trace_list
+    cols, rows, _ = query_trace_list(
+        self._ROWS,
+        self._COLS,
+        [],
+        [('size_bytes', 'DESC')],
+        limit=10,
+        projected_columns=['file_name'],
+    )
+    self.assertEqual(cols, ['file_name'])
+    self.assertEqual([r[0] for r in rows],
+                     ['c.pftrace', 'b.pftrace', 'a.pftrace'])
+
+  def test_projection_preserves_caller_column_order(self):
+    # The response surface mirrors `projected_columns` exactly — not
+    # the schema's declaration order. Lets the UI reorder columns
+    # without a separate "column_order" field on the wire.
+    from db import query_trace_list
+    cols, _, _ = query_trace_list(
+        self._ROWS,
+        self._COLS,
+        [],
+        [],
+        limit=10,
+        projected_columns=['mtime', 'file_name'],
+    )
+    self.assertEqual(cols, ['mtime', 'file_name'])
+
+  def test_projection_unknown_column_raises(self):
+    from db import query_trace_list
+    with self.assertRaises(ValueError):
+      query_trace_list(
+          self._ROWS,
+          self._COLS,
+          [],
+          [],
+          limit=10,
+          projected_columns=['no_such_col'],
+      )
+
+  def test_projection_empty_list_raises(self):
+    # An explicit empty mask is almost always a client bug — better
+    # to 400 than silently return an empty row shape.
+    from db import query_trace_list
+    with self.assertRaises(ValueError):
+      query_trace_list(
+          self._ROWS, self._COLS, [], [], limit=10, projected_columns=[])
+
+  def test_projection_duplicates_raise(self):
+    from db import query_trace_list
+    with self.assertRaises(ValueError):
+      query_trace_list(
+          self._ROWS,
+          self._COLS,
+          [],
+          [],
+          limit=10,
+          projected_columns=['file_name', 'file_name'],
+      )
+
+  def test_projection_non_list_raises(self):
+    from db import query_trace_list
+    with self.assertRaises(ValueError):
+      query_trace_list(
+          self._ROWS,
+          self._COLS,
+          [],
+          [],
+          limit=10,
+          projected_columns='file_name',  # type: ignore[arg-type]
+      )
+
+
+# ---------------------------------------------------------------------------
+# Metadata sidecar + fetch_paginated projection / JOIN
+# ---------------------------------------------------------------------------
+
+
+class MetadataSidecarTest(unittest.TestCase):
+  """End-to-end through the Database class: create a fake result
+    table, populate the sidecar, then read back via fetch_paginated
+    with various column projections (including filter / order_by /
+    pagination interactions across the JOIN)."""
+
+  def setUp(self):
+    from db import Database
+    import tempfile
+    self._tmp = tempfile.mkdtemp(prefix='db_meta_sidecar_unittest_')
+    import os
+    self._db = Database(os.path.join(self._tmp, 'state.duckdb'))
+    self._uuid = 'abc-1234'
+    # Materialize a tiny result table with 3 rows for 2 traces, then
+    # seed the metadata sidecar so trace_id 'a' has file_name='a.pftrace',
+    # size_bytes=100; and 'b' has file_name='b.pftrace', size_bytes=2000.
+    self._db.insert_qe_in_progress(
+        self._uuid,
+        'SELECT name, dur FROM slice LIMIT 100',
+        query_limit=100,
+        materialized=True,
+    )
+    self._db.merge_trace_atomic(
+        self._uuid,
+        trace_id='a',
+        user_columns=['name', 'dur'],
+        sample_row=['evt', 10],
+        prefixed_rows=[['a', 'evt1', 10], ['a', 'evt2', 20]],
+        global_limit=0,
+    )
+    self._db.merge_trace_atomic(
+        self._uuid,
+        trace_id='b',
+        user_columns=['name', 'dur'],
+        sample_row=['evt', 10],
+        prefixed_rows=[['b', 'evt3', 30]],
+        global_limit=0,
+    )
+    self._db.create_metadata_sidecar(
+        self._uuid,
+        column_types=[
+            ('trace_id', 'VARCHAR'),
+            ('file_name', 'VARCHAR'),
+            ('size_bytes', 'BIGINT'),
+        ],
+        rows=[
+            ('a', 'a.pftrace', 100),
+            ('b', 'b.pftrace', 2000),
+        ],
+    )
+
+  def tearDown(self):
+    self._db.close()
+    import shutil
+    shutil.rmtree(self._tmp, ignore_errors=True)
+
+  def test_no_projection_returns_only_result_columns(self):
+    # The legacy / default path: no `columns` param, no sidecar JOIN.
+    # Response columns = result table columns only.
+    cols, rows, total, available = self._db.fetch_paginated(
+        self._uuid, limit=100, offset=0)
+    self.assertEqual(cols, ['trace_id', 'name', 'dur'])
+    self.assertEqual(total, 3)
+    self.assertEqual(len(rows), 3)
+    # availableColumns lists the union — result + sidecar — so the
+    # UI can offer sidecar cols even when the current projection
+    # doesn't include them.
+    self.assertEqual(
+        set(available), {'trace_id', 'name', 'dur', 'file_name', 'size_bytes'})
+
+  def test_projection_to_result_columns_only(self):
+    cols, rows, _, _ = self._db.fetch_paginated(
+        self._uuid,
+        limit=100,
+        offset=0,
+        projected_columns=['name'],
+    )
+    self.assertEqual(cols, ['name'])
+    for r in rows:
+      self.assertEqual(len(r), 1)
+
+  def test_projection_includes_sidecar_columns(self):
+    # Asking for a sidecar column joins it in.
+    cols, rows, _, _ = self._db.fetch_paginated(
+        self._uuid,
+        limit=100,
+        offset=0,
+        projected_columns=['trace_id', 'name', 'file_name', 'size_bytes'],
+    )
+    self.assertEqual(cols, ['trace_id', 'name', 'file_name', 'size_bytes'])
+    by_trace = {r[0]: r for r in rows}
+    # Two distinct traces, three rows total. Every row in trace `a`
+    # carries file_name='a.pftrace', size_bytes=100.
+    self.assertEqual(by_trace['a'][2], 'a.pftrace')
+    self.assertEqual(by_trace['a'][3], 100)
+    self.assertEqual(by_trace['b'][2], 'b.pftrace')
+    self.assertEqual(by_trace['b'][3], 2000)
+
+  def test_filter_on_sidecar_column_applies_via_join(self):
+    # Filter references a sidecar column; the JOIN must be emitted
+    # even though the projection asks only for result-table columns.
+    cols, rows, total, _ = self._db.fetch_paginated(
+        self._uuid,
+        limit=100,
+        offset=0,
+        filter_str='[{"field":"size_bytes","op":">","value":"500"}]',
+        projected_columns=['name'],
+    )
+    self.assertEqual(cols, ['name'])
+    # Only trace 'b' has size_bytes > 500; that's one row.
+    self.assertEqual(total, 1)
+    self.assertEqual(len(rows), 1)
+    self.assertEqual(rows[0][0], 'evt3')
+
+  def test_order_by_sidecar_column_applies_via_join(self):
+    # ORDER BY references a sidecar column; the JOIN must be in play
+    # so the sort can read it.
+    cols, rows, _, _ = self._db.fetch_paginated(
+        self._uuid,
+        limit=100,
+        offset=0,
+        order_by='size_bytes desc',
+        projected_columns=['name'],
+    )
+    # Trace 'b' rows (size_bytes=2000) come first; trace 'a' rows
+    # (size_bytes=100) follow.
+    names = [r[0] for r in rows]
+    self.assertEqual(names[0], 'evt3')
+
+  def test_unknown_projected_column_raises(self):
+    with self.assertRaises(ValueError):
+      self._db.fetch_paginated(
+          self._uuid,
+          limit=10,
+          offset=0,
+          projected_columns=['no_such_col'],
+      )
+
+  def test_empty_projection_raises(self):
+    with self.assertRaises(ValueError):
+      self._db.fetch_paginated(
+          self._uuid, limit=10, offset=0, projected_columns=[])
+
+  def test_duplicate_projection_raises(self):
+    with self.assertRaises(ValueError):
+      self._db.fetch_paginated(
+          self._uuid,
+          limit=10,
+          offset=0,
+          projected_columns=['name', 'name'],
+      )
+
+  def test_drop_lifecycle_drops_sidecar(self):
+    # _drop_materialized_locked drops both tables. Verify via
+    # information_schema that the sidecar disappears alongside the
+    # result table when we soft-delete the row.
+    import duckdb as _duckdb
+    self._db.mark_success(self._uuid, processed_rows=3)
+    self._db.soft_delete(self._uuid)
+    # Both tables should be gone.
+    self.assertRaises(
+        (_duckdb.CatalogException, ValueError),
+        self._db.fetch_paginated,
+        self._uuid,
+        10,
+        0,
+    )
+
+
 if __name__ == '__main__':
   unittest.main(verbosity=2)

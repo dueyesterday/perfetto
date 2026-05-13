@@ -217,7 +217,12 @@ def main() -> int:
     assert cfg and cfg.get('setting'), f'unexpected: {cfg}'
     ids = sorted(s['id'] for s in cfg['setting'])
     print(f'    settings: {ids}')
-    assert 'trace_filter' in ids
+    # trace_filter is NOT a setting anymore — it was promoted to a
+    # top-level structured field on /execute_* + a /traces body
+    # field. Pin its removal so a future revert breaks here loudly.
+    assert 'trace_filter' not in ids, (
+        f'trace_filter must not be a setting; live wire field instead '
+        f'(see /traces block below). Got: {ids}')
     assert 'trace_directory' in ids, (
         f'trace_directory setting missing from /bigtrace_execution_config: {ids}'
     )
@@ -391,18 +396,9 @@ def main() -> int:
         'POST',
         '/execute_bigtrace_query_async',
         body={
-            'limit':
-                10,
-            'perfetto_sql':
-                'SELECT name, dur FROM slice LIMIT 10',
-            'settings':
-                with_traces([
-                    {
-                        'setting_id': 'trace_filter',
-                        'values': ['.*'],
-                        'category': 'TRACE_ADDRESS'
-                    },
-                ])
+            'limit': 10,
+            'perfetto_sql': 'SELECT name, dur FROM slice LIMIT 10',
+            'settings': with_traces(),
         })
     async_uuid = sub['queryUuid']
     print(f'    uuid={async_uuid}')
@@ -943,12 +939,17 @@ def main() -> int:
           f'{method} {path} expected 404, got {uk_code}: {uk_body}')
     print(f'    all {len(endpoints)} endpoints 404 cleanly on unknown uuid')
 
-    # 16. Trace Filter regex narrows the candidate trace list.
-    # Use a regex that matches only one trace by basename. Verify
-    # totalTraces and processedTraces both reflect the narrowing.
-    # The directory has 14 traces matching `android-*.pftrace`;
-    # filter for "Copy 11" only.
-    print('[16] trace_filter regex narrows the trace list')
+    # 16. Top-level trace_filter narrows the candidate trace list.
+    # The structured field replaces the legacy regex setting. Use a
+    # glob on file_name that matches one specific trace in the seeded
+    # directory. Verify totalTraces reflects the narrowing.
+    print('[16] top-level trace_filter narrows the trace list')
+    # Pick one specific seeded trace by basename so the glob is exact.
+    seeded = sorted(
+        n for n in os.listdir(traces_dir) if n.endswith(_TRACE_EXTS) and
+        os.path.isfile(os.path.join(traces_dir, n)))
+    assert seeded, 'no recognized trace files in seeded dir'
+    target_name = seeded[0]
     _, tfsub = http(
         'POST',
         '/execute_bigtrace_query_async',
@@ -958,13 +959,12 @@ def main() -> int:
             'perfetto_sql':
                 'SELECT name FROM slice LIMIT 1',
             'settings':
-                with_traces([
-                    {
-                        'setting_id': 'trace_filter',
-                        'values': [r'Copy 11\)\.pftrace$'],
-                        'category': 'TRACE_ADDRESS'
-                    },
-                ]),
+                with_traces(),
+            'trace_filter': [{
+                'field': 'file_name',
+                'op': '=',
+                'value': target_name,
+            }],
         },
     )
     tf_uuid = tfsub['queryUuid']
@@ -975,15 +975,11 @@ def main() -> int:
         label='trace_filter query terminal',
     )
     _, tf = http('GET', f'/query_executions/{tf_uuid}')
-    # Race-tolerant: if the smoke is run against a different
-    # traces dir, the regex may match nothing, in which case
-    # totalTraces=0 and SUCCESS. Either way, totalTraces must
-    # be at most 1 (the "Copy 11" trace, if present).
-    assert tf['totalTraces'] <= 1, (
-        f'trace_filter should narrow to <=1, got totalTraces='
+    assert tf['totalTraces'] == 1, (
+        f'trace_filter (=) should narrow to exactly 1, got totalTraces='
         f'{tf["totalTraces"]}')
-    print(f'    trace_filter regex -> totalTraces='
-          f'{tf["totalTraces"]} (<=1)')
+    print(f'    trace_filter file_name={target_name!r} -> totalTraces='
+          f'{tf["totalTraces"]}')
 
     # 17. Timestamp precision + UTC + non-zero duration.
     # Recent regression: DuckDB CURRENT_TIMESTAMP wrote local time
@@ -1062,13 +1058,12 @@ def main() -> int:
             'perfetto_sql':
                 'SELECT 1',
             'settings':
-                with_traces([
-                    {
-                        'setting_id': 'trace_filter',
-                        'values': ['^definitely-no-match-anywhere$'],
-                        'category': 'TRACE_ADDRESS'
-                    },
-                ]),
+                with_traces(),
+            'trace_filter': [{
+                'field': 'file_name',
+                'op': '=',
+                'value': 'definitely-no-match-anywhere.pftrace',
+            }],
         },
     )
     nm_uuid = nmsub['queryUuid']
@@ -1515,6 +1510,500 @@ def main() -> int:
           f'empty in[] all return 400; '
           f'totalFilteredRows={base_total}/{gt_total}/{and_total}; '
           f'{len(op_variants)} other op variants survive the wire')
+
+    # 24. /traces — the trace-selection grid's backing endpoint.
+    # Powers the BigTrace UI's Settings page DataGrid. Same response
+    # shape and always-strings contract as :fetch_results.
+    print('[24] /traces end-to-end')
+    # (a) Happy path: enumerate every recognized trace; columns are
+    # the Phase-1 schema (file_path, file_name, size_bytes, mtime).
+    _, lt_full = http(
+        'POST',
+        '/traces',
+        body={
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'limit': 100,
+            'offset': 0,
+        },
+    )
+    lt_cols = lt_full.get('columnNames') or []
+    lt_rows = lt_full.get('rows') or []
+    assert lt_cols == ['file_path', 'file_name', 'size_bytes',
+                       'mtime'], (f'unexpected /traces columns: {lt_cols}')
+    assert lt_rows, f'/traces returned no rows: {lt_full}'
+    base_count = int(lt_full['totalFilteredRows'])
+    assert base_count >= 1, base_count
+    # Always-strings: every cell is a string or null on the wire.
+    for r in lt_rows:
+      for v in r['values']:
+        assert v is None or isinstance(
+            v, str), (f'/traces row carries non-string value: {r}')
+    # The seeded trace from block [16] must be present in this set.
+    target_name_for_lt = sorted(
+        n for n in os.listdir(traces_dir) if n.endswith(_TRACE_EXTS) and
+        os.path.isfile(os.path.join(traces_dir, n)))[0]
+    seen_names = {r['values'][1] for r in lt_rows}
+    assert target_name_for_lt in seen_names, (
+        f'expected {target_name_for_lt!r} in /traces names, '
+        f'got {seen_names}')
+    print(f'    happy path: {base_count} rows, schema={lt_cols}')
+
+    # (b) Filter narrows the result and totalFilteredRows reflects it.
+    _, lt_one = http(
+        'POST',
+        '/traces',
+        body={
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'filter': [{
+                'field': 'file_name',
+                'op': '=',
+                'value': target_name_for_lt,
+            }],
+            'limit': 100,
+            'offset': 0,
+        },
+    )
+    assert int(lt_one['totalFilteredRows']) == 1, lt_one
+    assert len(lt_one.get('rows') or []) == 1, lt_one
+    assert (lt_one['rows'][0]['values'][1] == target_name_for_lt), lt_one
+    print(f'    filter file_name={target_name_for_lt!r} -> 1 row')
+
+    # (c) order_by + pagination compose correctly.
+    _, lt_asc = http(
+        'POST',
+        '/traces',
+        body={
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'order_by': 'file_name asc',
+            'limit': 1,
+            'offset': 0,
+        },
+    )
+    _, lt_desc = http(
+        'POST',
+        '/traces',
+        body={
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'order_by': 'file_name desc',
+            'limit': 1,
+            'offset': 0,
+        },
+    )
+    asc_first = lt_asc['rows'][0]['values'][1]
+    desc_first = lt_desc['rows'][0]['values'][1]
+    assert asc_first != desc_first or base_count == 1, (
+        f'asc/desc head should differ when >1 trace: '
+        f'asc={asc_first!r} desc={desc_first!r}')
+    # Page through with limit=1.
+    _, lt_page2 = http(
+        'POST',
+        '/traces',
+        body={
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'order_by': 'file_name asc',
+            'limit': 1,
+            'offset': 1,
+        },
+    )
+    page2_names = [r['values'][1] for r in lt_page2['rows']]
+    if base_count >= 2:
+      assert page2_names and page2_names[0] != asc_first, (
+          f'page2 should differ from page1; got {page2_names!r}')
+    print(f'    order_by + pagination: asc[0]={asc_first!r}, '
+          f'desc[0]={desc_first!r}')
+
+    # (d) numeric comparison against a string value (always-strings
+    # wire) — DuckDB binds it to size_bytes' BIGINT and coerces.
+    _, lt_big = http(
+        'POST',
+        '/traces',
+        body={
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'filter': [{
+                'field': 'size_bytes',
+                'op': '>=',
+                'value': '0',  # string, server coerces to BIGINT
+            }],
+            'limit': 100,
+            'offset': 0,
+        },
+    )
+    assert int(lt_big['totalFilteredRows']) == base_count, lt_big
+    print('    numeric >= against string value coerces correctly')
+
+    # (e) 400 paths — must match :fetch_results error contract.
+    bad_cases = [
+        # malformed filter (top-level not an array)
+        (
+            {
+                'settings': [{
+                    'setting_id': 'trace_directory',
+                    'values': [traces_dir],
+                    'category': 'TRACE_ADDRESS',
+                }],
+                'filter': {
+                    'not': 'an array'
+                },
+            },
+            'malformed filter shape',
+        ),
+        # unknown filter column
+        (
+            {
+                'settings': [{
+                    'setting_id': 'trace_directory',
+                    'values': [traces_dir],
+                    'category': 'TRACE_ADDRESS',
+                }],
+                'filter': [{
+                    'field': 'no_such_col',
+                    'op': '=',
+                    'value': 'x',
+                }],
+            },
+            'unknown filter column',
+        ),
+        # malformed order_by
+        (
+            {
+                'settings': [{
+                    'setting_id': 'trace_directory',
+                    'values': [traces_dir],
+                    'category': 'TRACE_ADDRESS',
+                }],
+                'order_by': 'file_name sideways',
+            },
+            'invalid order_by direction',
+        ),
+        # missing trace_directory
+        (
+            {
+                'settings': []
+            },
+            'no trace_directory',
+        ),
+        # non-existent trace_directory
+        (
+            {
+                'settings': [{
+                    'setting_id': 'trace_directory',
+                    'values': ['/does/not/exist'],
+                    'category': 'TRACE_ADDRESS',
+                }],
+            },
+            'non-existent trace_directory',
+        ),
+    ]
+    # Add columns-specific bad cases.
+    bad_cases.extend([
+        (
+            {
+                'settings': [{
+                    'setting_id': 'trace_directory',
+                    'values': [traces_dir],
+                    'category': 'TRACE_ADDRESS',
+                }],
+                'columns': ['no_such_col'],
+            },
+            'unknown projection column',
+        ),
+        (
+            {
+                'settings': [{
+                    'setting_id': 'trace_directory',
+                    'values': [traces_dir],
+                    'category': 'TRACE_ADDRESS',
+                }],
+                'columns': [],
+            },
+            'empty columns projection',
+        ),
+        (
+            {
+                'settings': [{
+                    'setting_id': 'trace_directory',
+                    'values': [traces_dir],
+                    'category': 'TRACE_ADDRESS',
+                }],
+                'columns': 'file_name',  # not a list
+            },
+            'non-list columns',
+        ),
+        (
+            {
+                'settings': [{
+                    'setting_id': 'trace_directory',
+                    'values': [traces_dir],
+                    'category': 'TRACE_ADDRESS',
+                }],
+                'columns': ['file_name', 'file_name'],
+            },
+            'duplicate columns entry',
+        ),
+    ])
+    for body_case, label in bad_cases:
+      code, body_text = http_status_and_body('POST', '/traces', body=body_case)
+      assert code == 400, (f'/traces case {label!r} expected 400, got '
+                           f'{code}: {body_text}')
+    print(f'    {len(bad_cases)} bad-request cases all return 400')
+
+    # (g) columns projection — happy path. The projection narrows the
+    # response shape; filter/order_by can still reference unprojected
+    # columns (because the underlying table sees the full schema).
+    _, lt_proj = http(
+        'POST',
+        '/traces',
+        body={
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'columns': ['file_name', 'size_bytes'],
+            'order_by': 'file_path asc',  # ASC on UNPROJECTED column
+            'filter': [{  # filter on UNPROJECTED column
+                'field': 'mtime',
+                'op': 'is not null',
+            }],
+            'limit': 10,
+            'offset': 0,
+        },
+    )
+    assert lt_proj.get('columnNames') == [
+        'file_name', 'size_bytes'
+    ], (f'projection should narrow columnNames, got {lt_proj!r}')
+    for r in lt_proj.get('rows') or []:
+      assert len(r['values']) == 2, (
+          f'projection row should have exactly 2 cells, got {r}')
+    print('    columns projection: rows narrowed to '
+          f'{lt_proj["columnNames"]}, filter+order on unprojected cols ok')
+
+    # (h) /traces_schema returns the declared schema. Body is unused
+    # by the local backend but pinned on the wire for forward-compat.
+    print('    /traces_schema')
+    _, sch = http('POST', '/traces_schema', body={'settings': []})
+    schema_cols = sch.get('columns') or []
+    assert isinstance(schema_cols, list) and len(schema_cols) >= 1, (
+        f'/traces_schema returned no columns: {sch!r}')
+    schema_names = {c['name'] for c in schema_cols}
+    assert schema_names == {'file_path', 'file_name', 'size_bytes', 'mtime'
+                           }, (f'unexpected schema columns: {schema_names}')
+    for c in schema_cols:
+      for field in ('name', 'type', 'default'):
+        assert field in c, f'schema entry missing {field}: {c}'
+      assert isinstance(c['default'],
+                        bool), (f'schema `default` must be bool: {c}')
+    default_names = {c['name'] for c in schema_cols if c['default']}
+    assert default_names == schema_names, (
+        f'Phase-1 schema: every column should be default=true; got '
+        f'defaults={default_names}, all={schema_names}')
+    print(f'        schema returns {len(schema_cols)} columns, '
+          f'all default=true')
+
+    # (f) trace_filter on execute_* restricts the executed trace set
+    # (mirrors block [16] but at the wire level pinning the
+    # totalTraces accounting end-to-end).
+    _, tf_full = http(
+        'POST',
+        '/execute_bigtrace_query_async',
+        body={
+            'limit': 1,
+            'perfetto_sql': 'SELECT 1',
+            'settings': with_traces(),
+        },
+    )
+    tf_full_uuid = tf_full['queryUuid']
+    wait_until(
+        lambda: http('GET', f'/query_executions/{tf_full_uuid}:status')[1][
+            'status'] in ('SUCCESS', 'FAILED'),
+        timeout=60.0,
+        label='no-filter execute terminal',
+    )
+    _, tf_full_det = http('GET', f'/query_executions/{tf_full_uuid}')
+    _, tf_one = http(
+        'POST',
+        '/execute_bigtrace_query_async',
+        body={
+            'limit':
+                1,
+            'perfetto_sql':
+                'SELECT 1',
+            'settings':
+                with_traces(),
+            'trace_filter': [{
+                'field': 'file_name',
+                'op': '=',
+                'value': target_name_for_lt,
+            }],
+        },
+    )
+    tf_one_uuid = tf_one['queryUuid']
+    wait_until(
+        lambda: http('GET', f'/query_executions/{tf_one_uuid}:status')[1][
+            'status'] in ('SUCCESS', 'FAILED'),
+        timeout=60.0,
+        label='filter execute terminal',
+    )
+    _, tf_one_det = http('GET', f'/query_executions/{tf_one_uuid}')
+    assert tf_one_det['totalTraces'] == 1, (
+        f'trace_filter (=) should narrow to 1, got '
+        f'totalTraces={tf_one_det["totalTraces"]}')
+    assert tf_full_det['totalTraces'] >= tf_one_det['totalTraces'], (
+        f'no-filter totalTraces ({tf_full_det["totalTraces"]}) must be '
+        f'>= filtered ({tf_one_det["totalTraces"]})')
+    print(f'    execute trace_filter: no-filter={tf_full_det["totalTraces"]} '
+          f'-> filtered={tf_one_det["totalTraces"]}')
+
+    # 25. trace_metadata_columns + fetch-time columns projection.
+    # Async path stores trace metadata in a sidecar table per query
+    # (no per-row inflation in the main result table). :fetch_results
+    # accepts `columns=` to project a subset of (result cols ∪
+    # sidecar cols); a JOIN is emitted only when the projection (or
+    # filter/order_by) actually references a sidecar column.
+    print(
+        '[25] async trace_metadata_columns -> sidecar + :fetch_results?columns='
+    )
+    _, tmc_sub = http(
+        'POST',
+        '/execute_bigtrace_query_async',
+        body={
+            'limit': 5,
+            'perfetto_sql': 'SELECT name FROM slice LIMIT 5',
+            'settings': with_traces(),
+            'trace_metadata_columns': ['file_name', 'size_bytes'],
+        },
+    )
+    tmc_uuid = tmc_sub['queryUuid']
+    wait_until(
+        lambda: http('GET', f'/query_executions/{tmc_uuid}:status')[1]['status']
+        in ('SUCCESS', 'FAILED'),
+        timeout=60.0,
+        label='trace_metadata_columns query terminal',
+    )
+    _, tmc_det = http('GET', f'/query_executions/{tmc_uuid}')
+    assert tmc_det['status'] == 'SUCCESS', (
+        f'trace_metadata_columns query failed: {tmc_det!r}')
+
+    # 25a. Default :fetch_results (no `columns=`) returns ONLY the
+    # main-table columns — no metadata is stapled to result rows.
+    _, tmc_page = http(
+        'GET',
+        f'/query_executions/{tmc_uuid}:fetch_results?limit=50&offset=0',
+    )
+    tmc_cols = tmc_page['columnNames']
+    assert tmc_cols == [
+        'trace_id', 'name'
+    ], (f'default projection should be result-only, got {tmc_cols}')
+    # availableColumns surfaces the full union so the UI's picker
+    # can offer the sidecar cols.
+    available = tmc_page.get('availableColumns') or []
+    assert set(available) == {
+        'trace_id', 'name', 'file_name', 'size_bytes'
+    }, (f'availableColumns should list result ∪ sidecar; got {available}')
+    print(f'    default fetch: columns={tmc_cols}, '
+          f'availableColumns={sorted(available)}')
+
+    # 25b. Project a subset that mixes result + sidecar columns —
+    # JOIN happens transparently, response carries the metadata.
+    _, tmc_proj = http(
+        'GET',
+        (f'/query_executions/{tmc_uuid}:fetch_results'
+         f'?limit=50&offset=0&columns=trace_id,name,file_name,size_bytes'),
+    )
+    proj_cols = tmc_proj['columnNames']
+    assert proj_cols == ['trace_id', 'name', 'file_name',
+                         'size_bytes'], (f'projection shape: {proj_cols}')
+    for r in tmc_proj.get('rows', []):
+      v = r['values']
+      assert len(v) == 4, f'projected row shape: {r}'
+      assert isinstance(v[2], str) and v[2], f'file_name empty: {r}'
+      assert isinstance(
+          v[3], str) and v[3].isdigit(), (f'size_bytes not numeric-string: {r}')
+    print(f'    fetch with columns={proj_cols}: '
+          f'{len(tmc_proj.get("rows", []))} rows JOIN sidecar transparently')
+
+    # 25c. Filter on a sidecar column — JOIN must be emitted even
+    # though the projection asks only for main-table columns.
+    _, tmc_filt = http(
+        'GET',
+        (f'/query_executions/{tmc_uuid}:fetch_results'
+         f'?limit=50&offset=0&columns=name'
+         f'&filter={urllib.parse.quote(json.dumps([{"field":"size_bytes","op":">=","value":"0"}]))}'
+        ),
+    )
+    assert tmc_filt['columnNames'] == ['name'], tmc_filt['columnNames']
+    print(f'    fetch filter on sidecar col: '
+          f'{tmc_filt.get("totalFilteredRows")} matching rows')
+
+    # 25d. Unknown projected column → 400 INVALID_ARGUMENT.
+    code_proj, body_proj = http_status_and_body(
+        'GET',
+        (f'/query_executions/{tmc_uuid}:fetch_results'
+         '?limit=10&offset=0&columns=no_such_col'),
+    )
+    assert code_proj == 400, (
+        f'unknown projected column should 400, got {code_proj}: {body_proj}')
+
+    # 25e. Unknown trace_metadata_columns at submit → 400 too.
+    code_tmc, body_tmc = http_status_and_body(
+        'POST',
+        '/execute_bigtrace_query_async',
+        body={
+            'limit': 1,
+            'perfetto_sql': 'SELECT 1',
+            'settings': with_traces(),
+            'trace_metadata_columns': ['no_such_col'],
+        },
+    )
+    assert code_tmc == 400, (
+        f'unknown trace_metadata_columns should 400 at submit, '
+        f'got {code_tmc}: {body_tmc}')
+    print(f'    unknown columns at submit -> {code_tmc}, '
+          f'unknown columns at fetch -> {code_proj}')
+
+    # 25f. Sync execute path: metadata is stitched inline (sync has
+    # no materialized table to JOIN against). Same wire shape as
+    # the previous design — trace_id, *metadata, *sql_cols.
+    _, sync_tmc = http(
+        'POST',
+        '/execute_bigtrace_query',
+        body={
+            'limit': 5,
+            'perfetto_sql': 'SELECT name FROM slice LIMIT 1',
+            'settings': with_traces(),
+            'trace_metadata_columns': ['file_name'],
+        },
+    )
+    assert sync_tmc.get('columnNames') == [
+        'trace_id', 'file_name', 'name'
+    ], (f'sync trace_metadata_columns shape: {sync_tmc.get("columnNames")}')
+    for r in sync_tmc.get('rows') or []:
+      assert len(r['values']) == 3, f'sync row shape: {r}'
+    print('    sync execute stitches metadata inline (no sidecar path)')
 
     print('\nALL CHECKS PASSED')
   except AssertionError as e:

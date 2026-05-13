@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sys
@@ -47,15 +48,79 @@ from fastapi.middleware.cors import CORSMiddleware
 # is run too.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from db import Database, QESnapshot, utcnow  # noqa: E402
+from db import (  # noqa: E402
+    Database, QESnapshot, parse_filter, parse_order_by, query_trace_list,
+    utcnow,
+)
 from query_executor import (  # noqa: E402
-    RunContext, list_matching_traces, run_query_across_traces,
+    TRACE_LIST_COLUMNS, RunContext, _trace_id_for, enumerate_traces,
+    run_query_across_traces,
 )
 from settings import (  # noqa: E402
-    EXECUTION_SETTINGS, TRACE_METADATA_SETTINGS, trace_directory,
-    trace_filter_regex, trace_limit,
+    EXECUTION_SETTINGS, TRACE_METADATA_SETTINGS, trace_directory, trace_limit,
 )
 from trace_pool import TracePool  # noqa: E402
+
+# Trace-list schema. The endpoint surfaces this through /traces_schema
+# so the UI can render the column-selection menu without baking in any
+# names. Order is the default projection order (used when the client
+# doesn't supply a `columns` field-mask); `default` flags the columns
+# the UI shows on first render. `description` is surfaced as a tooltip.
+#
+# Phase 1 = pure filesystem metadata. A real BigTrace backend with a
+# metadata index would add device_name, android_id, app_version, etc.
+# — extending this list without touching the wire shape.
+_TRACE_LIST_SCHEMA: list[dict[str, Any]] = [
+    {
+        'name': 'file_path',
+        'type': 'VARCHAR',
+        'default': True,
+        'description': 'Absolute path on the backend host.',
+    },
+    {
+        'name': 'file_name',
+        'type': 'VARCHAR',
+        'default': True,
+        'description': 'Trace basename (with extension).',
+    },
+    {
+        'name': 'size_bytes',
+        'type': 'BIGINT',
+        'default': True,
+        'description': 'File size in bytes.',
+    },
+    {
+        'name': 'mtime',
+        'type': 'VARCHAR',
+        'default': True,
+        'description': 'Last modification time (ISO-8601 UTC).',
+    },
+]
+
+# DuckDB column types derived from _TRACE_LIST_SCHEMA. The /traces and
+# execute_* (trace_filter) paths build an in-memory DuckDB table from
+# these; query_trace_list uses them both as the table schema and the
+# default projection. Pinning the equality to TRACE_LIST_COLUMNS so a
+# future schema edit doesn't drift between server and executor.
+_TRACE_LIST_COLUMN_TYPES: list[tuple[str, str]] = [
+    (c['name'], c['type']) for c in _TRACE_LIST_SCHEMA
+]
+assert tuple(c for c, _ in _TRACE_LIST_COLUMN_TYPES) == TRACE_LIST_COLUMNS
+
+
+def _trace_list_column_types_for(names: list[str],) -> list[tuple[str, str]]:
+  """Project `_TRACE_LIST_COLUMN_TYPES` to a subset of column names.
+
+    Used when building the metadata sidecar table — the client picked
+    `names` out of the full schema via `trace_metadata_columns`, and
+    the DDL needs exactly those columns in that order. Raises a
+    KeyError on unknown names; the caller (server.py) has already
+    validated against the schema so a missing name is a programmer
+    error, not user input.
+    """
+  type_by_name = {c['name']: c['type'] for c in _TRACE_LIST_SCHEMA}
+  return [(n, type_by_name[n]) for n in names]
+
 
 log = logging.getLogger('bigtrace_local')
 
@@ -349,21 +414,135 @@ def _resolve_trace_dir(settings: list[dict[str, Any]]) -> str:
   return path
 
 
-def _resolve_traces_for(settings: list[dict[str, Any]]) -> list[str]:
-  """Build the list of trace paths to fan out to.
+def _resolve_traces_for(
+    settings: list[dict[str, Any]],
+    trace_filter: Any,
+) -> list[dict[str, Any]]:
+  """Build the list of trace entries to fan out to.
 
-    Pipeline: list everything in `trace_directory`, narrow by
-    `trace_filter` regex, then truncate to `trace_limit` if > 0.
-    Order from `list_matching_traces` is alphabetical so the truncation
-    is deterministic across runs (same files end up in the cap).
+    Pipeline: enumerate metadata for every recognized file in
+    `trace_directory`, apply the structured `trace_filter` (the
+    `Filter[]` JSON the BigTrace UI's Settings page collects from
+    the trace grid), then truncate to `trace_limit` if > 0. The
+    intermediate ordering is `file_path` ASC so the cap is
+    deterministic across runs (same files end up selected).
+
+    Returns the FULL entries (one dict per trace with every column
+    from `enumerate_traces`), not just paths. The execute path needs
+    the entries when the client opts into `trace_metadata_columns`:
+    each metadata value lives on its source entry and is stitched
+    into the result row by the executor. Callers that only want the
+    paths extract them with `[e['file_path'] for e in entries]`.
+
+    `trace_filter` is whatever came off the wire — expected to be a
+    JSON list-of-dicts; missing / None is treated as "no filter".
+    Same shape and parser as `:fetch_results?filter=` so the wire
+    contract is unified across read paths.
+
+    Raises HTTPException(400) on a malformed filter / unknown column
+    so the user gets the same 400 INVALID_ARGUMENT shape they'd see
+    from `:fetch_results`.
     """
-  pattern = trace_filter_regex(settings)
   traces_dir = _resolve_trace_dir(settings)
-  traces = list_matching_traces(traces_dir, pattern)
+  traces = enumerate_traces(traces_dir)
+  parsed_filter = _parse_trace_filter_or_400(trace_filter)
+  try:
+    cols, rows, _total = query_trace_list(
+        traces,
+        _TRACE_LIST_COLUMN_TYPES,
+        parsed_filter,
+        parsed_order=[('file_path', 'ASC')],
+        limit=None,
+    )
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
+  except duckdb.ConversionException as e:
+    raise HTTPException(
+        status_code=400, detail=f'trace_filter value type mismatch: {e}')
+  # Reassemble dicts from cols + rows. We can't rely on the original
+  # `traces` list order here because the filter+order_by may have
+  # reshuffled — taking the values straight off the SQL result is
+  # the authoritative read.
+  entries: list[dict[str, Any]] = []
+  for r in rows:
+    entries.append({c: v for c, v in zip(cols, r)})
   cap = trace_limit(settings)
-  if cap > 0 and len(traces) > cap:
-    traces = traces[:cap]
-  return traces
+  if cap > 0 and len(entries) > cap:
+    entries = entries[:cap]
+  return entries
+
+
+def _validate_trace_metadata_columns_or_400(
+    trace_metadata_columns: Any,) -> list[str]:
+  """Validate the top-level `trace_metadata_columns` request field.
+
+    Accepts: None / missing → empty list (no extra metadata stapled
+    onto query results). A JSON list of column-name strings → those
+    columns are appended to every result row (right after trace_id).
+
+    400 on: non-list / non-string entries / unknown column names /
+    duplicates. Same error contract as the `/traces?columns=` path
+    so clients can surface the detail uniformly.
+    """
+  if trace_metadata_columns is None:
+    return []
+  if not isinstance(trace_metadata_columns, list):
+    raise HTTPException(
+        status_code=400,
+        detail='trace_metadata_columns must be an array of column names',
+    )
+  allowed = {c['name'] for c in _TRACE_LIST_SCHEMA}
+  seen: set[str] = set()
+  out: list[str] = []
+  for c in trace_metadata_columns:
+    if not isinstance(c, str) or not c:
+      raise HTTPException(
+          status_code=400,
+          detail='trace_metadata_columns entries must be non-empty strings',
+      )
+    if c not in allowed:
+      raise HTTPException(
+          status_code=400,
+          detail=(f"unknown trace metadata column {c!r}; "
+                  f'available: {sorted(allowed)}'),
+      )
+    if c in seen:
+      raise HTTPException(
+          status_code=400,
+          detail=f"duplicate trace metadata column {c!r}",
+      )
+    seen.add(c)
+    out.append(c)
+  return out
+
+
+def _parse_trace_filter_or_400(trace_filter: Any) -> list:
+  """Coerce the raw `trace_filter` body field to `list[ParsedFilter]`.
+
+    Accepts: None / missing → no filter. A JSON-decoded list (the
+    common case — clients PUT the structured array directly into the
+    request body). A JSON string (legacy / hand-rolled clients) is
+    re-parsed for convenience.
+
+    Anything else (a dict, a number, ...) is a 400. `parse_filter`
+    surfaces its own ValueErrors as the detail.
+    """
+  if trace_filter is None:
+    return parse_filter('')
+  if isinstance(trace_filter, list):
+    serialized = json.dumps(trace_filter)
+  elif isinstance(trace_filter, str):
+    serialized = trace_filter
+  else:
+    raise HTTPException(
+        status_code=400,
+        detail=f'trace_filter must be a JSON array of filter entries, '
+        f'got {type(trace_filter).__name__}',
+    )
+  try:
+    return parse_filter(serialized)
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +555,8 @@ async def _run_async_query(
     perfetto_sql: str,
     limit: int,
     settings: list[dict[str, Any]],
+    trace_filter: Any,
+    trace_metadata_columns: Any,
 ) -> None:
   """Background coroutine: drive the threaded executor for one async run.
 
@@ -409,11 +590,35 @@ async def _run_async_query(
   )
 
   try:
-    traces = _resolve_traces_for(settings)
-    ctx.total_traces = len(traces)
-    db.update_total_traces(query_uuid, len(traces))
+    meta_cols = _validate_trace_metadata_columns_or_400(trace_metadata_columns)
+    entries = _resolve_traces_for(settings, trace_filter)
+    paths = [e['file_path'] for e in entries]
+    # Async path: do NOT stitch metadata into result rows. Instead,
+    # write it once to a sidecar table keyed by trace_id. The
+    # `:fetch_results?columns=` projection picks columns from
+    # (result_table ∪ sidecar_table) and the page SQL JOINs the
+    # sidecar when needed. This keeps the result table from
+    # inflating with per-row metadata duplication — critical when
+    # metadata is wide.
+    ctx.total_traces = len(paths)
+    db.update_total_traces(query_uuid, len(paths))
 
-    if not traces:
+    if meta_cols and entries:
+      meta_column_types = _trace_list_column_types_for(meta_cols)
+      # Build (trace_id, *meta_values) rows. trace_id is derived the
+      # same way the executor derives it from the file path, so the
+      # JOIN matches up.
+      meta_rows = []
+      for e in entries:
+        trace_id = _trace_id_for(e['file_path'])
+        meta_rows.append(tuple([trace_id] + [e.get(c) for c in meta_cols]))
+      db.create_metadata_sidecar(
+          query_uuid,
+          [('trace_id', 'VARCHAR')] + meta_column_types,
+          meta_rows,
+      )
+
+    if not paths:
       # Nothing to do but it's not an error — succeed with zero
       # rows. Note: the materialized table is never created (no
       # worker ran), but tableName remains set on the metadata
@@ -424,7 +629,7 @@ async def _run_async_query(
 
     await run_query_across_traces(
         POOL,
-        traces,
+        paths,
         perfetto_sql,
         limit,
         max_concurrency=CONFIG.max_pool,
@@ -456,19 +661,33 @@ async def _run_async_query(
 
 
 async def _parse_query_body(
-    request: Request,) -> tuple[str, int, list[dict[str, Any]]]:
-  """Pull `(perfetto_sql, limit, settings)` from the request JSON.
+    request: Request,) -> tuple[str, int, list[dict[str, Any]], Any, Any]:
+  """Pull `(perfetto_sql, limit, settings, trace_filter,
+    trace_metadata_columns)` from the request JSON.
 
     Shared by `execute_async` and `execute_sync` so the field names
     and defaults can't drift between the two endpoints. Defaults
-    (`''`, `100`, `[]`) match what the UI sends when the user hasn't
-    overridden a setting.
+    (`''`, `100`, `[]`, `None`, `None`) match what the UI sends when
+    the user hasn't overridden a setting / has no trace-filter
+    active / hasn't opted into extra metadata columns.
+
+    `trace_filter` is a top-level structured field (Filter[] JSON,
+    same shape as `:fetch_results?filter=`). Absence here means
+    "process every trace in the directory" subject to `trace_limit`.
+
+    `trace_metadata_columns` is a top-level array of column names
+    from `/traces_schema`. When set, those values are prepended to
+    every result row (right after `trace_id`) so query results carry
+    per-trace context without the user having to join it in SQL.
+    Absence / [] means "no extra columns".
     """
   body = await request.json()
   return (
       body.get('perfetto_sql', ''),
       body.get('limit', 100),
       body.get('settings', []),
+      body.get('trace_filter'),
+      body.get('trace_metadata_columns'),
   )
 
 
@@ -488,7 +707,8 @@ async def execute_async(request: Request) -> dict[str, Any]:
     the history list still shows the entry — same lifecycle as the
     sync path.
     """
-  perfetto_sql, limit, settings = await _parse_query_body(request)
+  (perfetto_sql, limit, settings, trace_filter,
+   trace_metadata_columns) = await _parse_query_body(request)
   db = _get_db()
 
   new_uuid = str(uuid.uuid4())
@@ -502,12 +722,18 @@ async def execute_async(request: Request) -> dict[str, Any]:
       materialized=True,
   )
 
-  # Validate the trace directory up-front so the user gets a 400 at
-  # submit time rather than having to poll a FAILED status. The
-  # FAILED metadata still lives in DuckDB so the history list shows
-  # it; tableName is cleared (mark_failed handles that).
+  # Validate the trace directory, the trace_filter shape, and the
+  # trace_metadata_columns up-front so the user gets a 400 at submit
+  # time rather than having to poll a FAILED status. The FAILED
+  # metadata still lives in DuckDB so the history list shows it;
+  # tableName is cleared (mark_failed handles that). We only do the
+  # cheap-to-validate parts here — the actual directory walk happens
+  # in the background task so a huge directory doesn't block the
+  # submit response.
   try:
     _resolve_trace_dir(settings)
+    _parse_trace_filter_or_400(trace_filter)
+    _validate_trace_metadata_columns_or_400(trace_metadata_columns)
   except HTTPException as e:
     db.mark_failed(new_uuid, str(e.detail))
     raise
@@ -516,7 +742,8 @@ async def execute_async(request: Request) -> dict[str, Any]:
   # it completes; cancellation is signalled via qe.status + ctx, not
   # task.cancel().
   asyncio.create_task(
-      _run_async_query(new_uuid, perfetto_sql, limit, settings),)
+      _run_async_query(new_uuid, perfetto_sql, limit, settings, trace_filter,
+                       trace_metadata_columns),)
 
   # Top-level `queryUuid` instead of stuffing it into a single-cell
   # tabular response. Consistent with `RawQueryExecution.queryUuid`
@@ -540,7 +767,8 @@ async def execute_sync(request: Request) -> dict[str, Any]:
     `:fetch_results` on a sync UUID returns 404 because tableName is
     NULL.
     """
-  perfetto_sql, limit, settings = await _parse_query_body(request)
+  (perfetto_sql, limit, settings, trace_filter,
+   trace_metadata_columns) = await _parse_query_body(request)
   db = _get_db()
 
   new_uuid = str(uuid.uuid4())
@@ -556,16 +784,19 @@ async def execute_sync(request: Request) -> dict[str, Any]:
       start_time=start_time,
   )
 
-  # Resolve the trace list (validates trace_dir, applies filter +
-  # trace_limit). Mirrors the async path so the same caps apply.
+  # Resolve the trace list (validates trace_dir, applies trace_filter +
+  # trace_limit) and the metadata-columns request. Mirrors the async
+  # path so the same caps + validations apply.
   try:
-    traces = _resolve_traces_for(settings)
+    entries = _resolve_traces_for(settings, trace_filter)
+    meta_cols = _validate_trace_metadata_columns_or_400(trace_metadata_columns)
   except HTTPException as e:
     db.mark_failed(new_uuid, str(e.detail))
     raise
 
-  db.update_total_traces(new_uuid, len(traces))
-  if not traces:
+  paths = [e['file_path'] for e in entries]
+  db.update_total_traces(new_uuid, len(paths))
+  if not paths:
     db.mark_success(new_uuid)
     return {
         'queryUuid': new_uuid,
@@ -579,11 +810,19 @@ async def execute_sync(request: Request) -> dict[str, Any]:
   # run_query_across_traces propagates the cancel to its workers
   # (the worker threads themselves keep going to a clean trace
   # boundary; their results are discarded).
-  ctx = RunContext(global_limit=limit, inline_rows=[])
+  ctx = RunContext(
+      global_limit=limit,
+      inline_rows=[],
+      metadata_columns=meta_cols,
+      metadata_for_trace={
+          e['file_path']: [_value_to_wire(e.get(c)) for c in meta_cols]
+          for e in entries
+      },
+  )
   run_task = asyncio.create_task(
       run_query_across_traces(
           POOL,
-          traces,
+          paths,
           perfetto_sql,
           limit,
           max_concurrency=CONFIG.max_pool,
@@ -666,6 +905,7 @@ async def fetch_results(
     offset: int = 0,
     order_by: str = '',
     filter: str = '',  # noqa: A002  (shadows builtin; FastAPI query name)
+    columns: str = '',
 ) -> dict[str, Any]:
   """Paginated read over the per-query materialized table.
 
@@ -728,13 +968,25 @@ async def fetch_results(
                 '(failed, cancelled with no rows, or TTL-expired)'),
     )
 
+  # `columns=` query param: comma-separated field-mask over the
+  # union of (result table cols ∪ sidecar metadata cols). Empty /
+  # absent means "every result column, no sidecar" — the
+  # back-compatible default. Set to project a subset; the page SQL
+  # then LEFT JOINs the sidecar iff any chosen column lives there.
+  projected = ([c.strip() for c in columns.split(',') if c.strip()]
+               if columns else None)
   try:
-    # `fetch_paginated` returns (cols, rows, total_filtered) under a
-    # single lock acquisition so the count is consistent with the
-    # rows even if a TTL sweep races us. The UI relies on
-    # `totalFilteredRows` always being present.
-    cols, rows, total_filtered = _get_db().fetch_paginated(
-        uuid, limit, offset, order_by, filter_str=filter)
+    # fetch_paginated returns (cols, rows, total_filtered,
+    # available_columns) under a single lock acquisition so all four
+    # numbers reflect the same snapshot even if a TTL sweep races us.
+    cols, rows, total_filtered, available = _get_db().fetch_paginated(
+        uuid,
+        limit,
+        offset,
+        order_by,
+        filter_str=filter,
+        projected_columns=projected,
+    )
   except ValueError as e:
     raise HTTPException(status_code=400, detail=str(e))
   except duckdb.ConversionException as e:
@@ -754,7 +1006,13 @@ async def fetch_results(
         detail=(f'Materialized table for {uuid} not found in DuckDB '
                 '(may have been swept between metadata read and fetch)'),
     )
-  return _rows_response(cols, rows, total_filtered)
+  resp = _rows_response(cols, rows, total_filtered)
+  # availableColumns lets the UI's column picker offer every column
+  # the user could project — including sidecar metadata that isn't in
+  # the current `columns` projection. Plain JSON array (string list)
+  # — every name is a quoted identifier in DuckDB.
+  resp['availableColumns'] = available
+  return resp
 
 
 @app.post('/query_executions/{uuid}:cancel')
@@ -826,6 +1084,122 @@ async def delete_execution(uuid: str) -> Response:
     )
   _get_db().soft_delete(uuid)
   return Response(status_code=200)
+
+
+# ---------------------------------------------------------------------------
+# Endpoints: trace listing
+# ---------------------------------------------------------------------------
+
+
+@app.post('/traces')
+async def traces(request: Request) -> dict[str, Any]:
+  """Paginated metadata for trace files in `trace_directory`.
+
+    Powers the trace grid embedded in the BigTrace UI's Settings
+    page. The grid drives filter/sort/page exactly as if it were
+    paging a materialized query result, and the Settings page ships
+    the active filter to `/execute_*` as the top-level `trace_filter`
+    field — the user's "implicit selection" model (the filter
+    chosen on the grid is the trace set the query runs over).
+
+    Request body:
+      {
+        "settings": [{"setting_id":"trace_directory","values":["..."],...}],
+        "filter":   [/* Filter[] — same JSON as :fetch_results?filter= */],
+        "order_by": "<aip-132 string>",
+        "limit":    N,
+        "offset":   M,
+        "columns":  ["file_name", "size_bytes"]   // optional projection
+      }
+
+    Response: `{columnNames, rows, totalFilteredRows}` — same wire
+    shape and always-strings contract as `:fetch_results`. Default
+    column set (when `columns` is absent): all entries from
+    /traces_schema flagged `default: true`. Otherwise the response
+    projects exactly the named columns in the given order.
+
+    `filter` / `order_by` may reference columns that aren't in the
+    projection — they still apply (because the underlying scan sees
+    every column), they just don't appear in the response.
+
+    Status mapping mirrors `:fetch_results`:
+      - 400 INVALID_ARGUMENT — malformed filter / order_by /
+        unknown filter / order_by / columns entry / value coercion.
+      - 400 INVALID_ARGUMENT — trace_directory missing/unreadable
+        (existing `_resolve_trace_dir` shape).
+    """
+  body = await request.json()
+  settings = body.get('settings', [])
+  raw_filter = body.get('filter')
+  order_by = body.get('order_by', '') or ''
+  limit = int(body.get('limit', 100))
+  offset = int(body.get('offset', 0))
+  projected = body.get('columns')
+
+  traces_dir = _resolve_trace_dir(settings)
+  parsed_filter = _parse_trace_filter_or_400(raw_filter)
+  try:
+    parsed_order = parse_order_by(order_by)
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
+
+  rows = enumerate_traces(traces_dir)
+  try:
+    cols, page, total = query_trace_list(
+        rows,
+        _TRACE_LIST_COLUMN_TYPES,
+        parsed_filter,
+        parsed_order,
+        limit=limit,
+        offset=offset,
+        projected_columns=projected,
+    )
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
+  except duckdb.ConversionException as e:
+    raise HTTPException(
+        status_code=400,
+        detail=f'filter value type mismatch: {e}',
+    )
+  return _rows_response(cols, page, total)
+
+
+@app.post('/traces_schema')
+async def traces_schema(request: Request) -> dict[str, Any]:
+  """Describe the columns the `/traces` endpoint can return.
+
+    The UI calls this once when the Settings page mounts (or when
+    `trace_directory` changes — a backend with a metadata index may
+    surface different columns per directory). The response feeds the
+    grid's SchemaRegistry and its "Add column" menu, so the UI never
+    bakes a column list in.
+
+    Body: `{settings: [...]}` (so a future backend can vary the
+    schema by trace source).
+
+    Response:
+      {
+        "columns": [
+          {"name": "file_path",  "type": "VARCHAR", "default": true,
+           "description": "..."},
+          ...
+        ]
+      }
+
+    `default: true` flags the columns the grid shows on first
+    render; `default: false` columns are addable via the column
+    menu. `type` is informational — the grid renders every value as
+    a string per the always-strings wire contract. `description`
+    surfaces as the column-info tooltip.
+
+    For the local TP backend the schema is static. A real BigTrace
+    backend would derive it from the indexer's catalog, possibly
+    intersecting with the active filters in `settings`.
+    """
+  # Body is read but currently unused — pin the wire shape for
+  # forward-compat with backends that vary the schema by setting.
+  await request.json()
+  return {'columns': _TRACE_LIST_SCHEMA}
 
 
 # ---------------------------------------------------------------------------

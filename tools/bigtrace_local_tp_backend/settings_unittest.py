@@ -7,13 +7,16 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 """Unit tests for the settings extraction in `settings.py`.
 
-The three public functions (`trace_filter_regex`, `trace_limit`,
-`trace_directory`) all delegate to `_first_setting_value`. These
-tests pin:
+The two public functions (`trace_limit`, `trace_directory`) both
+delegate to `_first_setting_value`. These tests pin:
   - the snake_case `setting_id` wire-format (camelCase `settingId`
     must NOT be honored — TODO.md §"Test coverage" item B8);
   - default-value fallbacks when a setting is absent / empty;
   - type coercion edge cases for `trace_limit`.
+
+(`trace_filter` is no longer a setting — it lives as a top-level
+structured field on `/execute_*` and `/list_traces`. See
+server.py:_parse_trace_filter_or_400 + db.parse_filter.)
 
 Run:
     .venv/bin/python -m unittest settings_unittest -v
@@ -28,7 +31,6 @@ from settings import (
     TRACE_METADATA_SETTINGS,
     _first_setting_value,
     trace_directory,
-    trace_filter_regex,
     trace_limit,
 )
 
@@ -115,42 +117,6 @@ class FirstSettingValueTest(unittest.TestCase):
         },
     ]
     self.assertEqual(_first_setting_value(settings, 'foo'), 'first')
-
-
-class TraceFilterRegexTest(unittest.TestCase):
-  """Defaults to '.*' (match everything) when absent or empty."""
-
-  def test_returns_pattern_when_set(self):
-    self.assertEqual(
-        trace_filter_regex([{
-            'setting_id': 'trace_filter',
-            'values': ['^android.*']
-        }]),
-        '^android.*',
-    )
-
-  def test_default_when_absent(self):
-    self.assertEqual(trace_filter_regex([]), '.*')
-
-  def test_default_when_empty_string(self):
-    # Empty string is falsy → treated as absent → default '.*'.
-    self.assertEqual(
-        trace_filter_regex([{
-            'setting_id': 'trace_filter',
-            'values': ['']
-        }]),
-        '.*',
-    )
-
-  def test_camelcase_setting_id_falls_through_to_default(self):
-    # B8 again — concrete extractor side.
-    self.assertEqual(
-        trace_filter_regex([{
-            'settingId': 'trace_filter',
-            'values': ['^android.*']
-        }]),
-        '.*',
-    )
 
 
 class TraceLimitTest(unittest.TestCase):
@@ -250,11 +216,12 @@ class ExecutionSettingsSchemaTest(unittest.TestCase):
     A real backend stores this differently; the local TP backend
     hardcodes it. Pin the structural invariants the UI depends on."""
 
-  def test_includes_three_known_settings(self):
+  def test_includes_two_known_settings(self):
+    # `trace_filter` is deliberately absent — it was promoted to a
+    # top-level structured field on /execute_* + /list_traces, not
+    # a setting. The smoke + ResolveTracesForTest pin that path.
     ids = {s['id'] for s in EXECUTION_SETTINGS}
-    self.assertIn('trace_filter', ids)
-    self.assertIn('trace_directory', ids)
-    self.assertIn('trace_limit', ids)
+    self.assertEqual(ids, {'trace_directory', 'trace_limit'})
 
   def test_trace_directory_has_empty_default(self):
     # No CLI fallback — the client must supply trace_directory on

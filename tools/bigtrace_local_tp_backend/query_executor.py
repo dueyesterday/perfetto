@@ -43,10 +43,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from perfetto.trace_processor import TraceProcessorException
@@ -61,31 +61,65 @@ log = logging.getLogger('bigtrace_local.executor')
 # `.perfetto-trace` wins over `.trace`.
 _TRACE_EXTS: tuple[str, ...] = ('.perfetto-trace', '.pftrace', '.pb', '.trace')
 
+# Column schema for trace-metadata rows on the wire. Mirrors what
+# /list_traces returns and what the top-level `trace_filter` field on
+# /execute_* can reference. Phase 1 is pure filesystem metadata — no
+# per-trace introspection. Order matters: dict-of-list construction in
+# db.query_trace_list relies on key order to build the Arrow table.
+TRACE_LIST_COLUMNS: tuple[str, ...] = (
+    'file_path',
+    'file_name',
+    'size_bytes',
+    'mtime',
+)
 
-def list_matching_traces(traces_dir: str, pattern: str) -> list[str]:
-  """Return absolute paths of trace files in `traces_dir` matching `pattern`.
+
+def _mtime_iso(ts: float) -> str:
+  """Format a POSIX mtime as ISO-8601 UTC with millisecond precision.
+
+    Matches the wire convention used by `db._ts_to_iso` for
+    `query_executions` timestamps so the UI's date-handling code can
+    treat both uniformly. Sub-second precision is preserved so two
+    files created within the same second still sort stably.
+    """
+  dt = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+  return dt.strftime('%Y-%m-%dT%H:%M:%S') + f'.{dt.microsecond // 1000:03d}Z'
+
+
+def enumerate_traces(traces_dir: str) -> list[dict[str, Any]]:
+  """Walk `traces_dir` and emit one metadata dict per trace file.
+
+    Each dict carries the Phase-1 columns from `TRACE_LIST_COLUMNS`.
+    Files are returned in `file_path` ASC order so any downstream
+    truncation (e.g. `trace_limit`) is deterministic across runs.
 
     Recognized extensions: see `_TRACE_EXTS`. A non-recognized
     extension is allowed if the file has no extension at all (some
     users dump raw protos without one).
+
+    A file that disappears between listdir and stat (rare; user
+    deleted it mid-walk) is silently skipped — same behaviour as the
+    previous regex-based path.
     """
   if not os.path.isdir(traces_dir):
     return []
-  try:
-    regex = re.compile(pattern)
-  except re.error as e:
-    log.warning('Invalid trace_filter regex %r: %s', pattern, e)
-    regex = re.compile('.*')
-  out: list[str] = []
+  out: list[dict[str, Any]] = []
   for name in sorted(os.listdir(traces_dir)):
     full = os.path.join(traces_dir, name)
     if not os.path.isfile(full):
       continue
     if not (name.endswith(_TRACE_EXTS) or '.' not in name):
       continue
-    if not regex.search(name):
+    try:
+      st = os.stat(full)
+    except OSError:
       continue
-    out.append(os.path.abspath(full))
+    out.append({
+        'file_path': os.path.abspath(full),
+        'file_name': name,
+        'size_bytes': int(st.st_size),
+        'mtime': _mtime_iso(st.st_mtime),
+    })
   return out
 
 
@@ -140,6 +174,20 @@ class RunContext:
   processed_traces: int = 0
   total_traces: int = 0
   global_limit: int = 0
+  # Trace-metadata columns the client opted into via the top-level
+  # `trace_metadata_columns` field on /execute_*. Names in the order
+  # the response will project them. Values per trace come from
+  # `metadata_for_trace` (keyed by absolute file path; the value list
+  # is in the same order as `metadata_columns`). When the user
+  # doesn't opt in, both are empty and the result-row shape is the
+  # legacy `[trace_id, *sql_cols]`.
+  #
+  # The executor stitches these values into every result row right
+  # after `trace_id` and before the SQL columns, so query results
+  # carry per-trace context without the user having to JOIN it in
+  # SQL.
+  metadata_columns: list[str] = field(default_factory=list)
+  metadata_for_trace: dict[str, list[Any]] = field(default_factory=dict)
 
   def should_stop(self) -> bool:
     """True iff no more rows should land — cap reached or cancelled.
@@ -212,6 +260,16 @@ def _process_one_trace(
     except Exception as e:  # noqa: BLE001
       err_msg = f'{type(e).__name__}: {e}'
 
+  # Look up the per-trace metadata values once, outside the hot loop.
+  # Order matches ctx.metadata_columns. An empty list when the user
+  # didn't opt in — keeps the legacy `[trace_id, *sql_cols]` shape.
+  meta_values: list[Any] = ctx.metadata_for_trace.get(trace_path, [])
+  # Defensive: if the lookup misses (shouldn't happen given the
+  # server pre-populates the dict), fall back to a NULL per requested
+  # column so the row shape stays consistent.
+  if not meta_values and ctx.metadata_columns:
+    meta_values = [None] * len(ctx.metadata_columns)
+
   # Async path: merge_trace_atomic does cancel-check + insert + bumps
   # in one DB call so a CANCELLED query short-circuits before insert.
   if ctx.db is not None and ctx.query_uuid is not None:
@@ -219,14 +277,19 @@ def _process_one_trace(
       ctx.errors.append(f'[{trace_id}] {err_msg}')
       return
     # Build prefixed rows OUTSIDE the merge lock to keep the lock
-    # window microseconds-short.
-    prefixed = [[trace_id] + r for r in local_rows]
+    # window microseconds-short. Schema is
+    # [trace_id, *metadata_columns, *sql_cols]; the merge_trace_atomic
+    # column list is `metadata_columns + sql_cols` (it prepends
+    # trace_id internally).
+    extra_cols = ctx.metadata_columns + cols
+    prefixed = [[trace_id] + meta_values + r for r in local_rows]
     sample_no_prefix: list[Any] = (
-        local_rows[0] if local_rows else [None] * len(cols))
+        list(meta_values) +
+        (local_rows[0] if local_rows else [None] * len(cols)))
     outcome, new_traces, new_rows = ctx.db.merge_trace_atomic(
         ctx.query_uuid,
         trace_id,
-        cols,
+        extra_cols,
         sample_no_prefix,
         prefixed,
         ctx.global_limit,
@@ -245,15 +308,22 @@ def _process_one_trace(
     ctx.row_count = new_rows
     return
 
-  # Sync path: in-memory accumulation under ctx.lock.
-  prefixed = ([[trace_id] + r for r in local_rows] if err_msg is None else [])
+  # Sync path: in-memory accumulation under ctx.lock. Same stitching
+  # as the async path — metadata sits between trace_id and the SQL
+  # columns. The column-mismatch check compares against the SQL
+  # columns alone (ctx.columns minus the trace_id + metadata
+  # prefix), since `cols` here is just what TP returned.
+  prefixed = ([[trace_id] + list(meta_values) + r for r in local_rows]
+              if err_msg is None else [])
+  meta_col_count = len(ctx.metadata_columns)
   with ctx.lock:
     if err_msg is not None:
       ctx.errors.append(f'[{trace_id}] {err_msg}')
     else:
       if not ctx.columns:
-        ctx.columns.extend(['trace_id'] + cols)
-      if cols == ctx.columns[1:]:
+        ctx.columns.extend(['trace_id'] + ctx.metadata_columns + cols)
+      expected_sql_cols = ctx.columns[1 + meta_col_count:]
+      if cols == expected_sql_cols:
         if ctx.global_limit > 0:
           room = ctx.global_limit - ctx.row_count
           keep = prefixed[:room] if room > 0 else []
@@ -267,7 +337,7 @@ def _process_one_trace(
             'column mismatch on %s: got %s, expected %s',
             trace_id,
             cols,
-            ctx.columns[1:],
+            expected_sql_cols,
         )
     ctx.processed_traces += 1
 

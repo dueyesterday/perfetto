@@ -25,6 +25,7 @@ from __future__ import annotations
 import unittest
 
 import asyncio
+import json
 import os
 import shutil
 import tempfile
@@ -50,20 +51,18 @@ from server import (
 
 
 def _settings_with(trace_directory: str = '',
-                   trace_filter: str | None = None,
                    trace_limit: int | None = None) -> list[dict]:
-  """Build a settings list in the on-the-wire shape."""
+  """Build a settings list in the on-the-wire shape.
+
+    Trace selection is no longer a setting — it lives as the
+    top-level `trace_filter` field on /execute_*. Callers that want
+    to exercise the filter pass it directly to _resolve_traces_for.
+    """
   out: list[dict] = []
   if trace_directory:
     out.append({
         'setting_id': 'trace_directory',
         'values': [trace_directory],
-        'category': 'TRACE_ADDRESS',
-    })
-  if trace_filter is not None:
-    out.append({
-        'setting_id': 'trace_filter',
-        'values': [trace_filter],
         'category': 'TRACE_ADDRESS',
     })
   if trace_limit is not None:
@@ -427,9 +426,14 @@ class ResolveTraceDirTest(unittest.TestCase):
 
 
 class ResolveTracesForTest(unittest.TestCase):
-  """`_resolve_traces_for` is the orchestrator: trace_filter →
-    list_matching_traces → trace_limit cap. Each component is
-    individually tested elsewhere; this exercises the wiring."""
+  """`_resolve_traces_for` is the orchestrator: enumerate_traces →
+    structured trace_filter → trace_limit cap. Each component is
+    individually tested elsewhere; this exercises the wiring.
+
+    `trace_filter` is the top-level structured field (Filter[] JSON),
+    not a setting. Passed directly as the second positional arg so
+    these tests pin the wire-level contract that `/execute_*` uses.
+    """
 
   def setUp(self):
     self._tmp = tempfile.mkdtemp(prefix='resolve_traces_unittest_')
@@ -443,37 +447,137 @@ class ResolveTracesForTest(unittest.TestCase):
     shutil.rmtree(self._tmp, ignore_errors=True)
 
   def test_returns_all_recognized_traces_when_no_filter_or_cap(self):
-    out = _resolve_traces_for(_settings_with(self._tmp))
-    names = {os.path.basename(p) for p in out}
+    out = _resolve_traces_for(_settings_with(self._tmp), None)
+    names = {os.path.basename(e['file_path']) for e in out}
     self.assertEqual(names,
                      {'a.pftrace', 'b.pftrace', 'c.pftrace', 'd.pftrace'})
 
   def test_filter_narrows_set(self):
-    out = _resolve_traces_for(_settings_with(self._tmp, trace_filter='^a'))
-    names = [os.path.basename(p) for p in out]
+    out = _resolve_traces_for(
+        _settings_with(self._tmp), [{
+            'field': 'file_name',
+            'op': 'glob',
+            'value': 'a*'
+        }])
+    names = [os.path.basename(e['file_path']) for e in out]
     self.assertEqual(names, ['a.pftrace'])
 
   def test_limit_truncates_to_first_n_alphabetically(self):
     # Order must be alphabetical (so trace_limit cap is reproducible
     # — same files end up in the cap across runs).
-    out = _resolve_traces_for(_settings_with(self._tmp, trace_limit=2))
-    names = [os.path.basename(p) for p in out]
+    out = _resolve_traces_for(_settings_with(self._tmp, trace_limit=2), None)
+    names = [os.path.basename(e['file_path']) for e in out]
     self.assertEqual(names, ['a.pftrace', 'b.pftrace'])
 
   def test_limit_zero_means_uncapped(self):
-    out = _resolve_traces_for(_settings_with(self._tmp, trace_limit=0))
+    out = _resolve_traces_for(_settings_with(self._tmp, trace_limit=0), None)
     self.assertEqual(len(out), 4)
 
   def test_filter_then_limit_compose(self):
     # Filter narrows to {a, b, c}; cap=2 keeps the first 2 alpha.
     out = _resolve_traces_for(
-        _settings_with(self._tmp, trace_filter='^[abc]', trace_limit=2))
-    names = [os.path.basename(p) for p in out]
+        _settings_with(self._tmp, trace_limit=2), [{
+            'field': 'file_name',
+            'op': 'in',
+            'value': ['a.pftrace', 'b.pftrace', 'c.pftrace']
+        }])
+    names = [os.path.basename(e['file_path']) for e in out]
     self.assertEqual(names, ['a.pftrace', 'b.pftrace'])
 
   def test_missing_trace_directory_raises_400(self):
     with self.assertRaises(HTTPException) as ctx:
-      _resolve_traces_for(_settings_with('', trace_filter='.*'))
+      _resolve_traces_for(_settings_with(''), None)
+    self.assertEqual(ctx.exception.status_code, 400)
+
+  def test_malformed_trace_filter_raises_400(self):
+    # Anything that isn't a JSON array (or None / JSON string of an
+    # array) is rejected with 400 INVALID_ARGUMENT, matching the
+    # `:fetch_results?filter=` contract on the read path.
+    with self.assertRaises(HTTPException) as ctx:
+      _resolve_traces_for(_settings_with(self._tmp), {'not': 'an array'})
+    self.assertEqual(ctx.exception.status_code, 400)
+
+  def test_unknown_column_in_trace_filter_raises_400(self):
+    # File metadata schema is fixed (file_path, file_name, size_bytes,
+    # mtime). A filter referencing anything else is a user bug.
+    with self.assertRaises(HTTPException) as ctx:
+      _resolve_traces_for(
+          _settings_with(self._tmp), [{
+              'field': 'no_such_col',
+              'op': '=',
+              'value': 'x'
+          }])
+    self.assertEqual(ctx.exception.status_code, 400)
+
+  def test_trace_filter_accepts_json_string_form(self):
+    # Hand-rolled clients may ship the filter as a JSON-encoded
+    # string; the parser re-decodes it. (The UI uses the structured
+    # list form.)
+    out = _resolve_traces_for(
+        _settings_with(self._tmp),
+        json.dumps([{
+            'field': 'file_name',
+            'op': '=',
+            'value': 'b.pftrace'
+        }]))
+    names = [os.path.basename(e['file_path']) for e in out]
+    self.assertEqual(names, ['b.pftrace'])
+
+  def test_resolve_returns_full_entries_with_metadata(self):
+    # The execute path stitches trace metadata onto query rows; it
+    # needs the full entry shape (file_name + size_bytes + mtime),
+    # not just file_path. Pin the entries-not-paths return contract.
+    out = _resolve_traces_for(_settings_with(self._tmp), None)
+    self.assertGreater(len(out), 0)
+    for entry in out:
+      self.assertEqual(
+          set(entry.keys()),
+          {'file_path', 'file_name', 'size_bytes', 'mtime'},
+          f'entry missing schema fields: {entry}',
+      )
+
+
+class ValidateTraceMetadataColumnsTest(unittest.TestCase):
+  """`_validate_trace_metadata_columns_or_400` is the executor-side
+    field-mask for the top-level `trace_metadata_columns` request
+    body field. Mirrors the /traces?columns= validation contract so
+    clients see one shape across both endpoints."""
+
+  def test_none_returns_empty_list(self):
+    self.assertEqual(
+        server_mod._validate_trace_metadata_columns_or_400(None), [])
+
+  def test_known_columns_pass(self):
+    self.assertEqual(
+        server_mod._validate_trace_metadata_columns_or_400(
+            ['file_name', 'size_bytes']),
+        ['file_name', 'size_bytes'],
+    )
+
+  def test_unknown_column_rejected(self):
+    with self.assertRaises(HTTPException) as ctx:
+      server_mod._validate_trace_metadata_columns_or_400(['no_such_col'])
+    self.assertEqual(ctx.exception.status_code, 400)
+
+  def test_duplicate_rejected(self):
+    with self.assertRaises(HTTPException) as ctx:
+      server_mod._validate_trace_metadata_columns_or_400(
+          ['file_name', 'file_name'])
+    self.assertEqual(ctx.exception.status_code, 400)
+
+  def test_non_list_rejected(self):
+    with self.assertRaises(HTTPException) as ctx:
+      server_mod._validate_trace_metadata_columns_or_400('file_name')
+    self.assertEqual(ctx.exception.status_code, 400)
+
+  def test_non_string_entry_rejected(self):
+    with self.assertRaises(HTTPException) as ctx:
+      server_mod._validate_trace_metadata_columns_or_400(['file_name', 42])
+    self.assertEqual(ctx.exception.status_code, 400)
+
+  def test_empty_string_entry_rejected(self):
+    with self.assertRaises(HTTPException) as ctx:
+      server_mod._validate_trace_metadata_columns_or_400(['file_name', ''])
     self.assertEqual(ctx.exception.status_code, 400)
 
 
@@ -577,12 +681,13 @@ class RunAsyncQueryErrorMessageTest(unittest.TestCase):
         'u1', 'SELECT 1', query_limit=10, materialized=True)
 
     # Simulate validation failure during background execution.
-    def fail(_settings):
+    def fail(_settings, _trace_filter):
       raise HTTPException(
           status_code=400, detail="Trace Directory '/missing' does not exist")
 
     with patch.object(server_mod, '_resolve_traces_for', side_effect=fail):
-      self._run(server_mod._run_async_query('u1', 'SELECT 1', 10, []))
+      self._run(
+          server_mod._run_async_query('u1', 'SELECT 1', 10, [], None, None))
     snap = server_mod.DB.get_qe('u1')
     assert snap is not None
     self.assertEqual(snap.status, 'FAILED')
@@ -595,11 +700,12 @@ class RunAsyncQueryErrorMessageTest(unittest.TestCase):
     server_mod.DB.insert_qe_in_progress(
         'u1', 'SELECT 1', query_limit=10, materialized=True)
 
-    def boom(_settings):
+    def boom(_settings, _trace_filter):
       raise RuntimeError('unexpected')
 
     with patch.object(server_mod, '_resolve_traces_for', side_effect=boom):
-      self._run(server_mod._run_async_query('u1', 'SELECT 1', 10, []))
+      self._run(
+          server_mod._run_async_query('u1', 'SELECT 1', 10, [], None, None))
     snap = server_mod.DB.get_qe('u1')
     assert snap is not None
     self.assertEqual(snap.status, 'FAILED')

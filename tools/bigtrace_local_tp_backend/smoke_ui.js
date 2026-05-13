@@ -227,7 +227,7 @@ function stopBackend() {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
 
-  // ============ PHASE B: settings — Trace Filter ============
+  // ============ PHASE B: settings — Trace Address + grid ============
 
   header('Navigate to settings page');
   await page.evaluate(() => (location.hash = '#!/settings'));
@@ -259,28 +259,67 @@ function stopBackend() {
       await tdInput.click();
       await tdInput.fill(path.resolve(TRACES_DIR));
       console.log(`  set Trace Directory -> ${path.resolve(TRACES_DIR)}`);
+      // Settings cards re-trigger their callbacks on blur — explicit
+      // blur ensures the trace-list grid (below) sees the new value
+      // before our /traces network assertion fires.
+      await tdInput.blur();
     }
   }
   await snap(page, 'trace_directory_card');
 
-  header('Toggle Trace Filter on, type custom regex');
-  const tfLabel = page.locator('text=Trace Filter').first();
-  if ((await tfLabel.count()) === 0) {
-    note('Trace Filter label not found on settings page');
-  } else {
-    const tfCard = tfLabel.locator(
-      'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " pf-settings-card ")][1]',
+  header(
+    'Trace-selection grid loads and lists the seeded files',
+  );
+  // The grid lives in a card titled "Traces" rendered below the
+  // trace_directory + trace_limit cards. Verify (a) the card is
+  // there, (b) /traces was issued and got a non-empty result,
+  // (c) at least one row in the grid contains a recognized seeded
+  // file name.
+  const listTracesCallsBefore = calls.filter((c) =>
+    c.includes('/traces'),
+  ).length;
+  // Give the data source a moment to fetch after the directory
+  // input was filled.
+  await page.waitForTimeout(2000);
+  const listTracesCallsAfter = calls.filter((c) =>
+    c.includes('/traces'),
+  ).length;
+  if (listTracesCallsAfter <= listTracesCallsBefore) {
+    note(
+      `No /traces request fired after setting trace_directory ` +
+        `(before=${listTracesCallsBefore} after=${listTracesCallsAfter})`,
     );
-    const tfInput = tfCard.locator('.pf-text-input__input').first();
-    if ((await tfInput.count()) === 0) {
-      note('No text input inside Trace Filter card');
+  }
+  const tracesLabel = page.locator(
+    '.pf-settings-card__title:has-text("Traces")',
+  );
+  if ((await tracesLabel.count()) === 0) {
+    note('"Traces" card not present on settings page');
+  }
+  // Pick a seeded trace name to assert appears in the grid.
+  const seededNames = fs
+    .readdirSync(path.resolve(TRACES_DIR))
+    .filter((n) =>
+      ['.pftrace', '.perfetto-trace', '.pb', '.trace'].some((e) =>
+        n.endsWith(e),
+      ),
+    );
+  if (seededNames.length === 0) {
+    note('No seeded traces under TRACES_DIR for grid assertion');
+  } else {
+    const want = seededNames[0];
+    // The grid renders cells inside the trace-list root wrapper. Use
+    // the wrapper class we attached to scope the search.
+    const cell = page
+      .locator('.pf-bt-trace-list-grid')
+      .getByText(want, {exact: true});
+    if ((await cell.count()) === 0) {
+      note(`Trace grid does not contain expected file ${JSON.stringify(want)}`);
     } else {
-      await tfInput.click();
-      await tfInput.fill('.*');
-      console.log('  set Trace Filter -> .*');
+      console.log(`  trace grid shows seeded file ${want}`);
     }
   }
-  await snap(page, 'trace_filter_set');
+  await snap(page, 'trace_list_loaded');
 
   // ============ PHASE C: sync query via Mod+Enter (Ephemeral) ============
 

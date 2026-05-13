@@ -457,27 +457,83 @@ Same shapes as `bigtrace_ref_backend`. Read
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/execute_bigtrace_query_async` | Returns `{queryUuid: string}` (top-level). Spawns a background task that runs the SQL across every matching trace; tableName is set immediately. |
-| POST | `/execute_bigtrace_query` | Sync variant. Returns `{queryUuid, columnNames, rows}` — the assembled tabular result inline plus a server-assigned identifier. Logged to history with `materialized=false`. |
+| POST | `/execute_bigtrace_query_async` | Returns `{queryUuid: string}` (top-level). Spawns a background task that runs the SQL across every trace matching `trace_filter`; `tableName` is set immediately. Body accepts top-level `trace_filter: Filter[]` (structured trace-selection filter — same shape as `:fetch_results?filter=`) and `trace_metadata_columns: string[]` (catalog column names from `/traces_schema` to attach to every result row via the per-query metadata sidecar). |
+| POST | `/execute_bigtrace_query` | Sync variant. Returns `{queryUuid, columnNames, rows}` — the assembled tabular result inline plus a server-assigned identifier. Logged to history with `materialized=false`. Same `trace_filter` + `trace_metadata_columns` body fields as the async path; sync stitches metadata inline (no materialized table to JOIN against). |
 | GET | `/query_executions/{uuid}:status` | **Strict progress-only**: `{queryUuid, status, processedTraces, totalTraces, processedRows}`. UI polls this every 3s; static metadata isn't here. |
 | GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata + tableName. 404 if soft-deleted. |
-| GET | `/query_executions/{uuid}:fetch_results` | Paginated `?limit=&offset=` over the materialized result, with optional [AIP-132](https://google.aip.dev/132#ordering) `&order_by=field [asc\|desc][, field [asc\|desc]]*`. Errors follow gRPC/AIP semantics: **404 NOT_FOUND** if missing/soft-deleted or the table is gone in DuckDB; **400 FAILED_PRECONDITION** if the entry exists but isn't fetchable (`materialized=false`, `processed_rows=0`, or `tableName=null` from FAILED/CANCELLED-with-zero/TTL-expired); **400 INVALID_ARGUMENT** on malformed or unknown-column `order_by`. See "Sorting" above. |
+| GET | `/query_executions/{uuid}:fetch_results` | Paginated `?limit=&offset=` over the materialized result, with optional [AIP-132](https://google.aip.dev/132#ordering) `&order_by=field [asc\|desc][, field [asc\|desc]]*`, optional `&filter=` (URL-encoded JSON `Filter[]`), and optional `&columns=` (URL-encoded comma-separated field-mask over `result_table_cols ∪ metadata_sidecar_cols`). The page SQL emits a LEFT JOIN to the sidecar iff the projection / filter / order_by references a sidecar column. Response: `{columnNames, rows, totalFilteredRows, availableColumns}` — `availableColumns` is the full union the client could project. Errors follow gRPC/AIP semantics: **404 NOT_FOUND** if missing/soft-deleted or the table is gone in DuckDB; **400 FAILED_PRECONDITION** if the entry exists but isn't fetchable (`materialized=false`, `processed_rows=0`, or `tableName=null` from FAILED/CANCELLED-with-zero/TTL-expired); **400 INVALID_ARGUMENT** on malformed or unknown-column `order_by` / `filter` / `columns`. See "Sorting" / "Filtering" above. |
 | POST | `/query_executions/{uuid}:cancel` | Atomically transitions to CANCELLED under the DB lock. 200. No row lands after this returns. |
 | GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. |
 | DELETE | `/query_executions/{uuid}` | Soft-delete. 200 on terminal, 409 on IN_PROGRESS, 404 if already deleted/missing. |
+| POST | `/traces` | Paginated trace metadata for the trace source named in `settings`. Body: `{settings, filter?: Filter[], order_by?: string, limit, offset, columns?: string[]}`. Response: `{columnNames, rows, totalFilteredRows, availableColumns?}` — same always-strings wire as `:fetch_results`. `filter` / `order_by` use the same parser as `:fetch_results`. `columns` is an optional field-mask; omitted means "every column the backend flags `default: true` in `/traces_schema`". Powers the trace-selection grid on the BigTrace UI's Settings page. |
+| POST | `/traces_schema` | Declares the columns `/traces` can return. Body: `{settings}` (a backend whose schema depends on the source can vary the response). Response: `{columns: [{name, type, default: boolean, description?}]}`. Local TP returns the static four-column filesystem schema (`file_path`, `file_name`, `size_bytes`, `mtime`); a real BigTrace would extend with indexer-derived per-trace metadata. |
 | POST | `/bigtrace_execution_config` | Static settings schema (see `settings.py`). |
 | POST | `/trace_metadata_settings` | Empty (no indexer). UI hides the section. |
 
-Result rows are tagged with the trace they came from: the first column
-is `trace_id` (basename of the trace file with the extension stripped),
-followed by the user query's columns.
+Result rows on the local TP backend are tagged with the trace they
+came from: the first column is `trace_id` (basename of the trace file
+with the extension stripped), followed by the user query's columns.
+This is a local-TP convention, not a wire requirement — the contract
+just promises that whatever per-row identifier the backend chose is
+the JOIN key into the metadata sidecar (a real BigTrace backend would
+use a permalink instead).
 
 The `settings` array on `/execute_bigtrace_query{,_async}` is applied
-to the run (filter regex, trace directory, trace limit) but not
-persisted. The wire shape has no `receivedSettings` echo — settings
-persistence is a deliberate deferred decision so this backend stays
+to the run (trace directory, trace limit) but not persisted. The wire
+shape has no `receivedSettings` echo — settings persistence is a
+deliberate deferred decision so this backend stays
 multi-instance-correct (any in-process echo would be invisible to
 other instances behind a load balancer).
+
+### Trace selection grid (`/traces` + `/traces_schema`)
+
+The BigTrace UI Settings page embeds a paged DataGrid that calls
+`/traces` for trace metadata and `/traces_schema` for the column
+catalog. The grid's filter chips become the `trace_filter` field on
+the next `/execute_*` call — the "implicit selection" model: the
+filter on the grid IS the trace set the query runs over.
+
+For this backend the schema is the four filesystem columns
+(`file_path`, `file_name`, `size_bytes`, `mtime`); a Phase-2 backend
+would add `device_name`, `android_id`, etc. once a metadata indexer
+exists. The UI doesn't hardcode column names — every choice in the
+shown-columns + columns-to-attach pickers is built from
+`/traces_schema`.
+
+### Trace metadata sidecar + fetch-time projection
+
+When a client opts into `trace_metadata_columns: [...]` on
+`/execute_*`, the server creates a per-query sidecar table
+`bigtrace_<uuid>_meta` keyed by the executor's per-row identifier
+(here, `trace_id`) at submit time and bulk-inserts one row per
+trace. The main `bigtrace_<uuid>` result table stays free of
+metadata — only SQL output + identifier.
+
+At fetch time, `:fetch_results?columns=` projects from the union
+of (result-table cols ∪ sidecar cols); the page SQL emits
+
+```sql
+SELECT <chosen cols> FROM bigtrace_<uuid> result
+LEFT JOIN bigtrace_<uuid>_meta meta ON result.trace_id = meta.trace_id
+WHERE ... ORDER BY ... LIMIT ... OFFSET ...
+```
+
+only when the projection / filter / order_by references a sidecar
+column. Users can tick or untick metadata columns on the query
+results page without re-executing the query; storage scales with
+`N_traces × M_metadata_cols` (small), not `N_result_rows ×
+M_metadata_cols` (potentially huge).
+
+The sidecar shares lifecycle with the main result table: every drop
+hook (`mark_failed`, `mark_cancelled`, `soft_delete`,
+`expire_terminal_tables`, `recover_stale_in_progress`) drops both
+tables together via `_drop_materialized_locked`.
+
+Sync queries don't materialize, so they stitch any
+`trace_metadata_columns` values inline into each result row (between
+`trace_id` and the SQL columns). Same observable wire — `:fetch_results`
+on a sync UUID is 400 FAILED_PRECONDITION anyway, so the projection
+mechanism doesn't apply.
 
 ## Inspecting the DuckDB store
 
