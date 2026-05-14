@@ -135,7 +135,9 @@ export default class MemoryViz implements PerfettoPlugin {
         colorizer: () => KSWAPD_COLOR,
       }),
     });
-    parent.addChildInOrder(new TrackNode({uri, name: 'Kswapd'}));
+    parent.addChildInOrder(
+      new TrackNode({uri, name: 'Kswapd', sortOrder: 101}),
+    );
   }
 
   private async addDirectReclaimTracks(
@@ -147,9 +149,9 @@ export default class MemoryViz implements PerfettoPlugin {
       engine: ctx.engine,
       name: tableName,
       as: `
-        SELECT id, ts, dur, process_name, thread_name
+        SELECT id, ts, dur, name, process_name, thread_name
         FROM thread_slice
-        WHERE name LIKE 'mm_vmscan_direct_reclaim' AND dur > 0
+        WHERE name GLOB 'mm_vmscan_direct_reclaim' AND dur > 0
       `,
     });
 
@@ -163,6 +165,9 @@ export default class MemoryViz implements PerfettoPlugin {
     const breakdowns = new BreakdownTracks({
       trace: ctx,
       trackTitle: 'Direct Reclaim',
+      description:
+        'Synchronous page reclaim in the allocation path. ' +
+        'Indicates kswapd cannot keep up with memory pressure.',
       aggregationType: BreakdownTrackAggType.COUNT,
       aggregation: {
         columns: ['process_name'],
@@ -171,7 +176,7 @@ export default class MemoryViz implements PerfettoPlugin {
         tableName,
       },
       slice: {
-        columns: ['thread_name'],
+        columns: ['name'],
         tsCol: 'ts',
         durCol: 'dur',
         tableName,
@@ -180,7 +185,9 @@ export default class MemoryViz implements PerfettoPlugin {
       sortTracks: true,
     });
 
-    parent.addChildInOrder(await breakdowns.createTracks());
+    const directReclaimNode = await breakdowns.createTracks();
+    directReclaimNode.sortOrder = 102;
+    parent.addChildInOrder(directReclaimNode);
   }
 
   private async addLmkTracks(ctx: Trace, parent: TrackNode): Promise<void> {
@@ -227,6 +234,7 @@ export default class MemoryViz implements PerfettoPlugin {
       uri: lmkUri,
       name: 'LMK',
       isSummary: true,
+      sortOrder: 100,
     });
     parent.addChildInOrder(lmkGroup);
 
