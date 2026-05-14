@@ -17,6 +17,10 @@ import {Trace} from '../../public/trace';
 import {TrackNode} from '../../public/workspace';
 import {CounterTrack} from '../../components/tracks/counter_track';
 import {SliceTrack} from '../../components/tracks/slice_track';
+import {
+  BreakdownTrackAggType,
+  BreakdownTracks,
+} from '../../components/tracks/breakdown_tracks';
 import {uuidv4} from '../../base/uuid';
 import {getTimeSpanOfSelectionOrVisibleWindow} from '../../public/utils';
 import {TimeSpan} from '../../base/time';
@@ -28,7 +32,6 @@ import {makeColorScheme} from '../../components/colorizer';
 import StandardGroupsPlugin from '../dev.perfetto.StandardGroups';
 
 const KSWAPD_COLOR = makeColorScheme(new HSLColor('#2196F3')); // Blue 500
-const DIRECT_RECLAIM_COLOR = makeColorScheme(new HSLColor('#F44336')); // Red 500
 
 export default class MemoryViz implements PerfettoPlugin {
   static readonly id = 'com.android.MemoryViz';
@@ -41,12 +44,12 @@ export default class MemoryViz implements PerfettoPlugin {
 
     await ctx.engine.query(`
       INCLUDE PERFETTO MODULE intervals.overlap;
-      INCLUDE PERFETTO MODULE intervals.intersect;
       INCLUDE PERFETTO MODULE slices.with_context;
       INCLUDE PERFETTO MODULE android.memory.lmk;
     `);
 
-    await this.addKswapdDirectReclaimTrack(ctx, memoryGroup);
+    await this.addKswapdTrack(ctx, memoryGroup);
+    await this.addDirectReclaimTracks(ctx, memoryGroup);
     await this.addLmkTracks(ctx, memoryGroup);
 
     ctx.commands.registerCommand({
@@ -87,61 +90,27 @@ export default class MemoryViz implements PerfettoPlugin {
     });
   }
 
-  private async addKswapdDirectReclaimTrack(
-    ctx: Trace,
-    parent: TrackNode,
-  ): Promise<void> {
-    const tableName = 'memory_viz_kswapd_direct_reclaim';
+  private async addKswapdTrack(ctx: Trace, parent: TrackNode): Promise<void> {
+    const tableName = 'memory_viz_kswapd';
     await createPerfettoTable({
       engine: ctx.engine,
       name: tableName,
       as: `
-        WITH direct_reclaim_merged AS (
-          SELECT m.ts, m.dur
-          FROM interval_merge_overlapping!(
-            (
-              SELECT ts, dur
-              FROM thread_slice
-              WHERE name LIKE 'mm_vmscan_direct_reclaim'
-            ),
-            0
-          ) m
-          WHERE m.dur > 0
-        ),
-        kswapd_slices AS (
-          SELECT ts, dur
-          FROM sched
-          JOIN thread USING (utid)
-          WHERE thread.name GLOB 'kswapd0*' AND dur > 0
-        ),
-        all_intervals AS (
-          SELECT *, row_number() OVER () AS id
-          FROM (
-            SELECT *, 1 AS priority FROM direct_reclaim_merged
-            UNION ALL
-            SELECT *, 0 AS priority FROM kswapd_slices
-          )
-        ),
-        intersected AS (
-          SELECT ii.ts, ii.dur, ii.group_id, ii.id
-          FROM interval_self_intersect!(all_intervals) ii
-          WHERE ii.interval_ends_at_ts = FALSE
-        ),
-        final AS (
-          SELECT
-            ii.ts,
-            ii.dur,
-            CASE WHEN MAX(ai.priority) = 1 THEN 'direct reclaim' ELSE 'kswapd' END AS name
-          FROM intersected ii
-          JOIN all_intervals ai ON ii.id = ai.id
-          GROUP BY ii.group_id
-        )
         SELECT
           row_number() OVER (ORDER BY ts) AS id,
           ts,
           dur,
-          name
-        FROM interval_merge_overlapping_partitioned!(final, (name))
+          'kswapd0' AS name
+        FROM interval_merge_overlapping!(
+          (
+            SELECT ts, dur
+            FROM sched
+            JOIN thread USING (utid)
+            WHERE thread.name GLOB 'kswapd0*' AND dur > 0
+          ),
+          0
+        )
+        WHERE dur > 0
       `,
     });
 
@@ -152,15 +121,10 @@ export default class MemoryViz implements PerfettoPlugin {
       return;
     }
 
-    const uri = `${MemoryViz.id}#kswapdDirectReclaim`;
-    const description =
-      'Merged intervals of kernel memory reclaim. ' +
-      'kswapd0 is the background page reclaim daemon. ' +
-      'Direct reclaim happens synchronously in the allocation path ' +
-      'when kswapd cannot keep up.';
+    const uri = `${MemoryViz.id}#kswapd`;
     ctx.tracks.registerTrack({
       uri,
-      description,
+      description: 'Background page reclaim daemon on-CPU intervals.',
       renderer: SliceTrack.create({
         trace: ctx,
         uri,
@@ -168,13 +132,55 @@ export default class MemoryViz implements PerfettoPlugin {
           src: tableName,
           schema: {id: NUM, ts: LONG, dur: LONG, name: STR},
         }),
-        colorizer: (row) =>
-          row.name === 'direct reclaim' ? DIRECT_RECLAIM_COLOR : KSWAPD_COLOR,
+        colorizer: () => KSWAPD_COLOR,
       }),
     });
-    parent.addChildInOrder(
-      new TrackNode({uri, name: 'Kswapd0 / Direct Reclaim'}),
+    parent.addChildInOrder(new TrackNode({uri, name: 'Kswapd'}));
+  }
+
+  private async addDirectReclaimTracks(
+    ctx: Trace,
+    parent: TrackNode,
+  ): Promise<void> {
+    const tableName = 'memory_viz_direct_reclaim';
+    await createPerfettoTable({
+      engine: ctx.engine,
+      name: tableName,
+      as: `
+        SELECT id, ts, dur, process_name, thread_name
+        FROM thread_slice
+        WHERE name LIKE 'mm_vmscan_direct_reclaim' AND dur > 0
+      `,
+    });
+
+    const rowCount = await ctx.engine.query(
+      `SELECT COUNT(*) AS n FROM ${tableName}`,
     );
+    if (rowCount.firstRow({n: NUM}).n === 0) {
+      return;
+    }
+
+    const breakdowns = new BreakdownTracks({
+      trace: ctx,
+      trackTitle: 'Direct Reclaim',
+      aggregationType: BreakdownTrackAggType.COUNT,
+      aggregation: {
+        columns: ['process_name'],
+        tsCol: 'ts',
+        durCol: 'dur',
+        tableName,
+      },
+      slice: {
+        columns: ['thread_name'],
+        tsCol: 'ts',
+        durCol: 'dur',
+        tableName,
+      },
+      sliceIdColumn: 'id',
+      sortTracks: true,
+    });
+
+    parent.addChildInOrder(await breakdowns.createTracks());
   }
 
   private async addLmkTracks(ctx: Trace, parent: TrackNode): Promise<void> {
@@ -203,7 +209,25 @@ export default class MemoryViz implements PerfettoPlugin {
       return;
     }
 
-    const lmkGroup = new TrackNode({name: 'LMK', isSummary: true});
+    const lmkUri = `${MemoryViz.id}#lmk`;
+    ctx.tracks.registerTrack({
+      uri: lmkUri,
+      description:
+        'Low Memory Killer events. Each instant marks a process kill.',
+      renderer: SliceTrack.create({
+        trace: ctx,
+        uri: lmkUri,
+        dataset: new SourceDataset({
+          src: tableName,
+          schema: {id: NUM, ts: LONG, dur: LONG, name: STR, oom_bucket: STR},
+        }),
+      }),
+    });
+    const lmkGroup = new TrackNode({
+      uri: lmkUri,
+      name: 'LMK',
+      isSummary: true,
+    });
     parent.addChildInOrder(lmkGroup);
 
     for (const it = buckets.iter({oom_bucket: STR}); it.valid(); it.next()) {
@@ -211,7 +235,7 @@ export default class MemoryViz implements PerfettoPlugin {
       const uri = `${MemoryViz.id}#lmk.${bucket}`;
       ctx.tracks.registerTrack({
         uri,
-        description: `Low Memory Killer events for processes in the '${bucket}' OOM adjustment bucket. Each instant marks a process kill to free memory.`,
+        description: `Low Memory Killer events for processes in the '${bucket}' OOM adjustment bucket. Each instant marks a process kill.`,
         renderer: SliceTrack.create({
           trace: ctx,
           uri,
