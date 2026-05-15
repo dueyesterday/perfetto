@@ -118,7 +118,7 @@ interface StoredState {
   readonly activeTabId?: string;
 }
 
-// Survives QueryPage re-mounts so tab layout persists across navigation.
+// Manages editor tabs + localStorage persistence across page reloads.
 export class QueryTabsState {
   tabs: BigTraceEditorTab[] = [];
   activeTabId = '';

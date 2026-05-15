@@ -418,10 +418,6 @@ function renderStatusBox(tab: BigTraceEditorTab): m.Children {
         },
         formatCompact(processedRows),
       ),
-      // "Progress" label sits next to the bar while running — labels the
-      // otherwise-bare bar without needing to reveal the row count.
-      !isTerminal &&
-        m('span.pf-query-page__status-bar-progress-label', 'Progress'),
       renderInlineProgressBar(processedRows, tab.limit, !isTerminal),
     ),
   );

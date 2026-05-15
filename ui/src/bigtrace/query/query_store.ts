@@ -20,11 +20,12 @@ export const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 // UI-display label for a wire status. Backend uses IN_PROGRESS; the UI shows
-// "RUNNING" (shorter, no underscore). Transient UNKNOWN reads as "STARTING".
+// "Running" (shorter, no underscore). Transient UNKNOWN reads as "Starting".
 export function statusDisplayLabel(status: string): string {
-  if (status === 'IN_PROGRESS') return 'RUNNING';
-  if (status === 'UNKNOWN') return 'STARTING';
-  return status.replace(/_/g, ' ');
+  if (status === 'IN_PROGRESS') return 'Running';
+  if (status === 'UNKNOWN') return 'Starting';
+  const s = status.replace(/_/g, ' ');
+  return s.charAt(0) + s.slice(1).toLowerCase();
 }
 
 // Compact integer format (1.2K, 3.4M, 1.5B) for cramped UI spots — status bar,
