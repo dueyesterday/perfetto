@@ -78,15 +78,11 @@ function formatCompactDate(d: Date): string {
   return `${month} ${day}, ${year}, ${h}:${mm} ${m12}`;
 }
 
-// SQL block clamped to ~4 lines with a fade-out mask; click to toggle full
-// height. Used both by the sidebar history row and the delete-confirm modal,
-// so they share the same expand behaviour. The sidebar inherits its frame
-// (background + border + padding) from `.pf-query-history__item pre`; the
-// modal opts into `standalone: true` to add the equivalent frame inline.
-//
-// Expand state is a Mithril instance field (not DOM manipulation) so it
-// survives redraws — e.g. when the full SQL fetch completes and triggers
-// m.redraw(), the block stays expanded instead of snapping shut.
+// SQL block clamped to ~4 lines with a fade-out mask; click to expand.
+// Used by both the sidebar history row and the delete-confirm modal.
+// The sidebar inherits its frame from `.pf-query-history__item pre`; the
+// modal uses `standalone: true` for the `--standalone` CSS class.
+// Expand state is a Mithril instance field so it survives redraws.
 interface ClampedQueryAttrs {
   readonly queryText: string;
   readonly standalone?: boolean;
