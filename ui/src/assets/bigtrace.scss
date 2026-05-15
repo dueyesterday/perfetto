@@ -196,10 +196,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.pf-query-page__status-bar-stat-label {
-  text-transform: uppercase;
-}
-
 .pf-query-page__status-bar-stat--empty {
   opacity: 0.55;
 }
@@ -297,12 +293,44 @@
   font-family: var(--pf-font-monospace, monospace);
   font-size: 11px;
   white-space: pre-wrap;
-  max-height: none;
-  overflow: visible;
 }
 
 .pf-query-history__item pre:hover::after {
   content: none !important;
+}
+
+// Clamped SQL preview: ~4 lines with a fade-out mask; click to expand.
+.pf-query-history__item-query {
+  cursor: pointer;
+  position: relative;
+  max-height: 4.5em;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+
+  &--expanded {
+    // Cap so a 1000-line query doesn't blow out the sidebar layout.
+    max-height: 50vh;
+    overflow: auto;
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+
+  // Standalone frame for the delete-confirm modal (no .pf-query-history__item parent).
+  &--standalone {
+    font-family: var(--pf-font-monospace, monospace);
+    background: var(--pf-color-void);
+    border: solid 1px var(--pf-color-border-secondary);
+    border-radius: 4px;
+    padding: 8px;
+    margin: 0;
+    white-space: pre-wrap;
+  }
+
+  &--empty {
+    font-style: italic;
+    opacity: 0.5;
+  }
 }
 
 // Propagate height down so DataGrid `fillHeight` has a parent to fill

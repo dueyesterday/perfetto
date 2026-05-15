@@ -605,23 +605,6 @@ function renderResultsGrid(
 
   const tableContent: m.Children[] = [];
 
-  // Heuristic — runner doesn't populate `queryResult.statementCount`.
-  const statementCount = queryResult.query
-    .split(';')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0).length;
-  if (statementCount > 1) {
-    tableContent.push(
-      m(Box, [
-        m(
-          Callout,
-          {icon: 'warning', intent: Intent.None},
-          'Only the results from the last statement are displayed.',
-        ),
-      ]),
-    );
-  }
-
   // Sync uses static columns; async fills in once schema arrives.
   let columns = queryResult.columns;
   if (columns.length === 0 && dataSource instanceof BigtraceAsyncDataSource) {
