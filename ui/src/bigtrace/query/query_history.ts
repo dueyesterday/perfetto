@@ -384,9 +384,12 @@ export class QueryHistoryComponent
                         localString,
                       ),
                     m(ClampedQuery, {
-                      queryText,
+                      queryText: entry.perfettoSql || '',
                       standalone: true,
-                      onExpand: makeFullSqlExpander(uuid, queryText),
+                      onExpand: makeFullSqlExpander(
+                        uuid,
+                        entry.perfettoSql || '',
+                      ),
                     }),
                   ]),
                 buttons: [
