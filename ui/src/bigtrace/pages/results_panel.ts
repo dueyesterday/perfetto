@@ -27,7 +27,7 @@ class RunningQuerySpinner implements m.ClassComponent<{startMs: number}> {
   private timer: number | null = null;
 
   oncreate(): void {
-    this.timer = window.setInterval(() => m.redraw(), 100);
+    this.timer = window.setInterval(() => m.redraw(), 1000);
   }
 
   onremove(): void {

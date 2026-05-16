@@ -81,6 +81,8 @@ class ClampedQuery implements m.ClassComponent<ClampedQueryAttrs> {
 }
 
 // UUIDs whose full SQL has already been fetched via the per-uuid endpoint.
+// Capped to avoid unbounded growth over long sessions.
+const FETCHED_SQL_MAX = 500;
 const fetchedFullSql = new Set<string>();
 
 // Returns an onExpand callback that fetches the full SQL on first expand,
@@ -91,6 +93,11 @@ function makeFullSqlExpander(
 ): (() => void) | undefined {
   if (!uuid || fetchedFullSql.has(uuid)) return undefined;
   return () => {
+    if (fetchedFullSql.size >= FETCHED_SQL_MAX) {
+      // Evict oldest entry (Set iteration order = insertion order).
+      const first = fetchedFullSql.values().next().value;
+      if (first !== undefined) fetchedFullSql.delete(first);
+    }
     fetchedFullSql.add(uuid);
     void queryHistoryStorage
       .fetchFullSql(uuid)

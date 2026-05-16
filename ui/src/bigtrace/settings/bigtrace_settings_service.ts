@@ -187,7 +187,9 @@ class BigTraceSettingsService {
       });
 
       if (!response.ok) {
-        throw new Error(`${path} failed: HTTP ${response.status}`);
+        throw new Error(
+          `Backend returned HTTP ${response.status} for settings request.`,
+        );
       }
 
       const text = await response.text();
@@ -195,7 +197,7 @@ class BigTraceSettingsService {
         const data = JSON.parse(text);
         return Array.isArray(data.setting) ? data.setting : [];
       } catch {
-        throw new Error(`Failed to parse ${path} response`);
+        throw new Error('Backend returned an invalid settings response.');
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
