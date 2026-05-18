@@ -109,6 +109,19 @@
   display: none;
 }
 
+// Bounds the page so the SplitPanel chain can scroll; else panes grow to content.
+.pf-bt-query-page {
+  height: 100%;
+  min-height: 0;
+}
+
+// Bound the nested Tabs too, else the whole history scrolls and the tab strip isn't sticky.
+.pf-bt-query-page__history,
+.pf-bt-query-page__history > .pf-tabs {
+  height: 100%;
+  min-height: 0;
+}
+
 .pf-bt-sidebar-title {
   margin: 0;
   display: flex;
@@ -131,7 +144,20 @@
 
 // ---------- Editor tabs & toolbar ----------
 
-.pf-query-page__editor-tabs > .pf-tabs__tabs {
+// Must fill the SplitPanel pane or .cm-editor (height:100%) collapses to one line.
+.pf-bt-query-page__editor-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+
+  .pf-editor {
+    flex: 1;
+    min-height: 3rem;
+  }
+}
+
+.pf-bt-query-page__editor-tabs > .pf-tabs__tabs {
   overflow-x: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--pf-color-border-secondary) transparent;
@@ -145,7 +171,7 @@
   flex: 1;
 }
 
-.pf-query-page__toolbar {
+.pf-bt-query-page__toolbar {
   container-type: inline-size;
 
   // Without nowrap, "Persistent" wraps under its toggle when squeezed.
@@ -154,7 +180,7 @@
   }
 }
 @container (max-width: 520px) {
-  .pf-query-page__hotkeys {
+  .pf-bt-query-page__hotkeys {
     display: none;
   }
 }
