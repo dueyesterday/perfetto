@@ -459,11 +459,11 @@ Same shapes as `bigtrace_ref_backend`. Read
 |---|---|---|
 | POST | `/execute_bigtrace_query_async` | Returns `{queryUuid: string}` (top-level). Spawns a background task that runs the SQL across every trace matching `trace_filter`; `tableName` is set immediately. Body accepts top-level `trace_filter: Filter[]` (structured trace-selection filter — same shape as `:fetch_results?filter=`) and `trace_metadata_columns: string[]` (catalog column names from `/traces_schema` to attach to every result row via the per-query metadata sidecar). |
 | POST | `/execute_bigtrace_query` | Sync variant. Returns `{queryUuid, columnNames, rows}` — the assembled tabular result inline plus a server-assigned identifier. Logged to history with `materialized=false`. Same `trace_filter` + `trace_metadata_columns` body fields as the async path; sync stitches metadata inline (no materialized table to JOIN against). |
-| GET | `/query_executions/{uuid}:status` | **Strict progress-only**: `{queryUuid, status, processedTraces, totalTraces, processedRows}`. UI polls this every 3s; static metadata isn't here. |
-| GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata + tableName. 404 if soft-deleted. |
+| GET | `/query_executions/{uuid}:status` | **Strict progress-only**: exactly `{status, processedTraces, totalTraces, processedRows}` — four fields, no submit-time-immutable metadata. UI polls this every 3s; static metadata (and the per-query snapshot) lives on the full GET. `queryUuid` is the URL key, not echoed in the body. |
+| GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata, `tableName`, and the **submit-time snapshot** (`settings` / `traceFilter` / `traceMetadataColumns`) — see the "Per-query snapshot" section below. 404 if soft-deleted. |
 | GET | `/query_executions/{uuid}:fetch_results` | Paginated `?limit=&offset=` over the materialized result, with optional [AIP-132](https://google.aip.dev/132#ordering) `&order_by=field [asc\|desc][, field [asc\|desc]]*`, optional `&filter=` (URL-encoded JSON `Filter[]`), and optional `&columns=` (URL-encoded comma-separated field-mask over `result_table_cols ∪ metadata_sidecar_cols`). The page SQL emits a LEFT JOIN to the sidecar iff the projection / filter / order_by references a sidecar column. Response: `{columnNames, rows, totalFilteredRows, availableColumns}` — `availableColumns` is the full union the client could project. Errors follow gRPC/AIP semantics: **404 NOT_FOUND** if missing/soft-deleted or the table is gone in DuckDB; **400 FAILED_PRECONDITION** if the entry exists but isn't fetchable (`materialized=false`, `processed_rows=0`, or `tableName=null` from FAILED/CANCELLED-with-zero/TTL-expired); **400 INVALID_ARGUMENT** on malformed or unknown-column `order_by` / `filter` / `columns`. See "Sorting" / "Filtering" above. |
 | POST | `/query_executions/{uuid}:cancel` | Atomically transitions to CANCELLED under the DB lock. 200. No row lands after this returns. |
-| GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. |
+| GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. **Omits** the per-query snapshot fields (`settings` / `traceFilter` / `traceMetadataColumns`) so the history sidebar response stays lean — fetch the per-uuid endpoint to inspect a historical query's snapshot. |
 | DELETE | `/query_executions/{uuid}` | Soft-delete. 200 on terminal, 409 on IN_PROGRESS, 404 if already deleted/missing. |
 | POST | `/traces` | Paginated trace metadata for the trace source named in `settings`. Body: `{settings, filter?: Filter[], order_by?: string, limit, offset, columns?: string[]}`. Response: `{columnNames, rows, totalFilteredRows, availableColumns?}` — same always-strings wire as `:fetch_results`. `filter` / `order_by` use the same parser as `:fetch_results`. `columns` is an optional field-mask; omitted means "every column the backend flags `default: true` in `/traces_schema`". Powers the trace-selection grid on the BigTrace UI's Settings page. |
 | POST | `/traces_schema` | Declares the columns `/traces` can return. Body: `{settings}` (a backend whose schema depends on the source can vary the response). Response: `{columns: [{name, type, default: boolean, description?}]}`. Local TP returns the static four-column filesystem schema (`file_path`, `file_name`, `size_bytes`, `mtime`); a real BigTrace would extend with indexer-derived per-trace metadata. |
@@ -479,11 +479,39 @@ the JOIN key into the metadata sidecar (a real BigTrace backend would
 use a permalink instead).
 
 The `settings` array on `/execute_bigtrace_query{,_async}` is applied
-to the run (trace directory, trace limit) but not persisted. The wire
-shape has no `receivedSettings` echo — settings persistence is a
-deliberate deferred decision so this backend stays
-multi-instance-correct (any in-process echo would be invisible to
-other instances behind a load balancer).
+to the run (trace directory, trace limit) **and** persisted as part of
+the per-query snapshot — see "Per-query snapshot" below.
+
+### Per-query snapshot (`settings` / `traceFilter` / `traceMetadataColumns`)
+
+Three optional top-level fields on `/execute_bigtrace_query[_async]`
+are persisted per execution and echoed back on the full per-uuid GET
+so the UI can answer "what did this query run with?" Powers the
+per-tab Bigtrace Settings sub-tab on `/query`.
+
+| Field | Request body shape | Response shape (per-uuid GET) |
+|---|---|---|
+| `settings` | `Array<{setting_id, values, category}>` | `settings: Array<{setting_id, values, category}>` |
+| `trace_filter` | `Filter[]` (same shape as `:fetch_results?filter=`) | `traceFilter: Filter[]` |
+| `trace_metadata_columns` | `string[]` (column names from `/traces_schema`) | `traceMetadataColumns: string[]` |
+
+Persistence rules:
+
+- **Frozen at submit.** Stored before any validation runs, so even a
+  query that 400s at submit time records what was attempted. State
+  transitions (`mark_success` / `mark_failed` / `mark_cancelled`) do
+  not modify the snapshot.
+- **Stored as JSON strings** in three new VARCHAR columns
+  (`settings`, `trace_filter`, `trace_metadata_columns`) on
+  `query_executions`. ALTER TABLE ADD COLUMN IF NOT EXISTS migrates
+  older DBs on `_init_schema`.
+- **Empty list semantics.** Absent / `null` / `[]` on the wire all
+  persist as SQL NULL and read back as `[]`. The full-GET response
+  always carries `[]` rather than `null` so the UI never null-checks
+  these fields.
+- **Lean polling + lean history.** The snapshot is **not** echoed on
+  `:status` (every 3s poll) or on `/query_executions` (history
+  sidebar). Clients call the per-uuid full GET to inspect a snapshot.
 
 ### Trace selection grid (`/traces` + `/traces_schema`)
 
@@ -669,10 +697,11 @@ verifies:
     metadata is preserved.
 11. Result limit is **global**, not per-trace: `limit=7` over 14
     traces materializes ≤ 7 rows total.
-12. `:status` payload is **strictly the 5 progress fields**
-    (`queryUuid`, `status`, `processedTraces`, `totalTraces`,
-    `processedRows`). No `endTime`, `errorMessage`, etc. — those live
-    on the full GET only. Verified for both SUCCESS and FAILED.
+12. `:status` payload is **strictly the 4 progress fields**
+    (`status`, `processedTraces`, `totalTraces`, `processedRows`).
+    No `queryUuid` (URL key, not body), no `endTime`/`errorMessage`,
+    no submit-time snapshot — those live on the full GET only.
+    Verified for both SUCCESS and FAILED.
 13. `DELETE` while a query is `IN_PROGRESS` returns 409 with a
     "cancel first" message; only terminal queries can be soft-deleted.
 14. Every per-uuid endpoint (`status`/`fetch_results`/full GET/cancel/

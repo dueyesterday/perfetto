@@ -50,7 +50,7 @@ import json
 import logging
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -72,6 +72,12 @@ class QESnapshot:
     into the JSON wire shape via `to_raw_dict` / `to_status_dict` (in
     server.py). All times are ISO-8601 strings (UTC) to match the wire
     protocol — the DuckDB columns are TIMESTAMP, converted on read.
+
+    `settings` / `trace_filter` / `trace_metadata_columns` are the
+    snapshot the query was submitted with — frozen at submit time and
+    surfaced on the full `/query_executions/{uuid}` endpoint so the UI
+    can answer "what did this query run with?" Empty lists for queries
+    submitted before this snapshot was introduced (NULL in DuckDB).
     """
   query_uuid: str
   status: str
@@ -85,6 +91,9 @@ class QESnapshot:
   total_traces: int
   error_message: Optional[str]
   table_name: Optional[str]
+  settings: list[dict[str, Any]] = field(default_factory=list)
+  trace_filter: list[dict[str, Any]] = field(default_factory=list)
+  trace_metadata_columns: list[str] = field(default_factory=list)
 
 
 def _ts_to_iso(ts: Any) -> Optional[str]:
@@ -559,21 +568,31 @@ class Database:
     with self._lock:
       self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS query_executions (
-                  query_uuid       VARCHAR PRIMARY KEY,
-                  status           VARCHAR NOT NULL,
-                  start_time       TIMESTAMP,
-                  end_time         TIMESTAMP,
-                  perfetto_sql     VARCHAR,
-                  query_limit      INTEGER,
-                  materialized     BOOLEAN NOT NULL,
-                  table_name       VARCHAR,
-                  processed_traces INTEGER NOT NULL DEFAULT 0,
-                  total_traces     INTEGER NOT NULL DEFAULT 0,
-                  processed_rows   BIGINT  NOT NULL DEFAULT 0,
-                  error_message    VARCHAR,
-                  deleted          BOOLEAN NOT NULL DEFAULT FALSE
+                  query_uuid             VARCHAR PRIMARY KEY,
+                  status                 VARCHAR NOT NULL,
+                  start_time             TIMESTAMP,
+                  end_time               TIMESTAMP,
+                  perfetto_sql           VARCHAR,
+                  query_limit            INTEGER,
+                  materialized           BOOLEAN NOT NULL,
+                  table_name             VARCHAR,
+                  processed_traces       INTEGER NOT NULL DEFAULT 0,
+                  total_traces           INTEGER NOT NULL DEFAULT 0,
+                  processed_rows         BIGINT  NOT NULL DEFAULT 0,
+                  error_message          VARCHAR,
+                  deleted                BOOLEAN NOT NULL DEFAULT FALSE,
+                  settings               VARCHAR,
+                  trace_filter           VARCHAR,
+                  trace_metadata_columns VARCHAR
                 )
                 """)
+      # Migrate older DBs that pre-date the snapshot columns. DuckDB
+      # accepts ADD COLUMN IF NOT EXISTS so the call is a no-op once
+      # the column is there; nullable VARCHAR keeps legacy rows valid.
+      for col in ('settings', 'trace_filter', 'trace_metadata_columns'):
+        self._conn.execute(
+            f'ALTER TABLE query_executions ADD COLUMN IF NOT EXISTS '
+            f'{col} VARCHAR')
       self._conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_qe_visible
                   ON query_executions (deleted, end_time)
@@ -590,6 +609,9 @@ class Database:
       query_limit: int,
       materialized: bool,
       start_time: Optional[datetime] = None,
+      settings: Optional[list[dict[str, Any]]] = None,
+      trace_filter: Optional[list[dict[str, Any]]] = None,
+      trace_metadata_columns: Optional[list[str]] = None,
   ) -> None:
     """Initial insert for any query (sync or async) that's about
         to start running.
@@ -606,22 +628,35 @@ class Database:
         that captured a precise wall-clock at the start of the
         request should pass it explicitly so the recorded duration
         matches reality.
+
+        `settings` / `trace_filter` / `trace_metadata_columns` are
+        the snapshot the query is being submitted with. Stored as
+        JSON strings; None / missing → SQL NULL, which reads back as
+        `[]` in `_row_to_snapshot`. Persisted unconditionally before
+        any validation runs, so even a query that's about to fail at
+        submit time records what it was attempting.
         """
     if start_time is None:
       start_time = utcnow()
     table_name = safe_table_id(query_uuid) if materialized else None
+    settings_json = json.dumps(settings) if settings else None
+    trace_filter_json = json.dumps(trace_filter) if trace_filter else None
+    trace_metadata_columns_json = (
+        json.dumps(trace_metadata_columns) if trace_metadata_columns else None)
     with self._lock:
       self._conn.execute(
           """
                 INSERT INTO query_executions
                   (query_uuid, status, start_time, perfetto_sql, query_limit,
                    materialized, table_name, processed_traces, total_traces,
-                   processed_rows)
-                VALUES (?, 'IN_PROGRESS', ?, ?, ?, ?, ?, 0, 0, 0)
+                   processed_rows, settings, trace_filter,
+                   trace_metadata_columns)
+                VALUES (?, 'IN_PROGRESS', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?)
                 """,
           [
               query_uuid, start_time, perfetto_sql, query_limit, materialized,
-              table_name
+              table_name, settings_json, trace_filter_json,
+              trace_metadata_columns_json
           ],
       )
 
@@ -912,10 +947,29 @@ class Database:
   _QE_SELECT_COLS = (
       'query_uuid, status, start_time, end_time, '
       'perfetto_sql, query_limit, materialized, table_name, '
-      'processed_traces, total_traces, processed_rows, error_message')
+      'processed_traces, total_traces, processed_rows, error_message, '
+      'settings, trace_filter, trace_metadata_columns')
 
   @staticmethod
-  def _row_to_snapshot(row: tuple) -> QESnapshot:
+  def _decode_json_list(raw: Optional[str]) -> list[Any]:
+    """Decode a JSON-encoded list column back to a Python list.
+
+        Returns `[]` for SQL NULL, empty strings, or malformed JSON —
+        the snapshot fields are advisory metadata, not load-bearing,
+        so a corrupt blob shouldn't fail the read. Malformed JSON is
+        logged at WARNING.
+        """
+    if not raw:
+      return []
+    try:
+      decoded = json.loads(raw)
+    except json.JSONDecodeError as e:
+      log.warning('snapshot JSON decode failed: %s; raw=%r', e, raw[:200])
+      return []
+    return decoded if isinstance(decoded, list) else []
+
+  @classmethod
+  def _row_to_snapshot(cls, row: tuple) -> QESnapshot:
     """Map a `_QE_SELECT_COLS` row tuple to a `QESnapshot`."""
     return QESnapshot(
         query_uuid=row[0],
@@ -930,6 +984,9 @@ class Database:
         total_traces=row[9],
         processed_rows=row[10],
         error_message=row[11],
+        settings=cls._decode_json_list(row[12]),
+        trace_filter=cls._decode_json_list(row[13]),
+        trace_metadata_columns=cls._decode_json_list(row[14]),
     )
 
   def get_qe(self, query_uuid: str) -> Optional[QESnapshot]:

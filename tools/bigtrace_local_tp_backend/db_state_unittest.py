@@ -179,6 +179,157 @@ class InsertAndReadTest(_DbCase):
     self.assertIsNone(self.db.get_qe('does-not-exist'))
 
 
+class SnapshotRoundTripTest(_DbCase):
+  """`insert_qe_in_progress` + `get_qe` round-trip the submit-time
+    snapshot fields (settings / trace_filter / trace_metadata_columns).
+    These power the per-tab Bigtrace Settings sub-tab on /query — the
+    UI rehydrates from `/query_executions/{uuid}` to show what each
+    historical query ran with. Stored as JSON strings; surfaced as
+    Python lists; absent / NULL reads back as `[]` so the UI never
+    needs a null-check at render time."""
+
+  def test_full_snapshot_round_trips(self):
+    settings = [{
+        'setting_id': 'trace_directory',
+        'values': ['/tmp/traces'],
+        'category': 'TRACE_ADDRESS',
+    }]
+    trace_filter = [{'field': 'file_name', 'op': 'glob', 'value': '*.pftrace'}]
+    trace_metadata_columns = ['file_name', 'size_bytes']
+    self.db.insert_qe_in_progress(
+        'u1',
+        'SELECT 1',
+        query_limit=10,
+        materialized=True,
+        settings=settings,
+        trace_filter=trace_filter,
+        trace_metadata_columns=trace_metadata_columns)
+    snap = self.db.get_qe('u1')
+    assert snap is not None
+    self.assertEqual(snap.settings, settings)
+    self.assertEqual(snap.trace_filter, trace_filter)
+    self.assertEqual(snap.trace_metadata_columns, trace_metadata_columns)
+
+  def test_omitted_snapshot_reads_back_as_empty_lists(self):
+    # Pre-feature row OR client that didn't opt in — every snapshot
+    # field reads as []. The UI renders this as "no filter / no
+    # extra metadata" uniformly.
+    self.db.insert_qe_in_progress(
+        'u1', 'SELECT 1', query_limit=10, materialized=True)
+    snap = self.db.get_qe('u1')
+    assert snap is not None
+    self.assertEqual(snap.settings, [])
+    self.assertEqual(snap.trace_filter, [])
+    self.assertEqual(snap.trace_metadata_columns, [])
+
+  def test_explicit_empty_lists_become_null_then_empty(self):
+    # Explicit `[]` on submit is semantically identical to "absent".
+    # The persistence layer stores NULL (avoiding a `'[]'` literal
+    # in the column for the common case); the read normalizes back
+    # to `[]`.
+    self.db.insert_qe_in_progress(
+        'u1',
+        'SELECT 1',
+        query_limit=10,
+        materialized=True,
+        settings=[],
+        trace_filter=[],
+        trace_metadata_columns=[])
+    snap = self.db.get_qe('u1')
+    assert snap is not None
+    self.assertEqual(snap.settings, [])
+    self.assertEqual(snap.trace_filter, [])
+    self.assertEqual(snap.trace_metadata_columns, [])
+
+  def test_snapshot_survives_state_transitions(self):
+    # Snapshot is frozen at submit. mark_success / mark_failed /
+    # mark_cancelled don't touch it — important so the UI can keep
+    # showing the historical context after the query has terminated.
+    f = [{'field': 'file_name', 'op': '=', 'value': 'a.pftrace'}]
+    self.db.insert_qe_in_progress(
+        'u1', 'SELECT 1', query_limit=10, materialized=True, trace_filter=f)
+    self.db.mark_success('u1', processed_rows=5)
+    snap = self.db.get_qe('u1')
+    assert snap is not None
+    self.assertEqual(snap.status, 'SUCCESS')
+    self.assertEqual(snap.trace_filter, f)
+
+  def test_snapshot_persists_even_on_failure(self):
+    # A query that fails at submit-validation still records what
+    # was attempted — the UI surfaces "this filter is broken" with
+    # the actual offending value, not an empty placeholder.
+    f = [{'field': 'unknown_col', 'op': '=', 'value': 'x'}]
+    self.db.insert_qe_in_progress(
+        'u1', 'SELECT 1', query_limit=10, materialized=True, trace_filter=f)
+    self.db.mark_failed('u1', 'unknown filter column')
+    snap = self.db.get_qe('u1')
+    assert snap is not None
+    self.assertEqual(snap.status, 'FAILED')
+    self.assertEqual(snap.trace_filter, f)
+
+  def test_migration_adds_columns_to_legacy_table(self):
+    # Simulate a DB created before the snapshot columns existed:
+    # hand-build the pre-snapshot schema in a fresh file, populate
+    # one row, then open it via `Database` and confirm
+    # `_init_schema`'s ALTER TABLE ADD COLUMN IF NOT EXISTS adds
+    # the three new columns. Existing rows read back with empty
+    # snapshot defaults.
+    self.db.close()
+    legacy_path = os.path.join(self._tmp, 'legacy.duckdb')
+    import duckdb
+    con = duckdb.connect(legacy_path)
+    # Pre-snapshot schema: matches what `_init_schema` used to
+    # write before this feature, minus settings / trace_filter /
+    # trace_metadata_columns.
+    con.execute("""
+        CREATE TABLE query_executions (
+          query_uuid       VARCHAR PRIMARY KEY,
+          status           VARCHAR NOT NULL,
+          start_time       TIMESTAMP,
+          end_time         TIMESTAMP,
+          perfetto_sql     VARCHAR,
+          query_limit      INTEGER,
+          materialized     BOOLEAN NOT NULL,
+          table_name       VARCHAR,
+          processed_traces INTEGER NOT NULL DEFAULT 0,
+          total_traces     INTEGER NOT NULL DEFAULT 0,
+          processed_rows   BIGINT  NOT NULL DEFAULT 0,
+          error_message    VARCHAR,
+          deleted          BOOLEAN NOT NULL DEFAULT FALSE
+        )""")
+    con.execute("INSERT INTO query_executions "
+                "(query_uuid, status, materialized, perfetto_sql, query_limit) "
+                "VALUES ('u_legacy', 'SUCCESS', TRUE, 'SELECT 1', 10)")
+    con.close()
+
+    # Re-open via `Database` — `_init_schema` should add the three
+    # snapshot columns via ALTER TABLE ADD COLUMN IF NOT EXISTS.
+    self.db = Database(legacy_path)
+    snap = self.db.get_qe('u_legacy')
+    assert snap is not None
+    self.assertEqual(snap.settings, [])
+    self.assertEqual(snap.trace_filter, [])
+    self.assertEqual(snap.trace_metadata_columns, [])
+    # And new inserts can populate them normally.
+    self.db.insert_qe_in_progress(
+        'u_new',
+        'SELECT 2',
+        query_limit=20,
+        materialized=True,
+        trace_filter=[{
+            'field': 'file_name',
+            'op': '=',
+            'value': 'x.pftrace'
+        }])
+    snap_new = self.db.get_qe('u_new')
+    assert snap_new is not None
+    self.assertEqual(snap_new.trace_filter, [{
+        'field': 'file_name',
+        'op': '=',
+        'value': 'x.pftrace'
+    }])
+
+
 class ConditionalTransitionTest(_DbCase):
   """The cancel protocol's load-bearing invariant: `mark_success`
     and `mark_failed` apply ONLY when status is still IN_PROGRESS.

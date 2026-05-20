@@ -846,9 +846,12 @@ def main() -> int:
     # the full GET only. The UI relies on this to keep the 3s poll
     # cheap. Critically, errorMessage must NOT be on :status even
     # for FAILED queries.
-    print('[12] :status returns exactly 5 fields')
+    print('[12] :status returns exactly 4 fields')
+    # `queryUuid` is intentionally dropped — the client knows it
+    # from the URL. Submit-time-immutable fields (perfettoSql,
+    # limit, materialized, startTime, settings, traceFilter, ...)
+    # all live on the full /query_executions/{uuid} GET.
     EXPECTED_STATUS_KEYS = {
-        'queryUuid',
         'status',
         'processedTraces',
         'totalTraces',
@@ -882,8 +885,8 @@ def main() -> int:
     assert set(st_fail.keys()) == EXPECTED_STATUS_KEYS, (
         f'FAILED :status has unexpected keys (errorMessage should be on '
         f'full GET, not :status): got {sorted(st_fail.keys())}')
-    print('    SUCCESS + FAILED :status payloads each have exactly the 5 '
-          'progress fields')
+    print('    SUCCESS + FAILED :status payloads each have exactly the 4 '
+          'progress fields (no queryUuid, no submit-time snapshot)')
 
     # 13. DELETE on an IN_PROGRESS query returns 409.
     # Caller must POST :cancel first; DELETE is strictly for pruning
@@ -2004,6 +2007,103 @@ def main() -> int:
     for r in sync_tmc.get('rows') or []:
       assert len(r['values']) == 3, f'sync row shape: {r}'
     print('    sync execute stitches metadata inline (no sidecar path)')
+
+    # 26. Submit-time snapshot round-trip: `settings`, `traceFilter`,
+    # `traceMetadataColumns` persist at submit and surface on the
+    # full /query_executions/{uuid} GET — never on the list or
+    # :status. Powers the per-tab Bigtrace Settings sub-tab on the
+    # query page so each historical query is reproducible.
+    print('[26] submit-time snapshot round-trip')
+    snap_filter = [{'field': 'file_name', 'op': 'glob', 'value': '*'}]
+    snap_meta_cols = ['file_name']
+    _, snap_sub = http(
+        'POST',
+        '/execute_bigtrace_query_async',
+        body={
+            'limit': 5,
+            'perfetto_sql': 'SELECT name FROM slice LIMIT 1',
+            'settings': with_traces(),
+            'trace_filter': snap_filter,
+            'trace_metadata_columns': snap_meta_cols,
+        },
+    )
+    snap_uuid = snap_sub['queryUuid']
+    wait_until(
+        lambda: http('GET', f'/query_executions/{snap_uuid}:status')[1][
+            'status'] in ('SUCCESS', 'FAILED'),
+        timeout=30.0,
+        label='snapshot query terminal',
+    )
+    # 26a. Full GET carries all three snapshot fields.
+    _, snap_full = http('GET', f'/query_executions/{snap_uuid}')
+    assert snap_full.get('traceFilter') == snap_filter, (
+        f'traceFilter snapshot mismatch: got {snap_full.get("traceFilter")}')
+    assert snap_full.get('traceMetadataColumns') == snap_meta_cols, (
+        f'traceMetadataColumns snapshot mismatch: '
+        f'got {snap_full.get("traceMetadataColumns")}')
+    # `settings` round-trips the full request settings (order /
+    # content preserved). Sanity-check that the trace_directory
+    # entry made it through.
+    assert isinstance(
+        snap_full.get('settings'), list
+    ) and snap_full['settings'], (
+        f'settings should be a non-empty list: got {snap_full.get("settings")}')
+    settings_ids = {s.get('setting_id') for s in snap_full['settings']}
+    assert 'trace_directory' in settings_ids, (
+        f'settings snapshot missing trace_directory: {settings_ids}')
+    print('    full GET carries settings / traceFilter / traceMetadataColumns')
+
+    # 26b. :status omits all three.
+    _, snap_status = http('GET', f'/query_executions/{snap_uuid}:status')
+    for forbidden in ('settings', 'traceFilter', 'traceMetadataColumns',
+                      'queryUuid', 'perfettoSql', 'limit'):
+      assert forbidden not in snap_status, (
+          f':status leaked {forbidden!r}: {snap_status}')
+    print('    :status omits the snapshot fields and queryUuid')
+
+    # 26c. List endpoint also omits them — keeps the at-a-glance
+    # history sidebar lean. The history GET is per-row paginated by
+    # the UI; surfacing per-tab snapshots there would balloon the
+    # response without any rendering benefit.
+    _, snap_list = http('GET', '/query_executions')
+    found = False
+    for entry in snap_list.get('queryExecutions') or []:
+      if entry.get('queryUuid') == snap_uuid:
+        found = True
+        for forbidden in ('settings', 'traceFilter', 'traceMetadataColumns'):
+          assert forbidden not in entry, (
+              f'list entry leaked {forbidden!r}: {entry}')
+        break
+    assert found, f'snapshot UUID {snap_uuid} not in list response'
+    print('    list endpoint omits the snapshot fields')
+
+    # 26d. Empty / omitted snapshot still round-trips as []. A
+    # legacy or minimal client that submits without trace_filter /
+    # trace_metadata_columns gets empty lists back from the full
+    # GET — no `null` vs `[]` ambiguity at the UI layer.
+    _, plain_sub = http(
+        'POST',
+        '/execute_bigtrace_query_async',
+        body={
+            'limit': 1,
+            'perfetto_sql': 'SELECT name FROM slice LIMIT 1',
+            'settings': with_traces(),
+        },
+    )
+    plain_uuid = plain_sub['queryUuid']
+    wait_until(
+        lambda: http('GET', f'/query_executions/{plain_uuid}:status')[1][
+            'status'] in ('SUCCESS', 'FAILED'),
+        timeout=30.0,
+        label='plain snapshot query terminal',
+    )
+    _, plain_full = http('GET', f'/query_executions/{plain_uuid}')
+    assert plain_full.get('traceFilter') == [], (
+        f'traceFilter should default to []: {plain_full.get("traceFilter")}')
+    assert plain_full.get('traceMetadataColumns') == [], (
+        f'traceMetadataColumns should default to []: '
+        f'{plain_full.get("traceMetadataColumns")}')
+    print('    omitted trace_filter / trace_metadata_columns -> []')
 
     print('\nALL CHECKS PASSED')
   except AssertionError as e:

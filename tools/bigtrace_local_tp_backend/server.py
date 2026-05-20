@@ -232,8 +232,10 @@ def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
   """Build a full RawQueryExecution dict from a DB snapshot.
 
     `tableLink` is derived on the fly from `tableName` (we don't
-    persist it). `receivedSettings` is no longer echoed — settings
-    persistence is a deferred decision; the wire field is absent.
+    persist it). The submit-time snapshot fields (`settings`,
+    `traceFilter`, `traceMetadataColumns`) appear only on the
+    per-UUID full GET (`truncate=False`) — never on the list
+    endpoint, which stays lean — and never on `:status`.
     """
   sql_text = snap.perfetto_sql
   if truncate:
@@ -256,6 +258,13 @@ def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
     if truncate:
       err_text = _truncate(err_text)
     d['errorMessage'] = err_text
+  if not truncate:
+    # Submit-time snapshot. Only on the full per-UUID GET — list
+    # responses stay lean (one row per execution, no per-row JSON
+    # blobs), and `:status` doesn't carry it at all.
+    d['settings'] = snap.settings
+    d['traceFilter'] = snap.trace_filter
+    d['traceMetadataColumns'] = snap.trace_metadata_columns
   if snap.table_name is not None:
     d['tableName'] = snap.table_name
     # tableLink is built mechanically from tableName so the two
@@ -279,15 +288,16 @@ def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
 def _qe_to_status(snap: QESnapshot) -> dict[str, Any]:
   """Strict progress-only snapshot for `:status` polling.
 
-    Exactly five fields, every time:
-      queryUuid, status, processedTraces, totalTraces, processedRows.
+    Exactly four fields, every time:
+      status, processedTraces, totalTraces, processedRows.
 
-    Everything else (endTime, errorMessage, perfettoSql, limit,
-    materialized, settings, tableName/Link) is static-once-known and
-    lives on the full `/query_executions/{uuid}` endpoint.
+    `queryUuid` is dropped — the client already knows it from the URL
+    path. Everything else (endTime, errorMessage, perfettoSql, limit,
+    materialized, submit-time snapshot, tableName/Link) is
+    static-once-known and lives on the full `/query_executions/{uuid}`
+    endpoint, fetched once on terminal transition.
     """
   return {
-      'queryUuid': snap.query_uuid,
       'status': snap.status,
       'processedTraces': snap.processed_traces,
       'totalTraces': snap.total_traces,
@@ -516,6 +526,29 @@ def _validate_trace_metadata_columns_or_400(
   return out
 
 
+def _normalize_trace_filter_for_storage(tf: Any) -> list[dict[str, Any]] | None:
+  """Normalize the request-body trace_filter to its persisted shape.
+
+    Returns a list-of-dicts (canonical wire form) or None. Tolerates
+    the legacy JSON-string form by re-decoding it. Semantic validation
+    is `_parse_trace_filter_or_400`'s job — this helper exists so
+    `insert_qe_in_progress` can persist a snapshot even if validation
+    later 400s the request. Any unrecognized shape persists as None so
+    we never corrupt the JSON column.
+    """
+  if tf is None:
+    return None
+  if isinstance(tf, list):
+    return tf
+  if isinstance(tf, str):
+    try:
+      decoded = json.loads(tf)
+    except json.JSONDecodeError:
+      return None
+    return decoded if isinstance(decoded, list) else None
+  return None
+
+
 def _parse_trace_filter_or_400(trace_filter: Any) -> list:
   """Coerce the raw `trace_filter` body field to `list[ParsedFilter]`.
 
@@ -714,12 +747,18 @@ async def execute_async(request: Request) -> dict[str, Any]:
   new_uuid = str(uuid.uuid4())
   # Insert as IN_PROGRESS with tableName set immediately. The
   # materialized table itself is created lazily when the first
-  # successful trace's worker merges its rows.
+  # successful trace's worker merges its rows. Snapshot fields go in
+  # at submit-time (pre-validation) so even queries that fail at
+  # submit record what was attempted.
   db.insert_qe_in_progress(
       new_uuid,
       perfetto_sql,
       limit,
       materialized=True,
+      settings=settings if isinstance(settings, list) else None,
+      trace_filter=_normalize_trace_filter_for_storage(trace_filter),
+      trace_metadata_columns=(trace_metadata_columns if isinstance(
+          trace_metadata_columns, list) else None),
   )
 
   # Validate the trace directory, the trace_filter shape, and the
@@ -775,13 +814,18 @@ async def execute_sync(request: Request) -> dict[str, Any]:
   start_time = utcnow()
   # Insert IN_PROGRESS upfront so the run is visible in the history
   # while it executes, and so a server crash mid-sync produces a
-  # FAILED row on next startup instead of a silent loss.
+  # FAILED row on next startup instead of a silent loss. Snapshot
+  # fields persisted alongside (see execute_async for rationale).
   db.insert_qe_in_progress(
       new_uuid,
       perfetto_sql,
       limit,
       materialized=False,
       start_time=start_time,
+      settings=settings if isinstance(settings, list) else None,
+      trace_filter=_normalize_trace_filter_for_storage(trace_filter),
+      trace_metadata_columns=(trace_metadata_columns if isinstance(
+          trace_metadata_columns, list) else None),
   )
 
   # Resolve the trace list (validates trace_dir, applies trace_filter +

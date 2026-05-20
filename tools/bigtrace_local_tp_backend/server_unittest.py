@@ -230,20 +230,23 @@ class WireRowsTest(unittest.TestCase):
 
 
 class QeToStatusTest(unittest.TestCase):
-  """Strict 5-field contract for the `:status` endpoint. The
+  """Strict 4-field contract for the `:status` endpoint. The
     polling client allocates an object of exactly this shape every
     3s — adding a field would silently grow every poll's payload;
-    dropping one would break the UI's progress bar."""
+    dropping one would break the UI's progress bar. `queryUuid` is
+    deliberately absent — the client already knows it from the URL
+    path. The submit-time snapshot (settings / trace_filter /
+    trace_metadata_columns) is never echoed here; it lives on the
+    full `/query_executions/{uuid}` endpoint."""
 
   EXPECTED_KEYS = frozenset({
-      'queryUuid',
       'status',
       'processedTraces',
       'totalTraces',
       'processedRows',
   })
 
-  def test_exactly_five_keys_for_in_progress(self):
+  def test_exactly_four_keys_for_in_progress(self):
     snap = _make_snap(
         status='IN_PROGRESS',
         processed_rows=42,
@@ -251,7 +254,7 @@ class QeToStatusTest(unittest.TestCase):
         total_traces=10)
     self.assertEqual(set(_qe_to_status(snap).keys()), self.EXPECTED_KEYS)
 
-  def test_exactly_five_keys_for_terminal_states(self):
+  def test_exactly_four_keys_for_terminal_states(self):
     # SUCCESS / FAILED / CANCELLED all carry rich extra metadata
     # on the raw DB row (endTime, errorMessage, tableName, ...). The
     # status endpoint is documented to never echo those — pin it.
@@ -261,13 +264,35 @@ class QeToStatusTest(unittest.TestCase):
             status=status,
             end_time='2026-05-10T00:00:01.000Z',
             error_message='boom' if status == 'FAILED' else None,
-            table_name='bigtrace_abc' if status == 'SUCCESS' else None)
+            table_name='bigtrace_abc' if status == 'SUCCESS' else None,
+            settings=[{
+                'setting_id': 'trace_directory',
+                'values': ['/tmp']
+            }],
+            trace_filter=[{
+                'field': 'file_name',
+                'op': '=',
+                'value': 'a.pftrace'
+            }],
+            trace_metadata_columns=['file_name'])
         out = _qe_to_status(snap)
         self.assertEqual(set(out.keys()), self.EXPECTED_KEYS)
-        self.assertNotIn('endTime', out)
-        self.assertNotIn('errorMessage', out)
-        self.assertNotIn('tableName', out)
-        self.assertNotIn('perfettoSql', out)
+        # None of the submit-time-immutable fields leak through.
+        for forbidden in (
+            'queryUuid',
+            'endTime',
+            'errorMessage',
+            'tableName',
+            'tableLink',
+            'perfettoSql',
+            'limit',
+            'materialized',
+            'startTime',
+            'settings',
+            'traceFilter',
+            'traceMetadataColumns',
+        ):
+          self.assertNotIn(forbidden, out)
 
 
 class QeToRawTest(unittest.TestCase):
@@ -343,6 +368,103 @@ class QeToRawTest(unittest.TestCase):
     snap = _make_snap(status='FAILED', error_message=long_err)
     out = _qe_to_raw(snap, truncate=True)
     self.assertTrue(out['errorMessage'].endswith('…'))
+
+
+class QeToRawSnapshotTest(unittest.TestCase):
+  """The submit-time snapshot (`settings`, `traceFilter`,
+    `traceMetadataColumns`) appears on the per-UUID full GET only —
+    never on the list endpoint, where the response stays lean. The
+    UI rehydrates per-tab state from the full GET when reopening a
+    historical query; the list endpoint just powers the history
+    sidebar's at-a-glance preview."""
+
+  def _snap_with_snapshot(self, **overrides):
+    return _make_snap(
+        settings=[{
+            'setting_id': 'trace_limit',
+            'values': [50],
+            'category': 'TRACE_ADDRESS',
+        }],
+        trace_filter=[{
+            'field': 'file_name',
+            'op': 'glob',
+            'value': '*.pftrace',
+        }],
+        trace_metadata_columns=['file_name', 'size_bytes'],
+        **overrides,
+    )
+
+  def test_full_get_emits_all_three_snapshot_fields(self):
+    snap = self._snap_with_snapshot()
+    out = _qe_to_raw(snap, truncate=False)
+    self.assertEqual(out['settings'], [{
+        'setting_id': 'trace_limit',
+        'values': [50],
+        'category': 'TRACE_ADDRESS',
+    }])
+    self.assertEqual(out['traceFilter'], [{
+        'field': 'file_name',
+        'op': 'glob',
+        'value': '*.pftrace',
+    }])
+    self.assertEqual(out['traceMetadataColumns'], ['file_name', 'size_bytes'])
+
+  def test_list_omits_all_three_snapshot_fields(self):
+    snap = self._snap_with_snapshot()
+    out = _qe_to_raw(snap, truncate=True)
+    self.assertNotIn('settings', out)
+    self.assertNotIn('traceFilter', out)
+    self.assertNotIn('traceMetadataColumns', out)
+
+  def test_full_get_emits_empty_lists_when_no_snapshot(self):
+    # A pre-snapshot historical row (or a future client that omitted
+    # the fields) reads back as empty lists — distinct from missing,
+    # so the UI can render "this query had no trace filter" the same
+    # way regardless of when the row was written.
+    snap = _make_snap()
+    out = _qe_to_raw(snap, truncate=False)
+    self.assertEqual(out['settings'], [])
+    self.assertEqual(out['traceFilter'], [])
+    self.assertEqual(out['traceMetadataColumns'], [])
+
+
+class NormalizeTraceFilterForStorageTest(unittest.TestCase):
+  """`_normalize_trace_filter_for_storage` coerces the raw body
+    field into the list-or-None shape we persist. Tolerant of legacy
+    JSON-string clients; never raises (snapshot persistence is
+    advisory, not load-bearing)."""
+
+  def test_none_returns_none(self):
+    from server import _normalize_trace_filter_for_storage as norm
+    self.assertIsNone(norm(None))
+
+  def test_list_passes_through(self):
+    from server import _normalize_trace_filter_for_storage as norm
+    f = [{'field': 'x', 'op': '=', 'value': 'y'}]
+    self.assertEqual(norm(f), f)
+
+  def test_json_string_is_decoded(self):
+    from server import _normalize_trace_filter_for_storage as norm
+    self.assertEqual(
+        norm('[{"field":"x","op":"=","value":"y"}]'), [{
+            'field': 'x',
+            'op': '=',
+            'value': 'y'
+        }])
+
+  def test_malformed_json_string_returns_none(self):
+    from server import _normalize_trace_filter_for_storage as norm
+    self.assertIsNone(norm('{not json'))
+
+  def test_non_list_json_string_returns_none(self):
+    from server import _normalize_trace_filter_for_storage as norm
+    self.assertIsNone(norm('"a string"'))
+    self.assertIsNone(norm('42'))
+
+  def test_unrecognized_type_returns_none(self):
+    from server import _normalize_trace_filter_for_storage as norm
+    self.assertIsNone(norm(42))
+    self.assertIsNone(norm({'not': 'a list'}))
 
 
 class ResolveTraceDirTest(unittest.TestCase):
