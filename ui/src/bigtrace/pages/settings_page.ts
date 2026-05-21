@@ -86,6 +86,12 @@ export interface SettingsBindings {
   readonly setTraceFilter: (filters: readonly Filter[]) => void;
   readonly getTraceMetadataColumns: () => readonly string[];
   readonly setTraceMetadataColumns: (cols: readonly string[]) => void;
+  // Optional: called whenever the trace-list data source reports a
+  // fresh `filteredTotalRows` (the count of traces the current filter
+  // selects). Embedded callers cache the value so a closed drawer
+  // can show "filter: N traces" without re-fetching. Undefined =
+  // count not yet known.
+  readonly onTraceMatchCount?: (count: number | undefined) => void;
 }
 
 // Wraps a globally-registered `Setting<T>` so reads/writes route
@@ -531,7 +537,22 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     const schemaState = this.schemaState;
 
     const header: m.Children = [
-      m('.pf-settings-card__title', 'Traces'),
+      m('.pf-bt-trace-card__title-row', [
+        m('.pf-settings-card__title', 'Traces'),
+        // Inline refresh action — forces a /traces refetch with the
+        // current filter / sort / columns / settings. Lives next to
+        // the section title so it's obvious which list it refreshes.
+        m(Button, {
+          icon: 'refresh',
+          className: 'pf-bt-trace-card__refresh',
+          title:
+            'Refresh trace list — re-fetch /traces with the current ' +
+            'filter and settings.',
+          onclick: () => {
+            void ds.refresh();
+          },
+        }),
+      ]),
       m(
         '.pf-settings-card__description',
         'Filter or sort to select which traces the query runs over.',
@@ -685,6 +706,11 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   // is active).
   private renderTraceMatchCount(ds: BigtraceTraceListDataSource): m.Children {
     const n = ds.filteredTotalRows;
+    // Cache the count back to the embedded caller (e.g. the drawer
+    // prototype) so a closed-drawer summary can show it without
+    // re-fetching. No-op when the standalone /settings route is the
+    // caller — that mount doesn't set onTraceMatchCount.
+    this.bindings?.onTraceMatchCount?.(n);
     const hasFilter = this.traceFilters.length > 0;
     const text =
       n === undefined

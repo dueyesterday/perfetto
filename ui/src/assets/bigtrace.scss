@@ -172,9 +172,44 @@
   overflow-x: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--pf-color-border-secondary) transparent;
+  // No background override — inherit the page surface so the
+  // strip doesn't read as a separate dark band in dark mode.
+  // A single hairline below carries the "this is a strip" cue.
+  border-bottom: 1px solid var(--pf-color-border-secondary);
+  font-size: var(--pf-font-size-m);
 
   > .pf-tabs__tab {
     max-width: 220px;
+    position: relative;
+    opacity: 0.7;
+    transition: opacity 0.12s ease-out;
+
+    &:hover {
+      opacity: 1;
+    }
+
+    &.pf-tabs__tab--active {
+      opacity: 1;
+      font-weight: 600;
+      // Vibrant active-tab text — explicit hex so it pops in both
+      // themes regardless of the theme's `--pf-color-accent`
+      // resolution (which can be muted in some palettes).
+      color: #3b82f6;
+    }
+
+    // Active-tab indicator: vibrant top bar so it stands out from
+    // the surrounding text. Top edge (not bottom) because the
+    // drawer header directly below already has its own border.
+    &.pf-tabs__tab--active::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 3px;
+      background: #3b82f6;
+      border-radius: 0 0 2px 2px;
+    }
   }
 }
 
@@ -692,11 +727,12 @@ pre.pf-bt-history-item-query--standalone {
   }
 }
 
-// ---------- Per-tab sub-tab nav ----------
+// ---------- Per-tab settings drawer ----------
 
-// Pill segmented control sitting between the editor-tabs strip and
-// the per-sub-tab body. Two pills + chevron: [Bigtrace Settings] ›
-// [Query]. Both clickable; active pill filled.
+// The drawer prototype: a collapsible header above the editor that
+// shows the current Bigtrace snapshot at a glance. Expanded, it
+// pushes the editor down and surfaces the same Trace Address panel
+// the /settings page renders.
 .pf-bt-editor-tab {
   display: flex;
   flex-direction: column;
@@ -704,44 +740,79 @@ pre.pf-bt-history-item-query--standalone {
   min-height: 0;
 }
 
-.pf-bt-subtab-nav {
+.pf-bt-settings-drawer__header {
+  appearance: none;
+  background: var(--pf-color-background-secondary);
+  border: none;
+  border-bottom: 1px solid var(--pf-color-border-secondary);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 6px 12px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--pf-color-border-secondary);
+  gap: 10px;
+  width: 100%;
   flex: 0 0 auto;
 }
 
-.pf-bt-subtab-nav__pill {
-  appearance: none;
-  font: inherit;
-  cursor: pointer;
-  border: 1px solid var(--pf-color-border-secondary);
-  background: transparent;
-  color: inherit;
-  padding: 4px 12px;
-  border-radius: 9999px;
-  line-height: 1.4;
+.pf-bt-settings-drawer__header:hover {
+  background: var(--pf-color-hover, rgba(0, 0, 0, 0.04));
 }
 
-.pf-bt-subtab-nav__pill:hover {
-  background: var(--pf-color-background-secondary);
+// Outer SplitPanel: drawer body on top, editor+results inner
+// SplitPanel below. When the drawer is closed, the first pane
+// is forced to 0px (controlled mode), so we also hide the
+// SplitPanel's resize handle — otherwise a draggable bar would
+// float at the top of the editor pane with no visible drawer.
+.pf-bt-drawer-split--closed .pf-resize-handle {
+  display: none;
 }
 
-.pf-bt-subtab-nav__pill--active {
-  background: var(--pf-color-accent);
-  color: var(--pf-color-on-accent, #fff);
-  border-color: var(--pf-color-accent);
+.pf-bt-settings-drawer--open .pf-bt-settings-drawer__header {
+  border-bottom: 1px solid var(--pf-color-border-secondary);
 }
 
-.pf-bt-subtab-nav__chevron {
-  opacity: 0.55;
-  font-size: 1.15em;
-  line-height: 1;
+.pf-bt-settings-drawer__chevron {
+  display: inline-block;
+  width: 1em;
+  opacity: 0.7;
 }
 
-.pf-bt-editor-tab > :not(.pf-bt-subtab-nav) {
+.pf-bt-settings-drawer__label {
+  font-weight: 600;
+}
+
+.pf-bt-settings-drawer__summary {
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// SettingsPage embedded inside the outer SplitPanel's first
+// pane gets its own scroll context.
+.pf-bt-drawer-split > .pf-split-panel__first {
+  overflow: auto;
+}
+
+// "Traces" card header — title with the refresh icon sitting
+// directly to its right (gap-controlled, not flex-end). Both
+// /settings and the embedded drawer render the same SettingsPage,
+// so this styling applies in both surfaces.
+.pf-bt-trace-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  .pf-settings-card__title {
+    margin: 0;
+  }
+}
+
+.pf-bt-editor-tab > :not(.pf-bt-settings-drawer) {
   flex: 1 1 auto;
   min-height: 0;
 }

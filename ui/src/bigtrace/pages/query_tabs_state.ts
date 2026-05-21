@@ -100,6 +100,23 @@ export interface BigTraceEditorTab {
   // to 'query' for both new and historical tabs; the user can flip
   // to 'settings' to inspect / edit the per-tab snapshot.
   activeSubTab: QuerySubTab;
+  // Drawer-prototype: when true, the per-tab settings panel
+  // expands inline above the editor instead of replacing it via
+  // the sub-tab pill. The two states are independent — the pill
+  // row is hidden in this UI, but `activeSubTab` is still
+  // present for persistence backwards-compat.
+  settingsDrawerOpen: boolean;
+  // Expanded drawer height in pixels. Adjusted by the drag handle
+  // at the bottom of the drawer body. Undefined → use the default
+  // (DEFAULT_DRAWER_HEIGHT_PX). Clamped at use-time to keep at
+  // least the editor visible.
+  settingsDrawerHeight?: number;
+  // Latest count of traces the current trace_filter selects.
+  // Written by the embedded SettingsPage data source on each
+  // fetch; read by the closed drawer summary so "filter: N
+  // traces" appears without a separate /traces round-trip.
+  // Undefined until at least one fetch has landed.
+  lastFilteredTraceCount?: number;
   // Tab-lifetime: every backend request plumbs `signal`; aborts on close.
   readonly lifecycle: AbortController;
   // Per-execute request: Cancel aborts this without tearing down the tab.
@@ -136,6 +153,8 @@ interface StoredTab {
   readonly traceFilter?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
   readonly activeSubTab?: QuerySubTab;
+  readonly settingsDrawerOpen?: boolean;
+  readonly settingsDrawerHeight?: number;
 }
 
 interface StoredState {
@@ -234,6 +253,8 @@ export class QueryTabsState {
       // simpler one-rule model (per design choice Q3). Users open
       // the Settings sub-tab on demand to inspect / edit.
       activeSubTab: stored?.activeSubTab ?? 'query',
+      settingsDrawerOpen: stored?.settingsDrawerOpen ?? false,
+      settingsDrawerHeight: stored?.settingsDrawerHeight,
       lifecycle: new AbortController(),
       activeRequest: undefined,
       // History-reopen → Persistent; new tab → sync; caller overrides.
@@ -326,6 +347,8 @@ export class QueryTabsState {
         traceFilter: t.traceFilter,
         traceMetadataColumns: t.traceMetadataColumns,
         activeSubTab: t.activeSubTab,
+        settingsDrawerOpen: t.settingsDrawerOpen,
+        settingsDrawerHeight: t.settingsDrawerHeight,
       })),
       activeTabId: this.activeTabId,
     };
