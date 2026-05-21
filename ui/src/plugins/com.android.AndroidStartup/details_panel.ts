@@ -19,7 +19,8 @@ import type {Trace} from '../../public/trace';
 import {DetailsShell} from '../../widgets/details_shell';
 import {Section} from '../../widgets/section';
 import {Tree, TreeNode} from '../../widgets/tree';
-import {Button} from '../../widgets/button';
+import {Anchor} from '../../widgets/anchor';
+import {Icons} from '../../base/semantic_icons';
 import {Timestamp} from '../../components/widgets/timestamp';
 import {DurationWidget} from '../../components/widgets/duration';
 import {exists} from '../../base/utils';
@@ -117,11 +118,15 @@ export class StartupDetailsPanel implements TrackEventDetailsPanel {
         m(
           Section,
           {title: 'Actions'},
-          m(Button, {
-            label: 'Go to process',
-            icon: 'call_made',
-            onclick: () => this.goToProcess(),
-          }),
+          m(
+            Anchor,
+            {
+              icon: Icons.GoTo,
+              onclick: () => this.goToProcess(),
+              title: 'Go to process',
+            },
+            'Go to process',
+          ),
         ),
     );
   }
