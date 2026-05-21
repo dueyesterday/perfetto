@@ -12,12 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import type {Filter} from '../../components/widgets/datagrid/model';
 import {endpointStorage} from '../settings/endpoint_storage';
+import type {SettingFilter} from '../settings/settings_types';
 import {BigtraceQueryClient} from './bigtrace_query_client';
 import type {QueryExecution} from './query_store';
 
-// Wire shape from /query_executions[*].
+// Wire shape from /query_executions[*]; field list in CLAUDE.md.
 // Times are ISO-8601; `readonly` marks the wire boundary.
+//
+// Field availability varies by endpoint:
+// - `:status` returns only `status` / `processedRows` /
+//   `processedTraces` / `totalTraces` (every other field is
+//   absent — the client must tolerate missing keys on the polling
+//   response).
+// - `/query_executions/{uuid}` (full GET) returns the full shape
+//   including the submit-time snapshot
+//   (`settings` / `traceFilter` / `traceMetadataColumns`).
+// - `/query_executions` (list) returns everything except the
+//   snapshot — the history sidebar stays lean.
 export interface RawQueryExecution {
   readonly queryUuid?: string;
   readonly status?: string;
@@ -33,6 +46,55 @@ export interface RawQueryExecution {
   readonly materialized?: boolean;
   readonly tableName?: string;
   readonly tableLink?: string;
+  // Submit-time snapshot — only on the full per-UUID GET. Empty
+  // lists when the row predates the feature (or the client didn't
+  // opt in). `null` never appears on the wire.
+  readonly settings?: ReadonlyArray<SnapshotSettingEntry>;
+  readonly traceFilter?: ReadonlyArray<Filter>;
+  readonly traceMetadataColumns?: ReadonlyArray<string>;
+}
+
+// Wire entry inside `RawQueryExecution.settings`. Same shape as
+// `SettingFilter` but with the backend's `setting_id` field-name
+// convention. Caller code converts via `snapshotSettingsToFilters`.
+export interface SnapshotSettingEntry {
+  readonly setting_id: string;
+  readonly values: ReadonlyArray<string | number | boolean | null>;
+  readonly category: string;
+}
+
+// Convert a wire snapshot's `settings` to the in-app `SettingFilter`
+// shape (camelCase keys). Stripping unknown / malformed entries is
+// silent — snapshot rehydration is advisory; broken entries shouldn't
+// derail the Settings sub-tab.
+export function snapshotSettingsToFilters(
+  raw: ReadonlyArray<SnapshotSettingEntry> | undefined,
+): SettingFilter[] {
+  if (!raw) return [];
+  const out: SettingFilter[] = [];
+  for (const s of raw) {
+    if (
+      typeof s?.setting_id !== 'string' ||
+      !Array.isArray(s.values) ||
+      typeof s?.category !== 'string'
+    ) {
+      continue;
+    }
+    out.push({
+      settingId: s.setting_id,
+      // SettingFilter.values is `string[]`. The backend stores
+      // exactly what the client sent (numbers / booleans / strings)
+      // because the wire is permissive; on rehydrate we coerce
+      // back to strings so the bigTraceSettingsStorage layer sees
+      // the same shape it serialized.
+      values: s.values.map((v) => (v === null ? '' : String(v))),
+      // Narrow to SettingCategory by trust — the backend echoes
+      // back what the client sent. Unknown categories pass through
+      // and the settings UI falls back to a default rendering.
+      category: s.category as SettingFilter['category'],
+    });
+  }
+  return out;
 }
 
 // ISO-8601 → epoch ms; invalid/missing → undefined (never NaN).
@@ -77,9 +139,9 @@ export class QueryHistoryStorage {
     await this.client().deleteQueryExecution(uuid);
   }
 
-  // The listing endpoint clips perfettoSql; the per-uuid endpoint returns the
-  // full text. Use this on demand (e.g. when the user expands a clamped SQL
-  // preview in the history sidebar).
+  // The listing endpoint clips perfettoSql; the per-uuid endpoint
+  // returns the full text. Used by the history sidebar when the user
+  // expands a clamped SQL preview.
   async fetchFullSql(uuid: string): Promise<string | undefined> {
     const raw = await this.client().getQueryExecution(uuid);
     return raw.perfettoSql;

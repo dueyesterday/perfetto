@@ -17,6 +17,7 @@ import {InMemoryDataSource} from '../../components/widgets/datagrid/in_memory_da
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {endpointStorage} from '../settings/endpoint_storage';
 import type {SettingFilter} from '../settings/settings_types';
+import type {Filter} from '../../components/widgets/datagrid/model';
 import {BigtraceAsyncDataSource} from './bigtrace_async_data_source';
 import {
   BigtraceQueryClient,
@@ -24,7 +25,11 @@ import {
   QueryNotFoundError,
 } from './bigtrace_query_client';
 import {forwardAbort} from './abort_utils';
-import {isoToEpochMs, type RawQueryExecution} from './query_history_storage';
+import {
+  isoToEpochMs,
+  type RawQueryExecution,
+  snapshotSettingsToFilters,
+} from './query_history_storage';
 import {queryStore, TERMINAL_STATUSES} from './query_store';
 import {makeQueryResponse} from '../pages/query_tabs_state';
 import type {BigTraceEditorTab} from '../pages/query_tabs_state';
@@ -77,8 +82,25 @@ export class QueryRunner {
 
     await bigTraceSettingsStorage.loadSettings();
 
-    const settings = bigTraceSettingsStorage.buildSettingFilters();
-    tab.querySettings = settings;
+    // Per-tab overrides win, then globals fill in for any setting
+    // the user hasn't touched on this tab's Settings sub-tab.
+    // Without the merge, a tab that only overrides trace_directory
+    // would ship a single-entry settings array and the backend
+    // would silently lose trace_limit etc. The merged result is
+    // persisted back to the tab so the Settings sub-tab UI
+    // converges to a self-contained snapshot after the first Run.
+    const defaults = bigTraceSettingsStorage.buildSettingFilters();
+    const byId = new Map<string, SettingFilter>();
+    for (const s of defaults) byId.set(s.settingId, s);
+    for (const s of tab.querySettings) byId.set(s.settingId, s);
+    tab.querySettings = Array.from(byId.values());
+    const settings = tab.querySettings;
+    // Per-tab snapshot is the source of truth. Globals (the
+    // /settings page state) are read only at tab-creation time;
+    // here we ship what the user staged on this tab's Settings
+    // sub-tab.
+    const traceFilter = tab.traceFilter;
+    const traceMetadataColumns = tab.traceMetadataColumns;
 
     const queryClient = new BigtraceQueryClient(endpoint);
     tab.queryClient = queryClient;
@@ -96,6 +118,8 @@ export class QueryRunner {
           settings,
           requestController.signal,
           wallStartMs,
+          traceFilter,
+          traceMetadataColumns,
         );
       } else {
         await this.runSync(
@@ -105,6 +129,8 @@ export class QueryRunner {
           settings,
           requestController.signal,
           wallStartMs,
+          traceFilter,
+          traceMetadataColumns,
         );
       }
     } catch (e) {
@@ -209,6 +235,15 @@ export class QueryRunner {
     tab.editorText = details.perfettoSql || fallbackQuery;
     const startMs = isoToEpochMs(details.startTime);
     if (startMs !== undefined) exec.startTime = startMs;
+    // Rehydrate the per-tab snapshot from the full GET so the
+    // Settings sub-tab shows what THIS query was submitted with.
+    // Empty incoming list -> empty per-tab field, never falls back
+    // to globals (the snapshot is authoritative for a historical
+    // query).
+    tab.querySettings = snapshotSettingsToFilters(details.settings);
+    tab.traceFilter = [...(details.traceFilter ?? [])];
+    tab.traceMetadataColumns = [...(details.traceMetadataColumns ?? [])];
+    this.cb.markDirty?.();
 
     const isTerminal = TERMINAL_STATUSES.has(exec.status);
     if (isTerminal) {
@@ -271,8 +306,17 @@ export class QueryRunner {
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal,
     wallStartMs: number,
+    traceFilter: ReadonlyArray<Filter>,
+    traceMetadataColumns: ReadonlyArray<string>,
   ): Promise<void> {
-    const data = await client.executeAsync(query, tab.limit, settings, signal);
+    const data = await client.executeAsync(
+      query,
+      tab.limit,
+      settings,
+      signal,
+      traceFilter,
+      traceMetadataColumns,
+    );
     if (data.queryUuid === undefined || data.queryUuid === '') {
       throw new Error('Backend did not return a queryUuid for async execute');
     }
@@ -313,8 +357,17 @@ export class QueryRunner {
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal,
     wallStartMs: number,
+    traceFilter: ReadonlyArray<Filter>,
+    traceMetadataColumns: ReadonlyArray<string>,
   ): Promise<void> {
-    const result = await client.executeSync(query, tab.limit, settings, signal);
+    const result = await client.executeSync(
+      query,
+      tab.limit,
+      settings,
+      signal,
+      traceFilter,
+      traceMetadataColumns,
+    );
     if (result.queryUuid === undefined || result.queryUuid === '') {
       throw new Error('Backend did not return a queryUuid for sync execute');
     }

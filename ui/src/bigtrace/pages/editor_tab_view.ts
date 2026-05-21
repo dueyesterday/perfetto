@@ -31,10 +31,17 @@ import {BigtraceQueryClient} from '../query/bigtrace_query_client';
 import type {QueryRunner} from '../query/query_runner';
 import {
   type BigTraceEditorTab,
+  type QuerySubTab,
   type QueryTabsState,
   deriveTitleFromQuery,
 } from './query_tabs_state';
 import {renderResultsPanel} from './results_panel';
+import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
+import type {
+  SettingCategory,
+  SettingFilter,
+} from '../settings/settings_types';
+import {type SettingsBindings, SettingsPage} from './settings_page';
 
 export interface EditorTabViewAttrs {
   readonly tab: BigTraceEditorTab;
@@ -58,14 +65,116 @@ export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
       tab.queryResult.totalRowCount = tab.execution.processedRows;
     }
 
-    return m(SplitPanel, {
-      direction: 'vertical',
-      initialSplit: {percent: 22},
-      minSize: 100,
-      firstPanel: renderEditorPanel(tab, tabsState, runner, useBigtraceBackend),
-      secondPanel: renderResultsPanel(tab, tabsState, runner),
-    });
+    // Sub-tab nav row sits between the editor-tabs strip (rendered
+    // by the parent Tabs widget) and the per-sub-tab body. Two pill
+    // buttons + chevron: Bigtrace Settings → Query. Both clickable;
+    // active pill filled. Snapshot is editable even after the query
+    // has run; clicking Run again re-executes in place.
+    const body =
+      tab.activeSubTab === 'settings'
+        ? m(SettingsPage, {bindings: buildTabBindings(tab, tabsState)})
+        : m(SplitPanel, {
+            direction: 'vertical',
+            initialSplit: {percent: 22},
+            minSize: 100,
+            firstPanel: renderEditorPanel(
+              tab,
+              tabsState,
+              runner,
+              useBigtraceBackend,
+            ),
+            secondPanel: renderResultsPanel(tab, tabsState, runner),
+          });
+    return m('.pf-bt-editor-tab', [renderSubTabNav(tab, tabsState), body]);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Sub-tab nav (pill segmented control with chevron).
+// ---------------------------------------------------------------------------
+
+function renderSubTabNav(
+  tab: BigTraceEditorTab,
+  tabsState: QueryTabsState,
+): m.Children {
+  const pill = (key: QuerySubTab, label: string) =>
+    m(
+      'button.pf-bt-subtab-nav__pill',
+      {
+        className:
+          tab.activeSubTab === key ? 'pf-bt-subtab-nav__pill--active' : '',
+        onclick: () => {
+          if (tab.activeSubTab === key) return;
+          tab.activeSubTab = key;
+          tabsState.markDirty();
+        },
+      },
+      label,
+    );
+  return m('.pf-bt-subtab-nav', [
+    pill('settings', 'Bigtrace Settings'),
+    m('span.pf-bt-subtab-nav__chevron', {'aria-hidden': 'true'}, '›'),
+    pill('query', 'Query'),
+  ]);
+}
+
+// Per-tab bindings passed to SettingsPage's embedded mode. Each
+// getter returns a snapshot of the tab's current state; each setter
+// mutates the tab in place and flips the tabs-state dirty flag.
+// Execution-setting helpers maintain the SettingFilter[] wire shape
+// on `tab.querySettings` — same shape the runner ships at submit
+// time. `getEffectiveSettings` merges global defaults under per-tab
+// overrides so /traces sees a complete settings array even before
+// the user has edited anything in the sub-tab.
+function buildTabBindings(
+  tab: BigTraceEditorTab,
+  tabsState: QueryTabsState,
+): SettingsBindings {
+  return {
+    getEffectiveSettings: () => mergeSettingFilters(tab.querySettings),
+    getSettingValue: (id) => {
+      const entry = tab.querySettings.find((s) => s.settingId === id);
+      return entry?.values;
+    },
+    setSettingValue: (id, values, category) => {
+      const next = [...tab.querySettings];
+      const idx = next.findIndex((s) => s.settingId === id);
+      const entry: SettingFilter = {
+        settingId: id,
+        values: [...values],
+        category: category as SettingCategory,
+      };
+      if (idx >= 0) next[idx] = entry;
+      else next.push(entry);
+      tab.querySettings = next;
+      tabsState.markDirty();
+    },
+    getTraceFilter: () => tab.traceFilter,
+    setTraceFilter: (filters) => {
+      tab.traceFilter = [...filters];
+      tabsState.markDirty();
+    },
+    getTraceMetadataColumns: () => tab.traceMetadataColumns,
+    setTraceMetadataColumns: (cols) => {
+      tab.traceMetadataColumns = [...cols];
+      tabsState.markDirty();
+    },
+  };
+}
+
+// Per-tab overrides win, then globals fill in for any setting the
+// user hasn't touched on this tab's Settings sub-tab. Same merge
+// the runner applies at submit — keeping the logic in one place
+// so the data source (trace-list grid) and the runner can't drift.
+function mergeSettingFilters(
+  overrides: ReadonlyArray<SettingFilter>,
+): SettingFilter[] {
+  const byId = new Map<string, SettingFilter>();
+  for (const s of bigTraceSettingsStorage.buildSettingFilters()) {
+    byId.set(s.settingId, s);
+  }
+  for (const s of overrides) byId.set(s.settingId, s);
+  return Array.from(byId.values());
 }
 
 // ---------------------------------------------------------------------------

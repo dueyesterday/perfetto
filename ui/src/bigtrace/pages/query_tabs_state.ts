@@ -13,11 +13,15 @@
 // limitations under the License.
 
 import type {DataSource} from '../../components/widgets/datagrid/data_source';
+import type {Filter} from '../../components/widgets/datagrid/model';
 import type {Row as DataGridRow} from '../../trace_processor/query_result';
 import {debounce} from '../../base/rate_limiters';
 import {shortUuid} from '../../base/uuid';
 import type {BigtraceQueryClient} from '../query/bigtrace_query_client';
 import {queryStore, type QueryExecution} from '../query/query_store';
+import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
+import {traceFilterState} from '../settings/trace_filter_state';
+import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
 import type {SettingFilter} from '../settings/settings_types';
 
 const QUERY_TABS_STORAGE_KEY = 'bigtraceQueryTabs';
@@ -82,7 +86,20 @@ export interface BigTraceEditorTab {
   queryResult?: QueryResponse;
   isLoading: boolean;
   dataSource?: DataSource;
+  // Per-tab snapshot — what THIS tab's next Run will ship. Seeded
+  // from the global /settings defaults at tab creation; the
+  // Settings sub-tab on the Query page mutates these directly.
+  // The runner reads them at Run time (no longer pulls from
+  // globals), so two tabs can run different snapshots side-by-side.
+  // Read back from the backend on history-tab open via the new
+  // `/query_executions/{uuid}` snapshot fields.
   querySettings: SettingFilter[];
+  traceFilter: Filter[];
+  traceMetadataColumns: string[];
+  // Which sub-tab the Query page renders for this tab. Defaults
+  // to 'query' for both new and historical tabs; the user can flip
+  // to 'settings' to inspect / edit the per-tab snapshot.
+  activeSubTab: QuerySubTab;
   // Tab-lifetime: every backend request plumbs `signal`; aborts on close.
   readonly lifecycle: AbortController;
   // Per-execute request: Cancel aborts this without tearing down the tab.
@@ -96,11 +113,15 @@ export interface BigTraceEditorTab {
   execution?: QueryExecution;
   // Stale-poll guard: bumped on each startPolling() call.
   pollGeneration: number;
-  // Active results tab (Table / Error / Chart). Undefined = auto-select:
-  // Error when the query failed with no rows, Table otherwise. Set once
-  // the user clicks a tab, so their choice sticks across redraws.
+  // Active results tab (Table / Error / Chart) — set once the user
+  // clicks one, so the choice sticks across redraws. Undefined =
+  // auto-select per results_panel.ts.
   resultsTabKey?: string;
 }
+
+// Two sub-tabs on the Query page, navigated via the pill row between
+// the editor-tabs strip and the Run toolbar.
+export type QuerySubTab = 'settings' | 'query';
 
 // Persisted subset of BigTraceEditorTab. Transient state is rebuilt on load.
 interface StoredTab {
@@ -111,6 +132,10 @@ interface StoredTab {
   readonly materialize: boolean;
   readonly queryUuid?: string;
   readonly error?: string;
+  readonly querySettings?: ReadonlyArray<SettingFilter>;
+  readonly traceFilter?: ReadonlyArray<Filter>;
+  readonly traceMetadataColumns?: ReadonlyArray<string>;
+  readonly activeSubTab?: QuerySubTab;
 }
 
 interface StoredState {
@@ -118,7 +143,7 @@ interface StoredState {
   readonly activeTabId?: string;
 }
 
-// Manages editor tabs + localStorage persistence across page reloads.
+// Survives QueryPage re-mounts so tab layout persists across navigation.
 export class QueryTabsState {
   tabs: BigTraceEditorTab[] = [];
   activeTabId = '';
@@ -149,6 +174,7 @@ export class QueryTabsState {
     queryUuid?: string,
     materialize?: boolean,
     forceNew?: boolean,
+    stored?: Partial<StoredTab>,
   ): BigTraceEditorTab {
     if (!forceNew) {
       const existingTab = this.tabs.find((t) => {
@@ -170,6 +196,29 @@ export class QueryTabsState {
     // labels instead of "Query N". maybeAutoNameTab refines on first run.
     const derivedTitle =
       title ?? (initialQuery && deriveTitleFromQuery(initialQuery));
+    // Seed per-tab snapshot. For fresh tabs (no `stored`), copy
+    // from /settings defaults so the user sees their current
+    // defaults reflected in the Settings sub-tab. For
+    // restored-from-storage tabs, prefer the persisted snapshot.
+    // Historical-tab opens leave the snapshot empty here; the
+    // runner's resumeFromHistory rehydrates from the backend.
+    const isFromStorage = stored !== undefined;
+    const isFromHistory = queryUuid !== undefined && !isFromStorage;
+    const querySettings: SettingFilter[] = isFromStorage
+      ? [...(stored?.querySettings ?? [])]
+      : isFromHistory
+        ? []
+        : [...bigTraceSettingsStorage.buildSettingFilters()];
+    const traceFilter: Filter[] = isFromStorage
+      ? [...(stored?.traceFilter ?? [])]
+      : isFromHistory
+        ? []
+        : [...traceFilterState.get()];
+    const traceMetadataColumns: string[] = isFromStorage
+      ? [...(stored?.traceMetadataColumns ?? [])]
+      : isFromHistory
+        ? []
+        : [...traceQueryColumnsState.get()];
     const tab: BigTraceEditorTab = {
       id: shortUuid(),
       title: derivedTitle || this.nextTabName(),
@@ -178,7 +227,13 @@ export class QueryTabsState {
       queryResult: undefined,
       isLoading: false,
       dataSource: undefined,
-      querySettings: [],
+      querySettings,
+      traceFilter,
+      traceMetadataColumns,
+      // Both new and historical tabs default to the Query sub-tab —
+      // simpler one-rule model (per design choice Q3). Users open
+      // the Settings sub-tab on demand to inspect / edit.
+      activeSubTab: stored?.activeSubTab ?? 'query',
       lifecycle: new AbortController(),
       activeRequest: undefined,
       // History-reopen → Persistent; new tab → sync; caller overrides.
@@ -264,14 +319,17 @@ export class QueryTabsState {
         materialize: t.materialize,
         queryUuid: t.queryUuid,
         error: t.queryResult?.error,
+        // Persist the per-tab snapshot so user edits to the
+        // Settings sub-tab survive reloads. Restored on the next
+        // session via the `stored` arg on addNewTab.
+        querySettings: t.querySettings,
+        traceFilter: t.traceFilter,
+        traceMetadataColumns: t.traceMetadataColumns,
+        activeSubTab: t.activeSubTab,
       })),
       activeTabId: this.activeTabId,
     };
-    try {
-      localStorage.setItem(QUERY_TABS_STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      // QuotaExceededError — non-fatal; tabs persist on next successful save.
-    }
+    localStorage.setItem(QUERY_TABS_STORAGE_KEY, JSON.stringify(state));
   }
 
   private loadFromStorage(): boolean {
@@ -286,14 +344,14 @@ export class QueryTabsState {
     if (!Array.isArray(parsed.tabs) || parsed.tabs.length === 0) return false;
 
     for (const t of parsed.tabs) {
-      // Skip corrupted entries — missing fields would create broken tabs.
-      if (typeof t.editorText !== 'string') continue;
       const tab = this.addNewTab(
         t.title,
         t.editorText,
-        typeof t.limit === 'number' && t.limit > 0 ? t.limit : undefined,
+        t.limit,
         t.queryUuid,
         t.materialize,
+        /* forceNew */ false,
+        t,
       );
       if (t.error !== undefined && t.error !== '') {
         tab.queryResult = makeQueryResponse(tab.editorText, {error: t.error});

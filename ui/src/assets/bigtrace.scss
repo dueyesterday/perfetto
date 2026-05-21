@@ -692,6 +692,73 @@ pre.pf-bt-history-item-query--standalone {
   }
 }
 
+// ---------- Per-tab sub-tab nav ----------
+
+// Pill segmented control sitting between the editor-tabs strip and
+// the per-sub-tab body. Two pills + chevron: [Bigtrace Settings] ›
+// [Query]. Both clickable; active pill filled.
+.pf-bt-editor-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pf-bt-subtab-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--pf-color-border-secondary);
+  flex: 0 0 auto;
+}
+
+.pf-bt-subtab-nav__pill {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--pf-color-border-secondary);
+  background: transparent;
+  color: inherit;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  line-height: 1.4;
+}
+
+.pf-bt-subtab-nav__pill:hover {
+  background: var(--pf-color-background-secondary);
+}
+
+.pf-bt-subtab-nav__pill--active {
+  background: var(--pf-color-accent);
+  color: var(--pf-color-on-accent, #fff);
+  border-color: var(--pf-color-accent);
+}
+
+.pf-bt-subtab-nav__chevron {
+  opacity: 0.55;
+  font-size: 1.15em;
+  line-height: 1;
+}
+
+.pf-bt-editor-tab > :not(.pf-bt-subtab-nav) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+// Settings sub-tab embedded SettingsPage — scrollable container,
+// no SettingsShell chrome.
+.pf-bt-settings-embedded {
+  overflow: auto;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 16px 20px 24px;
+
+  .pf-bt-settings-page {
+    margin: 0;
+  }
+}
+
 // ---------- Settings page ----------
 
 .pf-bt-settings-page {

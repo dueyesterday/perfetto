@@ -62,6 +62,12 @@ function setupContentSecurityPolicy() {
       `'self'`,
       'https://autopush-brush-googleapis.corp.google.com',
       'https://brush-googleapis.corp.google.com',
+      // Local development: allow connecting to a BigTrace backend
+      // running on the user's machine. The endpoint is user-
+      // configurable via endpointStorage, so any local port could
+      // be in play. Wildcarded by port; the host is constrained.
+      'http://127.0.0.1:*',
+      'http://localhost:*',
     ],
     'img-src': [`'self'`, 'data:', 'blob:'],
     'style-src': [
