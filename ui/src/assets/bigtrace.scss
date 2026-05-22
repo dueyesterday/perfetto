@@ -727,12 +727,11 @@ pre.pf-bt-history-item-query--standalone {
   }
 }
 
-// ---------- Per-tab settings drawer ----------
+// ---------- Per-tab settings chip strip ----------
 
-// The drawer prototype: a collapsible header above the editor that
-// shows the current Bigtrace snapshot at a glance. Expanded, it
-// pushes the editor down and surfaces the same Trace Address panel
-// the /settings page renders.
+// Editor tab is a vertical stack: chip strip on top, editor +
+// results SplitPanel underneath. The strip stays at its natural
+// height; the SplitPanel takes the rest.
 .pf-bt-editor-tab {
   display: flex;
   flex-direction: column;
@@ -740,68 +739,53 @@ pre.pf-bt-history-item-query--standalone {
   min-height: 0;
 }
 
-.pf-bt-settings-drawer__header {
-  appearance: none;
-  background: var(--pf-color-background-secondary);
-  border: none;
-  border-bottom: 1px solid var(--pf-color-border-secondary);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  padding: 6px 12px;
+.pf-bt-editor-tab > .pf-split-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pf-bt-settings-bar {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  flex: 0 0 auto;
-}
-
-.pf-bt-settings-drawer__header:hover {
-  background: var(--pf-color-hover, rgba(0, 0, 0, 0.04));
-}
-
-// Outer SplitPanel: drawer body on top, editor+results inner
-// SplitPanel below. When the drawer is closed, the first pane
-// is forced to 0px (controlled mode), so we also hide the
-// SplitPanel's resize handle — otherwise a draggable bar would
-// float at the top of the editor pane with no visible drawer.
-.pf-bt-drawer-split--closed .pf-resize-handle {
-  display: none;
-}
-
-.pf-bt-settings-drawer--open .pf-bt-settings-drawer__header {
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--pf-color-background-secondary);
   border-bottom: 1px solid var(--pf-color-border-secondary);
-}
+  flex: 0 0 auto;
 
-.pf-bt-settings-drawer__chevron {
-  display: inline-block;
-  width: 1em;
-  opacity: 0.7;
-}
+  &__label {
+    font-weight: 600;
+    padding-top: 4px;
+    flex: 0 0 auto;
+  }
 
-.pf-bt-settings-drawer__label {
-  font-weight: 600;
-}
+  &__chips {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
 
-.pf-bt-settings-drawer__summary {
-  opacity: 0.65;
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+  // Make every chip in the strip click-friendly — Chip uses a div
+  // root, so cursor has to be set from here. The +Add chip and the
+  // per-chip body click both rely on this.
+  .pf-chip {
+    cursor: pointer;
+  }
 
-// SettingsPage embedded inside the outer SplitPanel's first
-// pane gets its own scroll context.
-.pf-bt-drawer-split > .pf-split-panel__first {
-  overflow: auto;
+  // Vertical hairline that sits between the input-side chips
+  // (settings + filters) and the output-side "Show with results"
+  // chip. Inline — no extra gap absorbed; the divider itself is
+  // the boundary marker, nothing else.
+  &__divider {
+    flex: 0 0 1px;
+    align-self: stretch;
+    background: var(--pf-color-border-secondary);
+  }
 }
 
 // "Traces" card header — title with the refresh icon sitting
-// directly to its right (gap-controlled, not flex-end). Both
-// /settings and the embedded drawer render the same SettingsPage,
-// so this styling applies in both surfaces.
+// directly to its right (gap-controlled, not flex-end). Used by
+// both /settings and the embedded SettingsPage hosted in the +Add
+// modal.
 .pf-bt-trace-card__title-row {
   display: flex;
   align-items: center;
@@ -812,9 +796,52 @@ pre.pf-bt-history-item-query--standalone {
   }
 }
 
-.pf-bt-editor-tab > :not(.pf-bt-settings-drawer) {
-  flex: 1 1 auto;
-  min-height: 0;
+// Per-chip edit modal — narrow, content stacked vertically. The +Add
+// modal hosts the full SettingsPage embedded view, so it picks up the
+// existing .pf-bt-settings-embedded layout below.
+.pf-bt-settings-chip-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 320px;
+  padding: 4px 0;
+}
+
+.pf-bt-settings-chip-modal__description {
+  font-size: 12px;
+  color: var(--pf-color-text-muted);
+  line-height: 1.4;
+}
+
+.pf-bt-settings-chip-modal__control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pf-bt-settings-chip-modal__field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pf-bt-settings-chip-modal__field-label {
+  flex: 0 0 80px;
+  font-weight: 500;
+}
+
+.pf-bt-settings-chip-modal__field-value {
+  font-family: var(--pf-font-monospace, monospace);
+}
+
+// Vertical column of checkboxes for the "Show with results" picker.
+// Small gap so a long list (10+ columns) stays compact in the modal.
+.pf-bt-settings-chip-modal__checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 // Settings sub-tab embedded SettingsPage — scrollable container,

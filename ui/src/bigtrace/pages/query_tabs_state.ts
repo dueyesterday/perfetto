@@ -96,27 +96,6 @@ export interface BigTraceEditorTab {
   querySettings: SettingFilter[];
   traceFilter: Filter[];
   traceMetadataColumns: string[];
-  // Which sub-tab the Query page renders for this tab. Defaults
-  // to 'query' for both new and historical tabs; the user can flip
-  // to 'settings' to inspect / edit the per-tab snapshot.
-  activeSubTab: QuerySubTab;
-  // Drawer-prototype: when true, the per-tab settings panel
-  // expands inline above the editor instead of replacing it via
-  // the sub-tab pill. The two states are independent — the pill
-  // row is hidden in this UI, but `activeSubTab` is still
-  // present for persistence backwards-compat.
-  settingsDrawerOpen: boolean;
-  // Expanded drawer height in pixels. Adjusted by the drag handle
-  // at the bottom of the drawer body. Undefined → use the default
-  // (DEFAULT_DRAWER_HEIGHT_PX). Clamped at use-time to keep at
-  // least the editor visible.
-  settingsDrawerHeight?: number;
-  // Latest count of traces the current trace_filter selects.
-  // Written by the embedded SettingsPage data source on each
-  // fetch; read by the closed drawer summary so "filter: N
-  // traces" appears without a separate /traces round-trip.
-  // Undefined until at least one fetch has landed.
-  lastFilteredTraceCount?: number;
   // Tab-lifetime: every backend request plumbs `signal`; aborts on close.
   readonly lifecycle: AbortController;
   // Per-execute request: Cancel aborts this without tearing down the tab.
@@ -136,10 +115,6 @@ export interface BigTraceEditorTab {
   resultsTabKey?: string;
 }
 
-// Two sub-tabs on the Query page, navigated via the pill row between
-// the editor-tabs strip and the Run toolbar.
-export type QuerySubTab = 'settings' | 'query';
-
 // Persisted subset of BigTraceEditorTab. Transient state is rebuilt on load.
 interface StoredTab {
   readonly id: string;
@@ -152,9 +127,6 @@ interface StoredTab {
   readonly querySettings?: ReadonlyArray<SettingFilter>;
   readonly traceFilter?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
-  readonly activeSubTab?: QuerySubTab;
-  readonly settingsDrawerOpen?: boolean;
-  readonly settingsDrawerHeight?: number;
 }
 
 interface StoredState {
@@ -249,12 +221,6 @@ export class QueryTabsState {
       querySettings,
       traceFilter,
       traceMetadataColumns,
-      // Both new and historical tabs default to the Query sub-tab —
-      // simpler one-rule model (per design choice Q3). Users open
-      // the Settings sub-tab on demand to inspect / edit.
-      activeSubTab: stored?.activeSubTab ?? 'query',
-      settingsDrawerOpen: stored?.settingsDrawerOpen ?? false,
-      settingsDrawerHeight: stored?.settingsDrawerHeight,
       lifecycle: new AbortController(),
       activeRequest: undefined,
       // History-reopen → Persistent; new tab → sync; caller overrides.
@@ -346,9 +312,6 @@ export class QueryTabsState {
         querySettings: t.querySettings,
         traceFilter: t.traceFilter,
         traceMetadataColumns: t.traceMetadataColumns,
-        activeSubTab: t.activeSubTab,
-        settingsDrawerOpen: t.settingsDrawerOpen,
-        settingsDrawerHeight: t.settingsDrawerHeight,
       })),
       activeTabId: this.activeTabId,
     };
