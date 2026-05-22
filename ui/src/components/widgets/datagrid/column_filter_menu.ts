@@ -608,3 +608,151 @@ function renderFilterMenuItems(config: FilterMenuAttrs): m.ChildArray {
       return renderUnknownTypeFilterMenuItems(config);
   }
 }
+
+// ---------------------------------------------------------------------------
+// EditFilterMenu — edit-mode counterpart of FilterMenu.
+//
+// FilterMenu (above) is a `MenuItem` that lives inside the column-header
+// dropdown and lets the user ADD a new filter. EditFilterMenu instead
+// renders submenu content directly (so callers can mount it inside a
+// Popup) and lets the user CHANGE an existing filter's value.
+//
+// Op is locked: changing the op requires removing the chip and adding a
+// new filter via the column header. The exception is the natural
+// "promotion" from `=`/`!=` to `in`/`not in` when the column type lets us
+// use the distinct-values multiselect (matches the wire shape add-mode
+// produces from the same submenu — see renderDistinctValueFilterMenuItems).
+// ---------------------------------------------------------------------------
+
+export interface EditFilterMenuAttrs {
+  readonly datasource: DataSource;
+  readonly field: string;
+  readonly columnType: ColumnType | undefined;
+  readonly valueFormatter: (value: SqlValue) => string;
+  readonly initialFilter: FilterOpAndValue;
+  // Called with the new filter the user composed in the editor. The
+  // caller is responsible for replacing the old filter at the right
+  // index (this component doesn't know its own index).
+  readonly onFilterReplace: (filter: FilterOpAndValue) => void;
+}
+
+export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
+  view({attrs}: m.Vnode<EditFilterMenuAttrs>): m.Children {
+    const {
+      datasource,
+      field,
+      columnType,
+      valueFormatter,
+      initialFilter,
+      onFilterReplace,
+    } = attrs;
+
+    // `is null` / `is not null` carry no value — nothing to edit. Callers
+    // can detect this case and skip wiring onEdit on the chip; if a popup
+    // does open anyway the user just sees an empty body.
+    if (initialFilter.op === 'is null' || initialFilter.op === 'is not null') {
+      return null;
+    }
+
+    // Multi-value ops keep their op on save.
+    if (initialFilter.op === 'in' || initialFilter.op === 'not in') {
+      const op = initialFilter.op;
+      return m(DistinctValuesSubmenu, {
+        datasource,
+        field,
+        // Match add-mode: `in`/`not in` doesn't match NULL, use the null
+        // op instead.
+        excludeNull: true,
+        valueFormatter,
+        initialSelectedValues: initialFilter.value,
+        onApply: (selectedValues) => {
+          onFilterReplace({op, value: Array.from(selectedValues)});
+        },
+      });
+    }
+
+    // `=` / `!=` on text/identifier/unknown columns use the distinct-
+    // values multiselect — matches add-mode's "Equals" submenu, which
+    // emits `op: 'in'` / `op: 'not in'`. We promote the op on save for
+    // consistency with that wire shape.
+    if (initialFilter.op === '=' || initialFilter.op === '!=') {
+      const usesDistinctValues =
+        columnType === 'text' ||
+        columnType === 'identifier' ||
+        columnType === undefined;
+      if (usesDistinctValues) {
+        const promotedOp: 'in' | 'not in' =
+          initialFilter.op === '=' ? 'in' : 'not in';
+        return m(DistinctValuesSubmenu, {
+          datasource,
+          field,
+          excludeNull: true,
+          valueFormatter,
+          initialSelectedValues: [initialFilter.value],
+          onApply: (selectedValues) => {
+            onFilterReplace({
+              op: promotedOp,
+              value: Array.from(selectedValues),
+            });
+          },
+        });
+      }
+      // Quantitative column: numeric input, op preserved on save.
+      const op = initialFilter.op;
+      return m(TextFilterSubmenu, {
+        placeholder: 'Enter value...',
+        inputType: 'number',
+        initialValue: sqlValueToString(initialFilter.value),
+        submitLabel: 'Save',
+        onApply: (value) => {
+          onFilterReplace({op, value});
+        },
+      });
+    }
+
+    // Numeric comparison ops: numeric input, op preserved.
+    if (
+      initialFilter.op === '<' ||
+      initialFilter.op === '<=' ||
+      initialFilter.op === '>' ||
+      initialFilter.op === '>='
+    ) {
+      const op = initialFilter.op;
+      return m(TextFilterSubmenu, {
+        placeholder: 'Enter number...',
+        inputType: 'number',
+        initialValue: sqlValueToString(initialFilter.value),
+        submitLabel: 'Save',
+        onApply: (value) => {
+          onFilterReplace({op, value});
+        },
+      });
+    }
+
+    // glob / not glob: text input, op preserved.
+    if (initialFilter.op === 'glob' || initialFilter.op === 'not glob') {
+      const op = initialFilter.op;
+      return m(TextFilterSubmenu, {
+        placeholder: 'Enter glob pattern...',
+        inputType: 'text',
+        initialValue: sqlValueToString(initialFilter.value),
+        submitLabel: 'Save',
+        onApply: (value) => {
+          onFilterReplace({op, value});
+        },
+      });
+    }
+
+    // Exhaustiveness fall-through; FilterOpAndValue should be covered.
+    return null;
+  }
+}
+
+// SqlValue → input-ready string. null becomes empty (NULL filters use
+// the dedicated `is null` op, not value-bearing ops, so seeing a null
+// value here means a malformed filter; render empty rather than the
+// literal "null").
+function sqlValueToString(value: SqlValue): string {
+  if (value === null) return '';
+  return String(value);
+}
