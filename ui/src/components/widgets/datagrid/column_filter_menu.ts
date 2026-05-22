@@ -50,6 +50,10 @@ interface DistinctValuesSubmenuAttrs {
   readonly field: string;
   readonly excludeNull?: boolean;
   readonly valueFormatter: (value: SqlValue) => string;
+  // Pre-selected values shown ticked when the submenu mounts. Read once
+  // in oninit so in-flight user edits aren't clobbered by parent
+  // re-renders. Default: empty set (add-mode).
+  readonly initialSelectedValues?: ReadonlyArray<SqlValue>;
   readonly onApply: (selectedValues: Set<SqlValue>) => void;
 }
 
@@ -59,6 +63,12 @@ export class DistinctValuesSubmenu
   private selectedValues = new Set<SqlValue>();
   private searchQuery = '';
   private static readonly MAX_VISIBLE_ITEMS = 100;
+
+  oninit({attrs}: m.Vnode<DistinctValuesSubmenuAttrs>) {
+    if (attrs.initialSelectedValues !== undefined) {
+      this.selectedValues = new Set(attrs.initialSelectedValues);
+    }
+  }
 
   view({attrs}: m.Vnode<DistinctValuesSubmenuAttrs>) {
     const {datasource, field, excludeNull, valueFormatter, onApply} = attrs;
@@ -202,6 +212,12 @@ export class DistinctValuesSubmenu
 interface TextFilterSubmenuAttrs {
   readonly placeholder?: string;
   readonly inputType: 'text' | 'number';
+  // Pre-populates the input on mount. Read once in oninit so in-flight
+  // typing isn't clobbered by parent re-renders. Default: empty.
+  readonly initialValue?: string;
+  // Overrides the submit-button label. Defaults to 'Add Filter' for the
+  // add-mode flow; edit-mode passes 'Save'.
+  readonly submitLabel?: string;
   readonly onApply: (value: string | number) => void;
 }
 
@@ -210,8 +226,19 @@ export class TextFilterSubmenu
 {
   private inputValue = '';
 
+  oninit({attrs}: m.Vnode<TextFilterSubmenuAttrs>) {
+    if (attrs.initialValue !== undefined) {
+      this.inputValue = attrs.initialValue;
+    }
+  }
+
   view({attrs}: m.Vnode<TextFilterSubmenuAttrs>) {
-    const {placeholder = 'Enter value...', inputType, onApply} = attrs;
+    const {
+      placeholder = 'Enter value...',
+      inputType,
+      submitLabel = 'Add Filter',
+      onApply,
+    } = attrs;
 
     const applyFilter = () => {
       if (this.inputValue.trim().length > 0) {
@@ -233,7 +260,7 @@ export class TextFilterSubmenu
       Form,
       {
         className: 'pf-data-grid__text-filter-form',
-        submitLabel: 'Add Filter',
+        submitLabel,
         submitIcon: 'check',
         onSubmit: (e: Event) => {
           e.preventDefault();
