@@ -17,6 +17,7 @@ import {classNames} from '../../../base/classnames';
 import {Box} from '../../../widgets/box';
 import {Button, ButtonVariant} from '../../../widgets/button';
 import {Chip} from '../../../widgets/chip';
+import type {HTMLAttrs} from '../../../widgets/common';
 import {Stack, StackAuto} from '../../../widgets/stack';
 import {isEmptyVnodes} from '../../../base/mithril_utils';
 
@@ -26,7 +27,7 @@ export class GridFilterBar implements m.ClassComponent {
   }
 }
 
-export interface GridFilterChipAttrs {
+export interface GridFilterChipAttrs extends HTMLAttrs {
   readonly content: m.Children;
   readonly onRemove?: () => void;
   // Called when the chip BODY is clicked (the × button is excluded
@@ -37,25 +38,33 @@ export interface GridFilterChipAttrs {
 
 export class GridFilterChip implements m.ClassComponent<GridFilterChipAttrs> {
   view({attrs}: m.Vnode<GridFilterChipAttrs>): m.Children {
+    // Pass through any HTML attrs (notably `ref` and `active`, which
+    // the Popup widget injects when this chip is used as a Popup
+    // trigger) to the underlying Chip widget. Without this, the
+    // class-component boundary swallows those attrs and Popup's
+    // findRef-by-ref fails on mount.
+    const {content, onRemove, onEdit, className, onclick, ...rest} = attrs;
     return m(Chip, {
+      ...rest,
       className: classNames(
         'pf-grid-filter',
-        attrs.onEdit && 'pf-grid-filter--editable',
+        onEdit && 'pf-grid-filter--editable',
+        className,
       ),
-      label: attrs.content,
-      removable: attrs.onRemove !== undefined,
-      onRemove: attrs.onRemove,
+      label: content,
+      removable: onRemove !== undefined,
+      onRemove,
       removeButtonTitle: 'Remove filter',
       // The × close button is rendered as a Button inside the chip
       // root and doesn't stopPropagation. Skip onEdit if the click
       // originated from inside a .pf-button so removing a chip
       // doesn't also open its editor.
-      ...(attrs.onEdit && {
-        onclick: (e: MouseEvent) => {
-          if ((e.target as Element | null)?.closest('.pf-button')) return;
-          attrs.onEdit!();
-        },
-      }),
+      onclick: onEdit
+        ? (e: PointerEvent) => {
+            if ((e.target as Element | null)?.closest('.pf-button')) return;
+            onEdit();
+          }
+        : onclick,
     });
   }
 }
