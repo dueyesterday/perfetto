@@ -235,7 +235,13 @@ function stopBackend() {
   await snap(page, 'settings_loaded');
 
   header('Trace Directory card starts empty; fill it with TRACES_DIR');
-  const tdLabel = page.locator('text=Trace Directory').first();
+  // Scope to the settings card title — the chip strip on the
+  // persistent (hidden) /query route also renders the label
+  // "Trace Directory: (empty)", which a plain `text=` selector
+  // would hit first.
+  const tdLabel = page
+    .locator('.pf-settings-card__title', {hasText: /^Trace Directory$/})
+    .first();
   if ((await tdLabel.count()) === 0) {
     note('Trace Directory label not found on settings page');
   } else {
