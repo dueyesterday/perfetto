@@ -61,12 +61,19 @@ export class DistinctValuesSubmenu
   implements m.ClassComponent<DistinctValuesSubmenuAttrs>
 {
   private selectedValues = new Set<SqlValue>();
+  // Frozen set of values that were selected when this submenu mounted.
+  // Used to pin those items to the top of the list — so edit-mode users
+  // see what's already selected immediately, and so toggling during
+  // editing doesn't cause items to jump around. Stable for the
+  // component's lifetime; not updated when the user toggles items.
+  private pinnedToTop = new Set<SqlValue>();
   private searchQuery = '';
   private static readonly MAX_VISIBLE_ITEMS = 100;
 
   oninit({attrs}: m.Vnode<DistinctValuesSubmenuAttrs>) {
     if (attrs.initialSelectedValues !== undefined) {
       this.selectedValues = new Set(attrs.initialSelectedValues);
+      this.pinnedToTop = new Set(attrs.initialSelectedValues);
     }
   }
 
@@ -86,7 +93,7 @@ export class DistinctValuesSubmenu
     const distinctValues = excludeNull ? data.filter((v) => v !== null) : data;
 
     // Use fuzzy search to filter and get highlighted segments
-    const fuzzyResults = (() => {
+    const baseResults = (() => {
       if (this.searchQuery === '') {
         // No search - show all values without highlighting
         return distinctValues.map((value) => ({
@@ -105,6 +112,21 @@ export class DistinctValuesSubmenu
       }
     })();
 
+    // Partition into pinned (initial selection) + the rest, preserving
+    // each group's internal order. Pinned items stay at the top even
+    // during search and even after the user toggles them off, so the
+    // layout doesn't shift mid-edit.
+    const pinned: typeof baseResults = [];
+    const rest: typeof baseResults = [];
+    for (const r of baseResults) {
+      if (this.pinnedToTop.has(r.value)) {
+        pinned.push(r);
+      } else {
+        rest.push(r);
+      }
+    }
+    const fuzzyResults = [...pinned, ...rest];
+
     // Limit the number of items rendered
     const visibleResults = fuzzyResults.slice(
       0,
@@ -112,6 +134,12 @@ export class DistinctValuesSubmenu
     );
     const remainingCount =
       fuzzyResults.length - DistinctValuesSubmenu.MAX_VISIBLE_ITEMS;
+    // The divider sits after the last pinned item that's actually
+    // visible (so a fully-pinned visibleResults shows no divider, and
+    // a search that filters out all pinned items shows no divider).
+    const visiblePinnedCount = visibleResults.filter((r) =>
+      this.pinnedToTop.has(r.value),
+    ).length;
 
     return m('.pf-distinct-values-menu', [
       m(
@@ -140,7 +168,7 @@ export class DistinctValuesSubmenu
         '.pf-distinct-values-menu__list',
         fuzzyResults.length > 0
           ? [
-              visibleResults.map((result) => {
+              visibleResults.map((result, idx) => {
                 const isSelected = this.selectedValues.has(result.value);
                 // Render highlighted label
                 const labelContent = result.segments.map((segment) => {
@@ -152,7 +180,7 @@ export class DistinctValuesSubmenu
                 });
 
                 // Render custom menu item with highlighted content
-                return m(
+                const item = m(
                   'button.pf-menu-item',
                   {
                     onclick: () => {
@@ -169,6 +197,16 @@ export class DistinctValuesSubmenu
                   }),
                   m('.pf-menu-item__label', labelContent),
                 );
+                // Insert the divider exactly once, after the last
+                // pinned item and before the first unpinned item.
+                const isLastVisiblePinned =
+                  visiblePinnedCount > 0 &&
+                  visiblePinnedCount < visibleResults.length &&
+                  idx === visiblePinnedCount - 1;
+                if (isLastVisiblePinned) {
+                  return [item, m(MenuDivider)];
+                }
+                return item;
               }),
               remainingCount > 0 &&
                 m(MenuItem, {

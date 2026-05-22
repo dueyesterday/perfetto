@@ -323,4 +323,96 @@ describe('DistinctValuesSubmenu — initial state', () => {
     expect(applyButton).toBeDefined();
     expect(applyButton!.disabled).toBe(true);
   });
+
+  // Return the visible distinct-value labels in DOM order (excludes
+  // Apply / Clear footer items, which live in a sibling __footer).
+  function listLabels(root: HTMLElement): string[] {
+    const items = Array.from(
+      root.querySelectorAll('.pf-distinct-values-menu__list .pf-menu-item'),
+    ) as HTMLElement[];
+    return items.map((el) => {
+      const label = el.querySelector('.pf-menu-item__label');
+      return (label?.textContent ?? '').trim();
+    });
+  }
+
+  test('pinned: initial selection renders at the top in original order', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource(['alpha', 'beta', 'gamma', 'delta']),
+        field: 'col',
+        valueFormatter: (v) => String(v),
+        // gamma comes after alpha+beta in the source list but pinning
+        // bumps both pinned items to the top, preserving the source
+        // order WITHIN the pinned group.
+        initialSelectedValues: ['gamma', 'alpha'],
+        onApply: vi.fn(),
+      }),
+    );
+    // Pinned items first (in source order: alpha before gamma),
+    // then the unpinned rest (in source order: beta, delta).
+    expect(listLabels(root)).toEqual(['alpha', 'gamma', 'beta', 'delta']);
+  });
+
+  test('pinned: divider sits between pinned and unpinned groups', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource(['a', 'b', 'c']),
+        field: 'col',
+        valueFormatter: (v) => String(v),
+        initialSelectedValues: ['b'],
+        onApply: vi.fn(),
+      }),
+    );
+    const dividers = root.querySelectorAll(
+      '.pf-distinct-values-menu__list .pf-menu-divider',
+    );
+    expect(dividers.length).toBe(1);
+  });
+
+  test('pinned: no divider when nothing is pinned', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource(['a', 'b', 'c']),
+        field: 'col',
+        valueFormatter: (v) => String(v),
+        // no initialSelectedValues → empty pinned set
+        onApply: vi.fn(),
+      }),
+    );
+    const dividers = root.querySelectorAll(
+      '.pf-distinct-values-menu__list .pf-menu-divider',
+    );
+    expect(dividers.length).toBe(0);
+  });
+
+  test('pinned: no divider when EVERY visible item is pinned', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource(['a', 'b', 'c']),
+        field: 'col',
+        valueFormatter: (v) => String(v),
+        initialSelectedValues: ['a', 'b', 'c'],
+        onApply: vi.fn(),
+      }),
+    );
+    const dividers = root.querySelectorAll(
+      '.pf-distinct-values-menu__list .pf-menu-divider',
+    );
+    expect(dividers.length).toBe(0);
+    // All three items still shown (in source order).
+    expect(listLabels(root)).toEqual(['a', 'b', 'c']);
+  });
 });
