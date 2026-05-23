@@ -42,7 +42,11 @@ import {
 } from './add_column_menu';
 import {Popup, PopupPosition} from '../../../widgets/popup';
 import {CellFilterMenu} from './cell_filter_menu';
-import {EditFilterMenu, FilterMenu} from './column_filter_menu';
+import {
+  EditFilterMenu,
+  FilterMenu,
+  isEditableFilter,
+} from './column_filter_menu';
 import {ColumnInfoMenu} from './column_info_menu';
 import type {
   DataSource,
@@ -597,10 +601,10 @@ export class DataGrid implements m.ClassComponent<DataGridAttrs> {
             }),
         ],
         filterChips: this.filters.map((filter, index) => {
-          // `is null` / `is not null` carry no value — no editor to
-          // show. Render a plain chip (remove-only, no edit popup).
-          const isNullOp =
-            filter.op === 'is null' || filter.op === 'is not null';
+          // Filters that carry no editable value (null-arity ops, or
+          // malformed value-bearing ops with value=null) render as
+          // remove-only chips with no edit popup.
+          const editable = isEditableFilter(filter);
           const colInfo = getColumnInfo(schema, rootSchema, filter.field);
           const chip = m(GridFilterChip, {
             content: this.formatFilter(filter, schema, rootSchema),
@@ -608,14 +612,14 @@ export class DataGrid implements m.ClassComponent<DataGridAttrs> {
               ? () => this.removeFilter(index, attrs)
               : undefined,
             onEdit:
-              filtersAreMutable && !isNullOp
+              filtersAreMutable && editable
                 ? () => {
                     this.editingFilterIndex =
                       this.editingFilterIndex === index ? undefined : index;
                   }
                 : undefined,
           });
-          if (!filtersAreMutable || isNullOp) return chip;
+          if (!filtersAreMutable || !editable) return chip;
           // Controlled-mode Popup: trigger keeps its own onclick (the
           // chip's onEdit toggles editingFilterIndex); Popup just
           // renders the body when that index matches. BottomStart

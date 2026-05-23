@@ -746,6 +746,27 @@ export interface EditFilterMenuAttrs {
   readonly onFilterReplace: (filter: FilterOpAndValue) => void;
 }
 
+// A filter is "uneditable" when there's nothing meaningful to edit:
+// null-arity ops (is null / is not null) or value-bearing ops whose
+// value is null (malformed — SQL `col = NULL` never matches, but the
+// type system allows it; defend against external callers constructing
+// such filters programmatically).
+export function isEditableFilter(filter: FilterOpAndValue): boolean {
+  switch (filter.op) {
+    case 'is null':
+    case 'is not null':
+      return false;
+    case 'in':
+    case 'not in':
+      return true;
+    default:
+      // Remaining ops are OpFilter with value: SqlValue. Null is
+      // malformed for these ops (SQL `col = NULL` never matches) —
+      // refuse to edit.
+      return filter.value !== null;
+  }
+}
+
 export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
   view({attrs}: m.Vnode<EditFilterMenuAttrs>): m.Children {
     const {
@@ -757,10 +778,10 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
       onFilterReplace,
     } = attrs;
 
-    // `is null` / `is not null` carry no value — nothing to edit. Callers
-    // can detect this case and skip wiring onEdit on the chip; if a popup
-    // does open anyway the user just sees an empty body.
-    if (initialFilter.op === 'is null' || initialFilter.op === 'is not null') {
+    // Refuse to render an editor when there's nothing meaningful to
+    // edit. Callers (DataGrid) should also skip wiring onEdit for these
+    // cases so the popup never opens; this is defense-in-depth.
+    if (!isEditableFilter(initialFilter)) {
       return null;
     }
 

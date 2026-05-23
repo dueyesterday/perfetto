@@ -18,6 +18,7 @@ import {
   DistinctValuesSubmenu,
   EditFilterMenu,
   type EditFilterMenuAttrs,
+  isEditableFilter,
   TextFilterSubmenu,
 } from './column_filter_menu';
 import type {DataSource} from './data_source';
@@ -145,10 +146,39 @@ describe('EditFilterMenu — dispatch by op', () => {
     expect(editView({op: 'is not null'}, 'quantitative')).toBeNull();
   });
 
-  test('null SqlValue renders empty initial — not the literal "null"', () => {
-    const v = asVnode(editView({op: '=', value: null}, 'quantitative'));
-    expect(v.tag).toBe(TextFilterSubmenu);
-    expect(v.attrs.initialValue).toBe('');
+  test('malformed {op: "=", value: null} → null (refuse to edit)', () => {
+    // This shape never comes from add-mode (multi-select emits arrays)
+    // but is legal per the FilterOpAndValue type. Treat it as
+    // uneditable rather than rendering an incoherent empty editor.
+    expect(editView({op: '=', value: null}, 'quantitative')).toBeNull();
+    expect(editView({op: '!=', value: null}, 'text')).toBeNull();
+    expect(editView({op: '>', value: null}, 'quantitative')).toBeNull();
+    expect(editView({op: 'glob', value: null}, 'text')).toBeNull();
+  });
+});
+
+describe('isEditableFilter', () => {
+  test('null-arity ops are not editable', () => {
+    expect(isEditableFilter({op: 'is null'})).toBe(false);
+    expect(isEditableFilter({op: 'is not null'})).toBe(false);
+  });
+
+  test('value-bearing ops with null value are not editable', () => {
+    expect(isEditableFilter({op: '=', value: null})).toBe(false);
+    expect(isEditableFilter({op: '!=', value: null})).toBe(false);
+    expect(isEditableFilter({op: '>', value: null})).toBe(false);
+    expect(isEditableFilter({op: 'glob', value: null})).toBe(false);
+  });
+
+  test('value-bearing ops with a concrete value are editable', () => {
+    expect(isEditableFilter({op: '=', value: 'foo'})).toBe(true);
+    expect(isEditableFilter({op: '>', value: 42})).toBe(true);
+    expect(isEditableFilter({op: 'glob', value: '*x*'})).toBe(true);
+  });
+
+  test('in / not in are always editable (array value)', () => {
+    expect(isEditableFilter({op: 'in', value: ['a']})).toBe(true);
+    expect(isEditableFilter({op: 'not in', value: []})).toBe(true);
   });
 });
 
