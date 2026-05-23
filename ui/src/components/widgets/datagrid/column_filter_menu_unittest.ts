@@ -415,4 +415,79 @@ describe('DistinctValuesSubmenu — initial state', () => {
     // All three items still shown (in source order).
     expect(listLabels(root)).toEqual(['a', 'b', 'c']);
   });
+
+  test('value-equality: pinned Uint8Array matches a distinct DIFFERENT instance with same bytes', () => {
+    // The bug fixed here: JS Sets use SameValueZero, which is reference
+    // equality for Uint8Array. Without the stable-key fix, an external
+    // initial value (one reference) and the data source's distinct
+    // value (a different reference, same bytes) compare as different.
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const fromDataSource = new Uint8Array([1, 2, 3]);
+    const fromExternalFilter = new Uint8Array([1, 2, 3]);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource([fromDataSource]),
+        field: 'col',
+        // Tag both blobs with the same label so the order check
+        // doesn't get confused; bytes are what matters for membership.
+        valueFormatter: () => 'blob',
+        initialSelectedValues: [fromExternalFilter],
+        onApply: vi.fn(),
+      }),
+    );
+    // The blob renders as a pinned item (visible exactly once) and
+    // shows as already-selected (filled checkbox icon, Apply enabled).
+    expect(listLabels(root)).toEqual(['blob']);
+    expect(findApplyButton(root)!.disabled).toBe(false);
+  });
+
+  test('value-equality: bigint pinning works (same numeric value across separate BigInt instances)', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        // 10n past Number.MAX_SAFE_INTEGER ensures we'd lose precision
+        // if we coerced through Number. Bigints compare equal by value,
+        // but mixing in other ops requires consistent string keys.
+        datasource: makeStubDataSource([BigInt('9007199254740993')]),
+        field: 'col',
+        valueFormatter: (v) => String(v),
+        initialSelectedValues: [BigInt('9007199254740993')],
+        onApply: vi.fn(),
+      }),
+    );
+    expect(listLabels(root)).toEqual(['9007199254740993']);
+    expect(findApplyButton(root)!.disabled).toBe(false);
+  });
+
+  test('apply emits canonical SqlValue references from the data source (not the seed copies)', async () => {
+    // When initialSelectedValues seeds a blob value but the data source
+    // returns a different-reference identical blob, Apply must emit the
+    // data-source's reference (or at minimum a value-equal one) — not
+    // throw, not skip the entry.
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const canonical = new Uint8Array([7, 7, 7]);
+    let captured: Set<SqlValue> | undefined;
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource([canonical]),
+        field: 'col',
+        valueFormatter: () => 'blob',
+        initialSelectedValues: [new Uint8Array([7, 7, 7])],
+        onApply: (vals) => {
+          captured = vals;
+        },
+      }),
+    );
+    findApplyButton(root)!.click();
+    expect(captured).toBeDefined();
+    expect(captured!.size).toBe(1);
+    // Canonical reference from the data source (preferred over the seed).
+    expect([...captured!][0]).toBe(canonical);
+  });
 });

@@ -57,23 +57,59 @@ interface DistinctValuesSubmenuAttrs {
   readonly onApply: (selectedValues: Set<SqlValue>) => void;
 }
 
+// Stable string key for value-equality on SqlValue, including types
+// that JS Sets compare by reference (Uint8Array). Used as the key type
+// for selectedKeys / pinnedKeys so that an externally-provided value
+// (e.g. an existing filter's value) compares equal to the
+// corresponding entry returned by useDistinctValues, even though they
+// are distinct JS references.
+//
+// Each branch is prefix-tagged so different SqlValue types can't
+// collide (e.g. the string "123" and the number 123).
+function sqlValueKey(v: SqlValue): string {
+  if (v === null) return 'n:';
+  if (typeof v === 'bigint') return 'i:' + v.toString();
+  if (typeof v === 'number') return 'd:' + String(v);
+  if (typeof v === 'string') return 's:' + v;
+  if (v instanceof Uint8Array) {
+    let s = 'x:';
+    for (const byte of v) s += byte.toString(16).padStart(2, '0');
+    return s;
+  }
+  return 'u:' + String(v);
+}
+
 export class DistinctValuesSubmenu
   implements m.ClassComponent<DistinctValuesSubmenuAttrs>
 {
-  private selectedValues = new Set<SqlValue>();
-  // Frozen set of values that were selected when this submenu mounted.
-  // Used to pin those items to the top of the list — so edit-mode users
-  // see what's already selected immediately, and so toggling during
-  // editing doesn't cause items to jump around. Stable for the
-  // component's lifetime; not updated when the user toggles items.
-  private pinnedToTop = new Set<SqlValue>();
+  // Tracked as KEYS (not values) so cross-source comparisons work:
+  // initialSelectedValues from a parent filter and the data-source's
+  // distinct values are different JS references for blobs / objects,
+  // and reference-equality Sets would treat them as different.
+  private selectedKeys = new Set<string>();
+  // Frozen set of keys for the values that were selected when this
+  // submenu mounted. Used to pin those items to the top of the list —
+  // so edit-mode users see what's already selected immediately, and so
+  // toggling during editing doesn't cause items to jump around. Stable
+  // for the component's lifetime; not updated when the user toggles.
+  private pinnedKeys = new Set<string>();
+  // Lookup table: key → canonical SqlValue reference. Populated from
+  // both initialSelectedValues (oninit) and from useDistinctValues
+  // (each view) so onApply can emit the right references even for the
+  // pinned-but-not-in-current-distinct edge case (e.g. a filter on a
+  // value that's been deleted from the underlying data).
+  private keyToValue = new Map<string, SqlValue>();
   private searchQuery = '';
   private static readonly MAX_VISIBLE_ITEMS = 100;
 
   oninit({attrs}: m.Vnode<DistinctValuesSubmenuAttrs>) {
     if (attrs.initialSelectedValues !== undefined) {
-      this.selectedValues = new Set(attrs.initialSelectedValues);
-      this.pinnedToTop = new Set(attrs.initialSelectedValues);
+      for (const v of attrs.initialSelectedValues) {
+        const k = sqlValueKey(v);
+        this.selectedKeys.add(k);
+        this.pinnedKeys.add(k);
+        this.keyToValue.set(k, v);
+      }
     }
   }
 
@@ -92,12 +128,21 @@ export class DistinctValuesSubmenu
     // Filter out null if requested (use "is null" filter instead)
     const distinctValues = excludeNull ? data.filter((v) => v !== null) : data;
 
+    // Refresh the key→value lookup with whatever the data source
+    // returned this render. The data source's references are
+    // preferred (canonical) but stale entries from oninit survive as
+    // fallbacks for pinned-not-in-distinct.
+    for (const v of distinctValues) {
+      this.keyToValue.set(sqlValueKey(v), v);
+    }
+
     // Use fuzzy search to filter and get highlighted segments
     const baseResults = (() => {
       if (this.searchQuery === '') {
         // No search - show all values without highlighting
         return distinctValues.map((value) => ({
           value,
+          key: sqlValueKey(value),
           segments: [{matching: false, value: valueFormatter(value)}],
         }));
       } else {
@@ -107,6 +152,7 @@ export class DistinctValuesSubmenu
         );
         return finder.find(this.searchQuery).map((result) => ({
           value: result.item,
+          key: sqlValueKey(result.item),
           segments: result.segments,
         }));
       }
@@ -119,7 +165,7 @@ export class DistinctValuesSubmenu
     const pinned: typeof baseResults = [];
     const rest: typeof baseResults = [];
     for (const r of baseResults) {
-      if (this.pinnedToTop.has(r.value)) {
+      if (this.pinnedKeys.has(r.key)) {
         pinned.push(r);
       } else {
         rest.push(r);
@@ -138,7 +184,7 @@ export class DistinctValuesSubmenu
     // visible (so a fully-pinned visibleResults shows no divider, and
     // a search that filters out all pinned items shows no divider).
     const visiblePinnedCount = visibleResults.filter((r) =>
-      this.pinnedToTop.has(r.value),
+      this.pinnedKeys.has(r.key),
     ).length;
 
     return m('.pf-distinct-values-menu', [
@@ -169,7 +215,7 @@ export class DistinctValuesSubmenu
         fuzzyResults.length > 0
           ? [
               visibleResults.map((result, idx) => {
-                const isSelected = this.selectedValues.has(result.value);
+                const isSelected = this.selectedKeys.has(result.key);
                 // Render highlighted label
                 const labelContent = result.segments.map((segment) => {
                   if (segment.matching) {
@@ -185,9 +231,9 @@ export class DistinctValuesSubmenu
                   {
                     onclick: () => {
                       if (isSelected) {
-                        this.selectedValues.delete(result.value);
+                        this.selectedKeys.delete(result.key);
                       } else {
-                        this.selectedValues.add(result.value);
+                        this.selectedKeys.add(result.key);
                       }
                     },
                   },
@@ -222,11 +268,20 @@ export class DistinctValuesSubmenu
         m(MenuItem, {
           label: 'Apply',
           icon: 'check',
-          disabled: this.selectedValues.size === 0,
+          disabled: this.selectedKeys.size === 0,
           onclick: () => {
-            if (this.selectedValues.size > 0) {
-              onApply(this.selectedValues);
-              this.selectedValues.clear();
+            if (this.selectedKeys.size > 0) {
+              // Map keys back to canonical SqlValue references for the
+              // emit. Falls back to a synthesized null (shouldn't
+              // happen — keyToValue is populated for every key we
+              // ever add) but keeps the type honest.
+              const out = new Set<SqlValue>();
+              for (const k of this.selectedKeys) {
+                const v = this.keyToValue.get(k);
+                if (v !== undefined) out.add(v);
+              }
+              onApply(out);
+              this.selectedKeys.clear();
               this.searchQuery = '';
             }
           },
@@ -234,10 +289,10 @@ export class DistinctValuesSubmenu
         m(MenuItem, {
           label: 'Clear selection',
           icon: 'close',
-          disabled: this.selectedValues.size === 0,
+          disabled: this.selectedKeys.size === 0,
           closePopupOnClick: false,
           onclick: () => {
-            this.selectedValues.clear();
+            this.selectedKeys.clear();
             m.redraw();
           },
         }),
