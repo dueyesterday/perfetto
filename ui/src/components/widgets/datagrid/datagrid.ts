@@ -850,11 +850,25 @@ export class DataGrid implements m.ClassComponent<DataGridAttrs> {
   }
 
   private clearFilters(attrs: DataGridAttrs): void {
+    // Editing index points into a now-empty array — drop it.
+    this.editingFilterIndex = undefined;
     this.filters = [];
     attrs.onFiltersChanged?.([]);
   }
 
   private removeFilter(index: number, attrs: DataGridAttrs): void {
+    // Keep editingFilterIndex pointing at the same logical filter:
+    // - removing the filter that's open → close the popup
+    // - removing an EARLIER filter → shift the index down by one so
+    //   the popup stays attached to the chip the user opened
+    // - removing a LATER filter → no change
+    if (this.editingFilterIndex !== undefined) {
+      if (this.editingFilterIndex === index) {
+        this.editingFilterIndex = undefined;
+      } else if (this.editingFilterIndex > index) {
+        this.editingFilterIndex -= 1;
+      }
+    }
     const newFilters = this.filters.filter((_, i) => i !== index);
     this.filters = newFilters;
     attrs.onFiltersChanged?.(newFilters);
