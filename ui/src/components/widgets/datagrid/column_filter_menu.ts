@@ -301,6 +301,29 @@ export class DistinctValuesSubmenu
   }
 }
 
+// Coerce a numeric-input string to a JS number, or a BigInt if it
+// looks like an integer past Number.MAX_SAFE_INTEGER (e.g. int64 ids
+// from trace_processor). Falls back to the original string on parse
+// failure so the downstream filter compiler can decide what to do.
+function parseNumericInput(trimmed: string): string | number | bigint {
+  // Pure integer (optionally signed). BigInt the moment we'd lose
+  // precision; stay as number otherwise so add-mode behavior stays
+  // unchanged for the common case.
+  if (/^-?\d+$/.test(trimmed)) {
+    try {
+      const big = BigInt(trimmed);
+      const safeMax = BigInt(Number.MAX_SAFE_INTEGER);
+      const safeMin = BigInt(Number.MIN_SAFE_INTEGER);
+      if (big <= safeMax && big >= safeMin) return Number(big);
+      return big;
+    } catch {
+      // Unreachable for a digit-only string but keeps the type checker honest.
+    }
+  }
+  const n = Number(trimmed);
+  return Number.isNaN(n) ? trimmed : n;
+}
+
 // Helper component for text-based filter input
 interface TextFilterSubmenuAttrs {
   readonly placeholder?: string;
@@ -311,7 +334,7 @@ interface TextFilterSubmenuAttrs {
   // Overrides the submit-button label. Defaults to 'Add Filter' for the
   // add-mode flow; edit-mode passes 'Save'.
   readonly submitLabel?: string;
-  readonly onApply: (value: string | number) => void;
+  readonly onApply: (value: string | number | bigint) => void;
 }
 
 export class TextFilterSubmenu
@@ -334,16 +357,10 @@ export class TextFilterSubmenu
     } = attrs;
 
     const applyFilter = () => {
-      if (this.inputValue.trim().length > 0) {
-        let value: string | number = this.inputValue.trim();
-
-        if (inputType === 'number') {
-          const numValue = Number(value);
-          if (!isNaN(numValue)) {
-            value = numValue;
-          }
-        }
-
+      const trimmed = this.inputValue.trim();
+      if (trimmed.length > 0) {
+        const value: string | number | bigint =
+          inputType === 'number' ? parseNumericInput(trimmed) : trimmed;
         onApply(value);
         this.inputValue = '';
       }

@@ -265,6 +265,85 @@ describe('TextFilterSubmenu — initial state', () => {
     );
     expect(root.textContent).toContain('Add Filter');
   });
+
+  // Helpers for the numeric-coercion tests below. Submitting the form
+  // takes a click on the submit button.
+  function submitForm(root: HTMLElement): void {
+    const submit = root.querySelector(
+      'button[type=submit]',
+    ) as HTMLButtonElement | null;
+    expect(submit).not.toBeNull();
+    submit!.click();
+  }
+
+  test('numeric input within safe-integer range emits number', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const onApply = vi.fn();
+    m.render(
+      root,
+      m(TextFilterSubmenu, {
+        inputType: 'number',
+        initialValue: '1234',
+        onApply,
+      }),
+    );
+    submitForm(root);
+    expect(onApply).toHaveBeenCalledWith(1234);
+    expect(typeof onApply.mock.calls[0][0]).toBe('number');
+  });
+
+  test('numeric input past MAX_SAFE_INTEGER emits bigint (no precision loss)', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const onApply = vi.fn();
+    m.render(
+      root,
+      m(TextFilterSubmenu, {
+        inputType: 'number',
+        // 2^53 + 1: not representable as a JS number without precision loss.
+        initialValue: '9007199254740993',
+        onApply,
+      }),
+    );
+    submitForm(root);
+    expect(typeof onApply.mock.calls[0][0]).toBe('bigint');
+    expect(onApply).toHaveBeenCalledWith(BigInt('9007199254740993'));
+  });
+
+  test('numeric input below MIN_SAFE_INTEGER emits bigint', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const onApply = vi.fn();
+    m.render(
+      root,
+      m(TextFilterSubmenu, {
+        inputType: 'number',
+        initialValue: '-9007199254740993',
+        onApply,
+      }),
+    );
+    submitForm(root);
+    expect(typeof onApply.mock.calls[0][0]).toBe('bigint');
+    expect(onApply).toHaveBeenCalledWith(BigInt('-9007199254740993'));
+  });
+
+  test('numeric input with a decimal stays as a number (BigInt only for integers)', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const onApply = vi.fn();
+    m.render(
+      root,
+      m(TextFilterSubmenu, {
+        inputType: 'number',
+        initialValue: '1.5',
+        onApply,
+      }),
+    );
+    submitForm(root);
+    expect(typeof onApply.mock.calls[0][0]).toBe('number');
+    expect(onApply).toHaveBeenCalledWith(1.5);
+  });
 });
 
 describe('DistinctValuesSubmenu — initial state', () => {
