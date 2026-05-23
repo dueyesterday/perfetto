@@ -38,6 +38,21 @@ function makeStubDataSource(distinctData?: readonly SqlValue[]): DataSource {
   } as unknown as DataSource;
 }
 
+// The attrs we inspect on EditFilterMenu's returned vnode. Union of
+// the fields used by tests across both DistinctValuesSubmenu and
+// TextFilterSubmenu — sidesteps the need to export each submenu's
+// private Attrs interface. onApply is typed `(v: unknown) => void` so
+// it accepts both a Set<SqlValue> (multi-select path) and a primitive
+// (text path) without leaning on `any`.
+interface InspectableSubmenuAttrs {
+  readonly initialSelectedValues?: ReadonlyArray<SqlValue>;
+  readonly excludeNull?: boolean;
+  readonly inputType?: 'text' | 'number';
+  readonly initialValue?: string;
+  readonly submitLabel?: string;
+  readonly onApply: (value: unknown) => void;
+}
+
 // Helper: render EditFilterMenu's view() and return the resulting
 // vnode (or null). Tests inspect tag + attrs to assert dispatch.
 function editView(
@@ -56,15 +71,15 @@ function editView(
       onFilterReplace: vi.fn(),
       ...overrides,
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any);
+  } as unknown as m.Vnode<EditFilterMenuAttrs>);
 }
 
-// Narrow a Children return to a single Vnode for assertions.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function asVnode(c: m.Children): m.Vnode<any, any> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return c as unknown as m.Vnode<any, any>;
+// Narrow a Children return to a single Vnode for assertions. The
+// underlying type m.Children is too loose to read .tag / .attrs.X off,
+// and the actual concrete type varies (DistinctValuesSubmenu vs
+// TextFilterSubmenu), so the cast uses our test-local union.
+function asVnode(c: m.Children): m.Vnode<InspectableSubmenuAttrs> {
+  return c as unknown as m.Vnode<InspectableSubmenuAttrs>;
 }
 
 describe('EditFilterMenu — dispatch by op', () => {
@@ -187,8 +202,7 @@ describe('isEditableFilter', () => {
     // the filter carry a value?"), not enum-driven, so a future-added
     // null-arity op is automatically uneditable rather than falling
     // through to the value-bearing branch.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const hypothetical: any = {op: 'never-true'};
+    const hypothetical = {op: 'never-true'} as unknown as FilterOpAndValue;
     expect(isEditableFilter(hypothetical)).toBe(false);
   });
 });
