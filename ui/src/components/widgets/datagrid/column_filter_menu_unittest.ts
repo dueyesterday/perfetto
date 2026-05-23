@@ -180,6 +180,99 @@ describe('isEditableFilter', () => {
     expect(isEditableFilter({op: 'in', value: ['a']})).toBe(true);
     expect(isEditableFilter({op: 'not in', value: []})).toBe(true);
   });
+
+  test('future null-arity op (no `value` field) defaults to non-editable', () => {
+    // Simulate a hypothetical new null-arity op that doesn't appear in
+    // the FilterOpAndValue union today. The check is structural ("does
+    // the filter carry a value?"), not enum-driven, so a future-added
+    // null-arity op is automatically uneditable rather than falling
+    // through to the value-bearing branch.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hypothetical: any = {op: 'never-true'};
+    expect(isEditableFilter(hypothetical)).toBe(false);
+  });
+});
+
+describe('sqlValueKey normalization (integration via DistinctValuesSubmenu)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function findApplyButton(root: HTMLElement): HTMLButtonElement | undefined {
+    const labels = Array.from(
+      root.querySelectorAll('.pf-menu-item__label'),
+    ) as HTMLElement[];
+    const applyLabel = labels.find(
+      (el) => (el.textContent ?? '').trim() === 'Apply',
+    );
+    return (
+      (applyLabel?.closest(
+        'button.pf-menu-item',
+      ) as HTMLButtonElement | null) ?? undefined
+    );
+  }
+
+  test('integer cross-type: seed=bigint(123), distinct=number(123) → pinned matches', () => {
+    // Bug being fixed: previously bigint(123) had key "i:123" while
+    // number(123) had key "d:123", so cross-type seeds didn't recognize
+    // the data-source's distinct values and pinning silently broke.
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource([123]),
+        field: 'col',
+        valueFormatter: (v) => String(v),
+        initialSelectedValues: [BigInt(123)],
+        onApply: vi.fn(),
+      }),
+    );
+    // Single item, rendered as pinned with Apply enabled — proves the
+    // bigint seed and the numeric distinct value compared equal.
+    expect(findApplyButton(root)!.disabled).toBe(false);
+  });
+
+  test('integer cross-type: seed=number(123), distinct=bigint(123n) → pinned matches', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource([BigInt(123)]),
+        field: 'col',
+        valueFormatter: (v) => String(v),
+        initialSelectedValues: [123],
+        onApply: vi.fn(),
+      }),
+    );
+    expect(findApplyButton(root)!.disabled).toBe(false);
+  });
+
+  test('non-integer numbers stay distinct from same-rounded integer', () => {
+    // 1.5 and 2n (or 1n) must NOT collide. Floats with fractional
+    // components keep the 'd:' prefix; integers normalize to 'i:'.
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    m.render(
+      root,
+      m(DistinctValuesSubmenu, {
+        datasource: makeStubDataSource([1.5, 2]),
+        field: 'col',
+        valueFormatter: (v) => String(v),
+        // Seed with the integer; only the integer should pin.
+        initialSelectedValues: [BigInt(2)],
+        onApply: vi.fn(),
+      }),
+    );
+    // Apply enabled, exactly one item pinned (the integer 2), one not.
+    expect(findApplyButton(root)!.disabled).toBe(false);
+    const dividers = root.querySelectorAll(
+      '.pf-distinct-values-menu__list .pf-menu-divider',
+    );
+    // Pinned + unpinned visible → divider rendered exactly once.
+    expect(dividers.length).toBe(1);
+  });
 });
 
 describe('EditFilterMenu — op promotion on save', () => {

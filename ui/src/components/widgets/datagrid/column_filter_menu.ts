@@ -64,12 +64,25 @@ interface DistinctValuesSubmenuAttrs {
 // corresponding entry returned by useDistinctValues, even though they
 // are distinct JS references.
 //
-// Each branch is prefix-tagged so different SqlValue types can't
-// collide (e.g. the string "123" and the number 123).
+// Each branch is prefix-tagged so different SqlValue *families* can't
+// collide (e.g. the string "123" and the number 123 get different
+// keys). Integers from `number` and `bigint` are normalized to the
+// SAME key — the same logical SQL integer should match regardless of
+// the JS type the data source happens to return it in. Floats and
+// non-integer numbers get the 'd:' prefix so they can't collide with
+// integer-typed bigints.
 function sqlValueKey(v: SqlValue): string {
   if (v === null) return 'n:';
   if (typeof v === 'bigint') return 'i:' + v.toString();
-  if (typeof v === 'number') return 'd:' + String(v);
+  if (typeof v === 'number') {
+    // Number.isInteger is true for finite values that are mathematical
+    // integers in float64 representation (so 2**53 + 1 is "integer"
+    // because it rounds to 2**53). That's the right semantic: if a
+    // number lost precision becoming integer, treat it as the integer
+    // it now is.
+    if (Number.isInteger(v)) return 'i:' + v.toString();
+    return 'd:' + String(v);
+  }
   if (typeof v === 'string') return 's:' + v;
   if (v instanceof Uint8Array) {
     let s = 'x:';
@@ -752,19 +765,18 @@ export interface EditFilterMenuAttrs {
 // type system allows it; defend against external callers constructing
 // such filters programmatically).
 export function isEditableFilter(filter: FilterOpAndValue): boolean {
-  switch (filter.op) {
-    case 'is null':
-    case 'is not null':
-      return false;
-    case 'in':
-    case 'not in':
-      return true;
-    default:
-      // Remaining ops are OpFilter with value: SqlValue. Null is
-      // malformed for these ops (SQL `col = NULL` never matches) —
-      // refuse to edit.
-      return filter.value !== null;
-  }
+  // Array-valued ops are always editable (the multi-select can handle
+  // even an empty array as the seed).
+  if (filter.op === 'in' || filter.op === 'not in') return true;
+  // Detect null-arity ops by absence of `value`, not by enumerating
+  // every known null-arity op. Any future op that's null-arity will
+  // automatically default to non-editable instead of falling through
+  // to a malformed-editor render. (Today this catches `is null` /
+  // `is not null`.)
+  if (!('value' in filter)) return false;
+  // Remaining ops are OpFilter with value: SqlValue. Null is malformed
+  // for these ops (SQL `col = NULL` never matches) — refuse to edit.
+  return filter.value !== null;
 }
 
 export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
