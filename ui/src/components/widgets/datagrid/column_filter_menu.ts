@@ -684,18 +684,19 @@ export interface EditFilterMenuAttrs {
 // type system allows it; defend against external callers constructing
 // such filters programmatically).
 export function isEditableFilter(filter: FilterOpAndValue): boolean {
-  // Array-valued ops are always editable (the multi-select can handle
-  // even an empty array as the seed).
-  if (filter.op === 'in' || filter.op === 'not in') return true;
-  // Detect null-arity ops by absence of `value`, not by enumerating
-  // every known null-arity op. Any future op that's null-arity will
-  // automatically default to non-editable instead of falling through
-  // to a malformed-editor render. (Today this catches `is null` /
-  // `is not null`.)
-  if (!('value' in filter)) return false;
-  // Remaining ops are OpFilter with value: SqlValue. Null is malformed
-  // for these ops (SQL `col = NULL` never matches) — refuse to edit.
-  return filter.value !== null;
+  switch (filter.op) {
+    case 'is null':
+    case 'is not null':
+      return false;
+    case 'in':
+    case 'not in':
+      return true;
+    default:
+      // Remaining ops are OpFilter with value: SqlValue. Null is
+      // malformed for these ops (SQL `col = NULL` never matches) —
+      // refuse to edit.
+      return filter.value !== null;
+  }
 }
 
 export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {

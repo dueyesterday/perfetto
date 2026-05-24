@@ -196,15 +196,6 @@ describe('isEditableFilter', () => {
     expect(isEditableFilter({op: 'not in', value: []})).toBe(true);
   });
 
-  test('future null-arity op (no `value` field) defaults to non-editable', () => {
-    // Simulate a hypothetical new null-arity op that doesn't appear in
-    // the FilterOpAndValue union today. The check is structural ("does
-    // the filter carry a value?"), not enum-driven, so a future-added
-    // null-arity op is automatically uneditable rather than falling
-    // through to the value-bearing branch.
-    const hypothetical = {op: 'never-true'} as unknown as FilterOpAndValue;
-    expect(isEditableFilter(hypothetical)).toBe(false);
-  });
 });
 
 describe('EditFilterMenu — op promotion on save', () => {
