@@ -18,16 +18,14 @@ import {
   DistinctValuesSubmenu,
   EditFilterMenu,
   type EditFilterMenuAttrs,
-  isEditableFilter,
   TextFilterSubmenu,
 } from './column_filter_menu';
 import type {DataSource} from './data_source';
 import type {ColumnType} from './datagrid_schema';
 import type {FilterOpAndValue} from './model';
 
-// Minimal DataSource stub. EditFilterMenu only forwards the datasource
-// to DistinctValuesSubmenu, which calls useDistinctValues; everything
-// else throws if accessed (tests should fail loudly on unexpected use).
+// DataSource stub: only useDistinctValues is wired; everything else
+// throws so tests fail loudly on unexpected use.
 function makeStubDataSource(distinctData?: readonly SqlValue[]): DataSource {
   return {
     useDistinctValues: () => ({
@@ -38,12 +36,9 @@ function makeStubDataSource(distinctData?: readonly SqlValue[]): DataSource {
   } as unknown as DataSource;
 }
 
-// The attrs we inspect on EditFilterMenu's returned vnode. Union of
-// the fields used by tests across both DistinctValuesSubmenu and
-// TextFilterSubmenu — sidesteps the need to export each submenu's
-// private Attrs interface. onApply is typed `(v: unknown) => void` so
-// it accepts both a Set<SqlValue> (multi-select path) and a primitive
-// (text path) without leaning on `any`.
+// Test-local union of attrs across both submenu types — saves
+// exporting their private interfaces. onApply: unknown so both Set
+// and primitive callers pass without `any`.
 interface InspectableSubmenuAttrs {
   readonly initialSelectedValues?: ReadonlyArray<SqlValue>;
   readonly excludeNull?: boolean;
@@ -74,10 +69,8 @@ function editView(
   } as unknown as m.Vnode<EditFilterMenuAttrs>);
 }
 
-// Narrow a Children return to a single Vnode for assertions. The
-// underlying type m.Children is too loose to read .tag / .attrs.X off,
-// and the actual concrete type varies (DistinctValuesSubmenu vs
-// TextFilterSubmenu), so the cast uses our test-local union.
+// Narrow m.Children to a single Vnode for tag/attrs assertions; cast
+// targets the test-local union since the concrete type varies.
 function asVnode(c: m.Children): m.Vnode<InspectableSubmenuAttrs> {
   return c as unknown as m.Vnode<InspectableSubmenuAttrs>;
 }
@@ -96,22 +89,14 @@ describe('EditFilterMenu — dispatch by op', () => {
     expect(v.attrs.initialSelectedValues).toEqual(['a']);
   });
 
-  test('= on text → DistinctValuesSubmenu with single-element seed', () => {
-    const v = asVnode(editView({op: '=', value: 'foo'}, 'text'));
-    expect(v.tag).toBe(DistinctValuesSubmenu);
-    expect(v.attrs.initialSelectedValues).toEqual(['foo']);
-  });
-
-  test('= on identifier → DistinctValuesSubmenu', () => {
-    const v = asVnode(editView({op: '=', value: 42}, 'identifier'));
-    expect(v.tag).toBe(DistinctValuesSubmenu);
-    expect(v.attrs.initialSelectedValues).toEqual([42]);
-  });
-
-  test('= on undefined column type → DistinctValuesSubmenu', () => {
-    const v = asVnode(editView({op: '=', value: 'foo'}, undefined));
-    expect(v.tag).toBe(DistinctValuesSubmenu);
-  });
+  test.each(['text', 'identifier', undefined] as const)(
+    '= on %s column → DistinctValuesSubmenu with single-element seed',
+    (columnType) => {
+      const v = asVnode(editView({op: '=', value: 'foo'}, columnType));
+      expect(v.tag).toBe(DistinctValuesSubmenu);
+      expect(v.attrs.initialSelectedValues).toEqual(['foo']);
+    },
+  );
 
   test('= on quantitative → TextFilterSubmenu(number)', () => {
     const v = asVnode(editView({op: '=', value: 100}, 'quantitative'));
@@ -162,40 +147,13 @@ describe('EditFilterMenu — dispatch by op', () => {
   });
 
   test('malformed {op: "=", value: null} → null (refuse to edit)', () => {
-    // This shape never comes from add-mode (multi-select emits arrays)
-    // but is legal per the FilterOpAndValue type. Treat it as
-    // uneditable rather than rendering an incoherent empty editor.
+    // Legal per the type but never produced by add-mode (multi-select
+    // emits arrays); refuse rather than render an empty editor.
     expect(editView({op: '=', value: null}, 'quantitative')).toBeNull();
     expect(editView({op: '!=', value: null}, 'text')).toBeNull();
     expect(editView({op: '>', value: null}, 'quantitative')).toBeNull();
     expect(editView({op: 'glob', value: null}, 'text')).toBeNull();
   });
-});
-
-describe('isEditableFilter', () => {
-  test('null-arity ops are not editable', () => {
-    expect(isEditableFilter({op: 'is null'})).toBe(false);
-    expect(isEditableFilter({op: 'is not null'})).toBe(false);
-  });
-
-  test('value-bearing ops with null value are not editable', () => {
-    expect(isEditableFilter({op: '=', value: null})).toBe(false);
-    expect(isEditableFilter({op: '!=', value: null})).toBe(false);
-    expect(isEditableFilter({op: '>', value: null})).toBe(false);
-    expect(isEditableFilter({op: 'glob', value: null})).toBe(false);
-  });
-
-  test('value-bearing ops with a concrete value are editable', () => {
-    expect(isEditableFilter({op: '=', value: 'foo'})).toBe(true);
-    expect(isEditableFilter({op: '>', value: 42})).toBe(true);
-    expect(isEditableFilter({op: 'glob', value: '*x*'})).toBe(true);
-  });
-
-  test('in / not in are always editable (array value)', () => {
-    expect(isEditableFilter({op: 'in', value: ['a']})).toBe(true);
-    expect(isEditableFilter({op: 'not in', value: []})).toBe(true);
-  });
-
 });
 
 describe('EditFilterMenu — op promotion on save', () => {
@@ -284,32 +242,24 @@ describe('TextFilterSubmenu — initial state', () => {
     expect(input!.value).toBe('hello world');
   });
 
-  test('submitLabel overrides the default "Add Filter" label', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(TextFilterSubmenu, {
-        inputType: 'text',
-        submitLabel: 'Save Filter',
-        onApply: vi.fn(),
-      }),
-    );
-    expect(root.textContent).toContain('Save Filter');
-    expect(root.textContent).not.toContain('Add Filter');
-  });
-
-  test('default submitLabel is "Add Filter" when not overridden', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(TextFilterSubmenu, {
-        inputType: 'text',
-        onApply: vi.fn(),
-      }),
-    );
-    expect(root.textContent).toContain('Add Filter');
+  test('submitLabel defaults to "Add Filter" and is overridable', () => {
+    const renderLabel = (submitLabel?: string): string => {
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      m.render(
+        root,
+        m(TextFilterSubmenu, {
+          inputType: 'text',
+          submitLabel,
+          onApply: vi.fn(),
+        }),
+      );
+      return root.textContent ?? '';
+    };
+    expect(renderLabel()).toContain('Add Filter');
+    const overridden = renderLabel('Save Filter');
+    expect(overridden).toContain('Save Filter');
+    expect(overridden).not.toContain('Add Filter');
   });
 
   // Helpers for the numeric-coercion tests below. Submitting the form
@@ -397,9 +347,8 @@ describe('DistinctValuesSubmenu — initial state', () => {
     document.body.innerHTML = '';
   });
 
-  // Locate the Apply MenuItem's button via its label child (the icon
-  // glyph contributes text to the button's textContent, so we filter
-  // on the inner .pf-menu-item__label instead).
+  // Locate Apply via its label element (the icon glyph pollutes the
+  // button's textContent).
   function findApplyButton(root: HTMLElement): HTMLButtonElement | undefined {
     const labels = Array.from(
       root.querySelectorAll('.pf-menu-item__label'),

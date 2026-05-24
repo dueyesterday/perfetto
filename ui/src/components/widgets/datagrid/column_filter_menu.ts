@@ -50,9 +50,8 @@ interface DistinctValuesSubmenuAttrs {
   readonly field: string;
   readonly excludeNull?: boolean;
   readonly valueFormatter: (value: SqlValue) => string;
-  // Pre-selected values shown ticked when the submenu mounts. Read once
-  // in oninit so in-flight user edits aren't clobbered by parent
-  // re-renders. Default: empty set (add-mode).
+  // Pre-checked at mount; read once in oninit so parent re-renders
+  // don't clobber in-flight edits.
   readonly initialSelectedValues?: ReadonlyArray<SqlValue>;
   readonly onApply: (selectedValues: Set<SqlValue>) => void;
 }
@@ -61,9 +60,8 @@ export class DistinctValuesSubmenu
   implements m.ClassComponent<DistinctValuesSubmenuAttrs>
 {
   private selected = new Set<SqlValue>();
-  // Initial selection captured at oninit; pins those items to the top
-  // of the idle layout so edit-mode shows the current selection at a
-  // glance and toggles don't shift items.
+  // Initial selection captured at oninit; pinned to top of the idle
+  // layout so toggles don't shift items.
   private pinned = new Set<SqlValue>();
   private searchQuery = '';
   private static readonly MAX_VISIBLE_ITEMS = 100;
@@ -112,10 +110,8 @@ export class DistinctValuesSubmenu
       }
     })();
 
-    // Partition into pinned (initial selection) + the rest, preserving
-    // each group's internal order. Pinned items stay at the top even
-    // after the user toggles them off, so the layout doesn't shift
-    // mid-edit. Skipped during search — fuzzy relevance order wins.
+    // Pin initial selection at top of idle layout; skip during search
+    // so fuzzy relevance wins.
     const fuzzyResults = (() => {
       if (this.searchQuery !== '') return baseResults;
       const pinnedItems: typeof baseResults = [];
@@ -233,14 +229,11 @@ export class DistinctValuesSubmenu
   }
 }
 
-// Coerce a numeric-input string to a JS number, or a BigInt if it
-// looks like an integer past Number.MAX_SAFE_INTEGER (e.g. int64 ids
-// from trace_processor). Falls back to the original string on parse
-// failure so the downstream filter compiler can decide what to do.
+// String → number, or BigInt for integers past 2^53 (int64 IDs from
+// trace_processor). Returns the input string on parse failure.
 function parseNumericInput(trimmed: string): string | number | bigint {
-  // Pure integer (optionally signed). BigInt the moment we'd lose
-  // precision; stay as number otherwise so add-mode behavior stays
-  // unchanged for the common case.
+  // Integer: BigInt past 2^53 to preserve precision, number otherwise
+  // for the common case.
   if (/^-?\d+$/.test(trimmed)) {
     try {
       const big = BigInt(trimmed);
@@ -260,11 +253,10 @@ function parseNumericInput(trimmed: string): string | number | bigint {
 interface TextFilterSubmenuAttrs {
   readonly placeholder?: string;
   readonly inputType: 'text' | 'number';
-  // Pre-populates the input on mount. Read once in oninit so in-flight
-  // typing isn't clobbered by parent re-renders. Default: empty.
+  // Pre-fills input on mount; read once in oninit so re-renders don't
+  // clobber typing.
   readonly initialValue?: string;
-  // Overrides the submit-button label. Defaults to 'Add Filter' for the
-  // add-mode flow; edit-mode passes 'Save'.
+  // Submit-button label; defaults to 'Add Filter' (edit-mode uses 'Save').
   readonly submitLabel?: string;
   readonly onApply: (value: string | number | bigint) => void;
 }
@@ -651,20 +643,10 @@ function renderFilterMenuItems(config: FilterMenuAttrs): m.ChildArray {
   }
 }
 
-// ---------------------------------------------------------------------------
-// EditFilterMenu — edit-mode counterpart of FilterMenu.
-//
-// FilterMenu (above) is a `MenuItem` that lives inside the column-header
-// dropdown and lets the user ADD a new filter. EditFilterMenu instead
-// renders submenu content directly (so callers can mount it inside a
-// Popup) and lets the user CHANGE an existing filter's value.
-//
-// Op is locked: changing the op requires removing the chip and adding a
-// new filter via the column header. The exception is the natural
-// "promotion" from `=`/`!=` to `in`/`not in` when the column type lets us
-// use the distinct-values multiselect (matches the wire shape add-mode
-// produces from the same submenu — see renderDistinctValueFilterMenuItems).
-// ---------------------------------------------------------------------------
+// Edit-mode counterpart of FilterMenu: renders submenu content directly
+// (so callers mount it inside a Popup) for changing an existing filter's
+// value. Op is locked, except for `=`/`!=` → `in`/`not in` promotion on
+// the multiselect path (matches add-mode's wire shape).
 
 export interface EditFilterMenuAttrs {
   readonly datasource: DataSource;
@@ -672,17 +654,12 @@ export interface EditFilterMenuAttrs {
   readonly columnType: ColumnType | undefined;
   readonly valueFormatter: (value: SqlValue) => string;
   readonly initialFilter: FilterOpAndValue;
-  // Called with the new filter the user composed in the editor. The
-  // caller is responsible for replacing the old filter at the right
-  // index (this component doesn't know its own index).
+  // Caller-side replace: this component doesn't know its index.
   readonly onFilterReplace: (filter: FilterOpAndValue) => void;
 }
 
-// A filter is "uneditable" when there's nothing meaningful to edit:
-// null-arity ops (is null / is not null) or value-bearing ops whose
-// value is null (malformed — SQL `col = NULL` never matches, but the
-// type system allows it; defend against external callers constructing
-// such filters programmatically).
+// Uneditable: null-arity ops, or value-bearing ops with value=null
+// (legal per type but SQL `col = NULL` never matches).
 export function isEditableFilter(filter: FilterOpAndValue): boolean {
   switch (filter.op) {
     case 'is null':
@@ -692,9 +669,6 @@ export function isEditableFilter(filter: FilterOpAndValue): boolean {
     case 'not in':
       return true;
     default:
-      // Remaining ops are OpFilter with value: SqlValue. Null is
-      // malformed for these ops (SQL `col = NULL` never matches) —
-      // refuse to edit.
       return filter.value !== null;
   }
 }
@@ -710,14 +684,12 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
       onFilterReplace,
     } = attrs;
 
-    // Refuse to render an editor when there's nothing meaningful to
-    // edit. Callers (DataGrid) should also skip wiring onEdit for these
-    // cases so the popup never opens; this is defense-in-depth.
+    // Defense-in-depth: DataGrid also skips wiring onEdit for these
+    // filters so the popup normally never opens with one.
     if (!isEditableFilter(initialFilter)) {
       return null;
     }
 
-    // Multi-value ops keep their op on save.
     if (initialFilter.op === 'in' || initialFilter.op === 'not in') {
       const op = initialFilter.op;
       return m(DistinctValuesSubmenu, {
@@ -734,10 +706,8 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
       });
     }
 
-    // `=` / `!=` on text/identifier/unknown columns use the distinct-
-    // values multiselect — matches add-mode's "Equals" submenu, which
-    // emits `op: 'in'` / `op: 'not in'`. We promote the op on save for
-    // consistency with that wire shape.
+    // `=` / `!=` on text/identifier/unknown columns promote to
+    // `in` / `not in` on save — matches add-mode's wire shape.
     if (initialFilter.op === '=' || initialFilter.op === '!=') {
       const usesDistinctValues =
         columnType === 'text' ||
@@ -760,7 +730,6 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
           },
         });
       }
-      // Quantitative column: numeric input, op preserved on save.
       const op = initialFilter.op;
       return m(TextFilterSubmenu, {
         placeholder: 'Enter value...',
@@ -773,7 +742,6 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
       });
     }
 
-    // Numeric comparison ops: numeric input, op preserved.
     if (
       initialFilter.op === '<' ||
       initialFilter.op === '<=' ||
@@ -792,7 +760,6 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
       });
     }
 
-    // glob / not glob: text input, op preserved.
     if (initialFilter.op === 'glob' || initialFilter.op === 'not glob') {
       const op = initialFilter.op;
       return m(TextFilterSubmenu, {
@@ -811,10 +778,8 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
   }
 }
 
-// SqlValue → input-ready string. null becomes empty (NULL filters use
-// the dedicated `is null` op, not value-bearing ops, so seeing a null
-// value here means a malformed filter; render empty rather than the
-// literal "null").
+// SqlValue → input string. null → empty (a null-valued filter is
+// malformed; show empty rather than the literal "null").
 function sqlValueToString(value: SqlValue): string {
   if (value === null) return '';
   return String(value);
