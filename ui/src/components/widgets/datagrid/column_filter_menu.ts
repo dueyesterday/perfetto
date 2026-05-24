@@ -57,29 +57,16 @@ interface DistinctValuesSubmenuAttrs {
   readonly onApply: (selectedValues: Set<SqlValue>) => void;
 }
 
-// Stable string key for value-equality on SqlValue, including types
-// that JS Sets compare by reference (Uint8Array). Used as the key type
-// for selectedKeys / pinnedKeys so that an externally-provided value
-// (e.g. an existing filter's value) compares equal to the
-// corresponding entry returned by useDistinctValues, even though they
-// are distinct JS references.
-//
-// Each branch is prefix-tagged so different SqlValue *families* can't
-// collide (e.g. the string "123" and the number 123 get different
-// keys). Integers from `number` and `bigint` are normalized to the
-// SAME key — the same logical SQL integer should match regardless of
-// the JS type the data source happens to return it in. Floats and
-// non-integer numbers get the 'd:' prefix so they can't collide with
-// integer-typed bigints.
+// Stable string key for SqlValue equality across JS-reference types
+// (Uint8Array, blobs) — Set membership compares by reference, so a
+// caller-supplied seed and the data source's distinct value need the
+// same key even when they're distinct JS objects. Family-prefixed so
+// "123" can't collide with 123n; integer-typed numbers normalize to
+// the bigint key so cross-type seeds match.
 function sqlValueKey(v: SqlValue): string {
   if (v === null) return 'n:';
   if (typeof v === 'bigint') return 'i:' + v.toString();
   if (typeof v === 'number') {
-    // Number.isInteger is true for finite values that are mathematical
-    // integers in float64 representation (so 2**53 + 1 is "integer"
-    // because it rounds to 2**53). That's the right semantic: if a
-    // number lost precision becoming integer, treat it as the integer
-    // it now is.
     if (Number.isInteger(v)) return 'i:' + v.toString();
     return 'd:' + String(v);
   }
@@ -95,22 +82,16 @@ function sqlValueKey(v: SqlValue): string {
 export class DistinctValuesSubmenu
   implements m.ClassComponent<DistinctValuesSubmenuAttrs>
 {
-  // Tracked as KEYS (not values) so cross-source comparisons work:
-  // initialSelectedValues from a parent filter and the data-source's
-  // distinct values are different JS references for blobs / objects,
-  // and reference-equality Sets would treat them as different.
+  // Keyed (not value-typed) so seed blobs/objects compare equal to
+  // the data source's distinct values. See sqlValueKey.
   private selectedKeys = new Set<string>();
-  // Frozen set of keys for the values that were selected when this
-  // submenu mounted. Used to pin those items to the top of the list —
-  // so edit-mode users see what's already selected immediately, and so
-  // toggling during editing doesn't cause items to jump around. Stable
-  // for the component's lifetime; not updated when the user toggles.
+  // Initial selection captured at oninit; pins those items to the top
+  // of the idle layout so edit-mode shows the current selection at a
+  // glance and toggles don't shift items.
   private pinnedKeys = new Set<string>();
-  // Lookup table: key → canonical SqlValue reference. Populated from
-  // both initialSelectedValues (oninit) and from useDistinctValues
-  // (each view) so onApply can emit the right references even for the
-  // pinned-but-not-in-current-distinct edge case (e.g. a filter on a
-  // value that's been deleted from the underlying data).
+  // key → canonical SqlValue ref so onApply emits the references the
+  // caller expects, even for pinned items no longer in the data source
+  // (e.g. a filter on a deleted value).
   private keyToValue = new Map<string, SqlValue>();
   private searchQuery = '';
   private static readonly MAX_VISIBLE_ITEMS = 100;
@@ -141,10 +122,8 @@ export class DistinctValuesSubmenu
     // Filter out null if requested (use "is null" filter instead)
     const distinctValues = excludeNull ? data.filter((v) => v !== null) : data;
 
-    // Refresh the key→value lookup with whatever the data source
-    // returned this render. The data source's references are
-    // preferred (canonical) but stale entries from oninit survive as
-    // fallbacks for pinned-not-in-distinct.
+    // Prefer the data source's refs (canonical); oninit's stay around
+    // as fallback for pinned-not-in-distinct.
     for (const v of distinctValues) {
       this.keyToValue.set(sqlValueKey(v), v);
     }
@@ -271,10 +250,9 @@ export class DistinctValuesSubmenu
           disabled: this.selectedKeys.size === 0,
           onclick: () => {
             if (this.selectedKeys.size > 0) {
-              // Map keys back to canonical SqlValue references for the
-              // emit. Falls back to a synthesized null (shouldn't
-              // happen — keyToValue is populated for every key we
-              // ever add) but keeps the type honest.
+              // Skip unknown keys — shouldn't happen (every selected
+              // key was added to keyToValue), but the guard keeps the
+              // type honest if that ever changes.
               const out = new Set<SqlValue>();
               for (const k of this.selectedKeys) {
                 const v = this.keyToValue.get(k);
