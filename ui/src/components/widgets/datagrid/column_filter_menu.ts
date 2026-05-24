@@ -173,18 +173,21 @@ export class DistinctValuesSubmenu
 
     // Partition into pinned (initial selection) + the rest, preserving
     // each group's internal order. Pinned items stay at the top even
-    // during search and even after the user toggles them off, so the
-    // layout doesn't shift mid-edit.
-    const pinned: typeof baseResults = [];
-    const rest: typeof baseResults = [];
-    for (const r of baseResults) {
-      if (this.pinnedKeys.has(r.key)) {
-        pinned.push(r);
-      } else {
-        rest.push(r);
+    // after the user toggles them off, so the layout doesn't shift
+    // mid-edit. Skipped during search — fuzzy relevance order wins.
+    const fuzzyResults = (() => {
+      if (this.searchQuery !== '') return baseResults;
+      const pinned: typeof baseResults = [];
+      const rest: typeof baseResults = [];
+      for (const r of baseResults) {
+        if (this.pinnedKeys.has(r.key)) {
+          pinned.push(r);
+        } else {
+          rest.push(r);
+        }
       }
-    }
-    const fuzzyResults = [...pinned, ...rest];
+      return [...pinned, ...rest];
+    })();
 
     // Limit the number of items rendered
     const visibleResults = fuzzyResults.slice(
@@ -193,12 +196,6 @@ export class DistinctValuesSubmenu
     );
     const remainingCount =
       fuzzyResults.length - DistinctValuesSubmenu.MAX_VISIBLE_ITEMS;
-    // The divider sits after the last pinned item that's actually
-    // visible (so a fully-pinned visibleResults shows no divider, and
-    // a search that filters out all pinned items shows no divider).
-    const visiblePinnedCount = visibleResults.filter((r) =>
-      this.pinnedKeys.has(r.key),
-    ).length;
 
     return m('.pf-distinct-values-menu', [
       m(
@@ -227,7 +224,7 @@ export class DistinctValuesSubmenu
         '.pf-distinct-values-menu__list',
         fuzzyResults.length > 0
           ? [
-              visibleResults.map((result, idx) => {
+              visibleResults.map((result) => {
                 const isSelected = this.selectedKeys.has(result.key);
                 // Render highlighted label
                 const labelContent = result.segments.map((segment) => {
@@ -239,7 +236,7 @@ export class DistinctValuesSubmenu
                 });
 
                 // Render custom menu item with highlighted content
-                const item = m(
+                return m(
                   'button.pf-menu-item',
                   {
                     onclick: () => {
@@ -256,16 +253,6 @@ export class DistinctValuesSubmenu
                   }),
                   m('.pf-menu-item__label', labelContent),
                 );
-                // Insert the divider exactly once, after the last
-                // pinned item and before the first unpinned item.
-                const isLastVisiblePinned =
-                  visiblePinnedCount > 0 &&
-                  visiblePinnedCount < visibleResults.length &&
-                  idx === visiblePinnedCount - 1;
-                if (isLastVisiblePinned) {
-                  return [item, m(MenuDivider)];
-                }
-                return item;
               }),
               remainingCount > 0 &&
                 m(MenuItem, {

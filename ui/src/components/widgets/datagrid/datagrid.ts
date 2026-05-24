@@ -113,23 +113,6 @@ function groupPathsEqual(a: GroupPath, b: GroupPath): boolean {
   return true;
 }
 
-// Keep the open edit-popup's index pointing at the same LOGICAL filter
-// after a sibling filter is removed:
-//   - editing the removed filter   → close the popup (undefined)
-//   - removing an EARLIER filter   → shift the index down by one
-//   - removing a LATER filter      → no change
-//   - editing was already closed   → still closed
-// Exported for unit testing — removeFilter delegates to this helper.
-export function shiftEditingIndexOnRemove(
-  editing: number | undefined,
-  removedIndex: number,
-): number | undefined {
-  if (editing === undefined) return undefined;
-  if (editing === removedIndex) return undefined;
-  if (editing > removedIndex) return editing - 1;
-  return editing;
-}
-
 export interface AggregationCellAttrs extends m.Attributes {
   readonly symbol?: string;
   readonly isLoading?: boolean;
@@ -878,10 +861,7 @@ export class DataGrid implements m.ClassComponent<DataGridAttrs> {
   }
 
   private removeFilter(index: number, attrs: DataGridAttrs): void {
-    this.editingFilterIndex = shiftEditingIndexOnRemove(
-      this.editingFilterIndex,
-      index,
-    );
+    this.editingFilterIndex = undefined;
     const newFilters = this.filters.filter((_, i) => i !== index);
     this.filters = newFilters;
     attrs.onFiltersChanged?.(newFilters);

@@ -66,7 +66,7 @@ function editView(
       datasource: makeStubDataSource(['a', 'b', 'c']),
       field: 'col',
       columnType,
-      valueFormatter: (v) => String(v),
+      valueFormatter: (v: SqlValue) => String(v),
       initialFilter,
       onFilterReplace: vi.fn(),
       ...overrides,
@@ -261,31 +261,6 @@ describe('sqlValueKey normalization (integration via DistinctValuesSubmenu)', ()
       }),
     );
     expect(findApplyButton(root)!.disabled).toBe(false);
-  });
-
-  test('non-integer numbers stay distinct from same-rounded integer', () => {
-    // 1.5 and 2n (or 1n) must NOT collide. Floats with fractional
-    // components keep the 'd:' prefix; integers normalize to 'i:'.
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(DistinctValuesSubmenu, {
-        datasource: makeStubDataSource([1.5, 2]),
-        field: 'col',
-        valueFormatter: (v) => String(v),
-        // Seed with the integer; only the integer should pin.
-        initialSelectedValues: [BigInt(2)],
-        onApply: vi.fn(),
-      }),
-    );
-    // Apply enabled, exactly one item pinned (the integer 2), one not.
-    expect(findApplyButton(root)!.disabled).toBe(false);
-    const dividers = root.querySelectorAll(
-      '.pf-distinct-values-menu__list .pf-menu-divider',
-    );
-    // Pinned + unpinned visible → divider rendered exactly once.
-    expect(dividers.length).toBe(1);
   });
 });
 
@@ -571,65 +546,6 @@ describe('DistinctValuesSubmenu — initial state', () => {
     // Pinned items first (in source order: alpha before gamma),
     // then the unpinned rest (in source order: beta, delta).
     expect(listLabels(root)).toEqual(['alpha', 'gamma', 'beta', 'delta']);
-  });
-
-  test('pinned: divider sits between pinned and unpinned groups', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(DistinctValuesSubmenu, {
-        datasource: makeStubDataSource(['a', 'b', 'c']),
-        field: 'col',
-        valueFormatter: (v) => String(v),
-        initialSelectedValues: ['b'],
-        onApply: vi.fn(),
-      }),
-    );
-    const dividers = root.querySelectorAll(
-      '.pf-distinct-values-menu__list .pf-menu-divider',
-    );
-    expect(dividers.length).toBe(1);
-  });
-
-  test('pinned: no divider when nothing is pinned', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(DistinctValuesSubmenu, {
-        datasource: makeStubDataSource(['a', 'b', 'c']),
-        field: 'col',
-        valueFormatter: (v) => String(v),
-        // no initialSelectedValues → empty pinned set
-        onApply: vi.fn(),
-      }),
-    );
-    const dividers = root.querySelectorAll(
-      '.pf-distinct-values-menu__list .pf-menu-divider',
-    );
-    expect(dividers.length).toBe(0);
-  });
-
-  test('pinned: no divider when EVERY visible item is pinned', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(DistinctValuesSubmenu, {
-        datasource: makeStubDataSource(['a', 'b', 'c']),
-        field: 'col',
-        valueFormatter: (v) => String(v),
-        initialSelectedValues: ['a', 'b', 'c'],
-        onApply: vi.fn(),
-      }),
-    );
-    const dividers = root.querySelectorAll(
-      '.pf-distinct-values-menu__list .pf-menu-divider',
-    );
-    expect(dividers.length).toBe(0);
-    // All three items still shown (in source order).
-    expect(listLabels(root)).toEqual(['a', 'b', 'c']);
   });
 
   test('value-equality: pinned Uint8Array matches a distinct DIFFERENT instance with same bytes', () => {
