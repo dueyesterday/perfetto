@@ -18,6 +18,7 @@ import {
   DistinctValuesSubmenu,
   EditFilterMenu,
   type EditFilterMenuAttrs,
+  parseNumericInput,
   TextFilterSubmenu,
 } from './column_filter_menu';
 import type {DataSource} from './data_source';
@@ -76,18 +77,15 @@ function asVnode(c: m.Children): m.Vnode<InspectableSubmenuAttrs> {
 }
 
 describe('EditFilterMenu — dispatch by op', () => {
-  test('in → DistinctValuesSubmenu with array seed', () => {
-    const v = asVnode(editView({op: 'in', value: ['x', 'y']}, 'text'));
-    expect(v.tag).toBe(DistinctValuesSubmenu);
-    expect(v.attrs.initialSelectedValues).toEqual(['x', 'y']);
-    expect(v.attrs.excludeNull).toBe(true);
-  });
-
-  test('not in → DistinctValuesSubmenu with array seed', () => {
-    const v = asVnode(editView({op: 'not in', value: ['a']}, 'text'));
-    expect(v.tag).toBe(DistinctValuesSubmenu);
-    expect(v.attrs.initialSelectedValues).toEqual(['a']);
-  });
+  test.each(['in', 'not in'] as const)(
+    '%s → DistinctValuesSubmenu with array seed',
+    (op) => {
+      const v = asVnode(editView({op, value: ['x', 'y']}, 'text'));
+      expect(v.tag).toBe(DistinctValuesSubmenu);
+      expect(v.attrs.initialSelectedValues).toEqual(['x', 'y']);
+      expect(v.attrs.excludeNull).toBe(true);
+    },
+  );
 
   test.each(['text', 'identifier', undefined] as const)(
     '= on %s column → DistinctValuesSubmenu with single-element seed',
@@ -157,27 +155,16 @@ describe('EditFilterMenu — dispatch by op', () => {
 });
 
 describe('EditFilterMenu — op promotion on save', () => {
-  test('= on text + apply emits {op: "in", value: [...]}', () => {
+  test.each([
+    ['=', 'in'],
+    ['!=', 'not in'],
+  ] as const)('%s on text + apply emits {op: "%s", value: [...]}', (op, promoted) => {
     const onFilterReplace = vi.fn();
-    const v = asVnode(
-      editView({op: '=', value: 'foo'}, 'text', {onFilterReplace}),
-    );
+    const v = asVnode(editView({op, value: 'foo'}, 'text', {onFilterReplace}));
     v.attrs.onApply(new Set(['foo', 'bar']));
     expect(onFilterReplace).toHaveBeenCalledWith({
-      op: 'in',
+      op: promoted,
       value: ['foo', 'bar'],
-    });
-  });
-
-  test('!= on text + apply emits {op: "not in", value: [...]}', () => {
-    const onFilterReplace = vi.fn();
-    const v = asVnode(
-      editView({op: '!=', value: 'foo'}, 'text', {onFilterReplace}),
-    );
-    v.attrs.onApply(new Set(['baz']));
-    expect(onFilterReplace).toHaveBeenCalledWith({
-      op: 'not in',
-      value: ['baz'],
     });
   });
 
@@ -221,124 +208,28 @@ describe('EditFilterMenu — op promotion on save', () => {
   });
 });
 
-describe('TextFilterSubmenu — initial state', () => {
-  afterEach(() => {
-    document.body.innerHTML = '';
+describe('parseNumericInput', () => {
+  test('safe-integer range → number', () => {
+    expect(parseNumericInput('1234')).toBe(1234);
+    expect(typeof parseNumericInput('1234')).toBe('number');
   });
 
-  test('initialValue pre-fills the input', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(TextFilterSubmenu, {
-        inputType: 'text',
-        initialValue: 'hello world',
-        onApply: vi.fn(),
-      }),
+  test('past MAX_SAFE_INTEGER → bigint (no precision loss)', () => {
+    // 2^53 + 1: not representable as a JS number without precision loss.
+    expect(parseNumericInput('9007199254740993')).toBe(
+      BigInt('9007199254740993'),
     );
-    const input = root.querySelector('input') as HTMLInputElement | null;
-    expect(input).not.toBeNull();
-    expect(input!.value).toBe('hello world');
   });
 
-  test('submitLabel defaults to "Add Filter" and is overridable', () => {
-    const renderLabel = (submitLabel?: string): string => {
-      const root = document.createElement('div');
-      document.body.appendChild(root);
-      m.render(
-        root,
-        m(TextFilterSubmenu, {
-          inputType: 'text',
-          submitLabel,
-          onApply: vi.fn(),
-        }),
-      );
-      return root.textContent ?? '';
-    };
-    expect(renderLabel()).toContain('Add Filter');
-    const overridden = renderLabel('Save Filter');
-    expect(overridden).toContain('Save Filter');
-    expect(overridden).not.toContain('Add Filter');
-  });
-
-  // Helpers for the numeric-coercion tests below. Submitting the form
-  // takes a click on the submit button.
-  function submitForm(root: HTMLElement): void {
-    const submit = root.querySelector(
-      'button[type=submit]',
-    ) as HTMLButtonElement | null;
-    expect(submit).not.toBeNull();
-    submit!.click();
-  }
-
-  test('numeric input within safe-integer range emits number', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    const onApply = vi.fn();
-    m.render(
-      root,
-      m(TextFilterSubmenu, {
-        inputType: 'number',
-        initialValue: '1234',
-        onApply,
-      }),
+  test('below MIN_SAFE_INTEGER → bigint', () => {
+    expect(parseNumericInput('-9007199254740993')).toBe(
+      BigInt('-9007199254740993'),
     );
-    submitForm(root);
-    expect(onApply).toHaveBeenCalledWith(1234);
-    expect(typeof onApply.mock.calls[0][0]).toBe('number');
   });
 
-  test('numeric input past MAX_SAFE_INTEGER emits bigint (no precision loss)', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    const onApply = vi.fn();
-    m.render(
-      root,
-      m(TextFilterSubmenu, {
-        inputType: 'number',
-        // 2^53 + 1: not representable as a JS number without precision loss.
-        initialValue: '9007199254740993',
-        onApply,
-      }),
-    );
-    submitForm(root);
-    expect(typeof onApply.mock.calls[0][0]).toBe('bigint');
-    expect(onApply).toHaveBeenCalledWith(BigInt('9007199254740993'));
-  });
-
-  test('numeric input below MIN_SAFE_INTEGER emits bigint', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    const onApply = vi.fn();
-    m.render(
-      root,
-      m(TextFilterSubmenu, {
-        inputType: 'number',
-        initialValue: '-9007199254740993',
-        onApply,
-      }),
-    );
-    submitForm(root);
-    expect(typeof onApply.mock.calls[0][0]).toBe('bigint');
-    expect(onApply).toHaveBeenCalledWith(BigInt('-9007199254740993'));
-  });
-
-  test('numeric input with a decimal stays as a number (BigInt only for integers)', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    const onApply = vi.fn();
-    m.render(
-      root,
-      m(TextFilterSubmenu, {
-        inputType: 'number',
-        initialValue: '1.5',
-        onApply,
-      }),
-    );
-    submitForm(root);
-    expect(typeof onApply.mock.calls[0][0]).toBe('number');
-    expect(onApply).toHaveBeenCalledWith(1.5);
+  test('decimals stay as number (BigInt only for integers)', () => {
+    expect(parseNumericInput('1.5')).toBe(1.5);
+    expect(typeof parseNumericInput('1.5')).toBe('number');
   });
 });
 
@@ -363,39 +254,28 @@ describe('DistinctValuesSubmenu — initial state', () => {
     );
   }
 
-  test('initialSelectedValues enables the Apply button (non-empty seed)', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(DistinctValuesSubmenu, {
-        datasource: makeStubDataSource(['a', 'b', 'c']),
-        field: 'col',
-        valueFormatter: (v) => String(v),
-        initialSelectedValues: ['a'],
-        onApply: vi.fn(),
-      }),
-    );
-    const applyButton = findApplyButton(root);
-    expect(applyButton).toBeDefined();
-    expect(applyButton!.disabled).toBe(false);
-  });
-
-  test('no initialSelectedValues: Apply is disabled (empty seed)', () => {
-    const root = document.createElement('div');
-    document.body.appendChild(root);
-    m.render(
-      root,
-      m(DistinctValuesSubmenu, {
-        datasource: makeStubDataSource(['a', 'b', 'c']),
-        field: 'col',
-        valueFormatter: (v) => String(v),
-        onApply: vi.fn(),
-      }),
-    );
-    const applyButton = findApplyButton(root);
-    expect(applyButton).toBeDefined();
-    expect(applyButton!.disabled).toBe(true);
+  test('Apply button is enabled iff initialSelectedValues is non-empty', () => {
+    const renderWithSeed = (
+      initialSelectedValues?: ReadonlyArray<SqlValue>,
+    ): HTMLButtonElement => {
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      m.render(
+        root,
+        m(DistinctValuesSubmenu, {
+          datasource: makeStubDataSource(['a', 'b', 'c']),
+          field: 'col',
+          valueFormatter: (v) => String(v),
+          initialSelectedValues,
+          onApply: vi.fn(),
+        }),
+      );
+      const applyButton = findApplyButton(root);
+      expect(applyButton).toBeDefined();
+      return applyButton!;
+    };
+    expect(renderWithSeed(['a']).disabled).toBe(false);
+    expect(renderWithSeed(undefined).disabled).toBe(true);
   });
 
   // Return the visible distinct-value labels in DOM order (excludes

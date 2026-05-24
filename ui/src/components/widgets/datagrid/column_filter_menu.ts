@@ -231,7 +231,9 @@ export class DistinctValuesSubmenu
 
 // String → number, or BigInt for integers past 2^53 (int64 IDs from
 // trace_processor). Returns the input string on parse failure.
-function parseNumericInput(trimmed: string): string | number | bigint {
+export function parseNumericInput(
+  trimmed: string,
+): string | number | bigint {
   // Integer: BigInt past 2^53 to preserve precision, number otherwise
   // for the common case.
   if (/^-?\d+$/.test(trimmed)) {
