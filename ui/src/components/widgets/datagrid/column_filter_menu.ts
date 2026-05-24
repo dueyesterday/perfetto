@@ -57,52 +57,22 @@ interface DistinctValuesSubmenuAttrs {
   readonly onApply: (selectedValues: Set<SqlValue>) => void;
 }
 
-// Stable string key for SqlValue equality across JS-reference types
-// (Uint8Array, blobs) — Set membership compares by reference, so a
-// caller-supplied seed and the data source's distinct value need the
-// same key even when they're distinct JS objects. Family-prefixed so
-// "123" can't collide with 123n; integer-typed numbers normalize to
-// the bigint key so cross-type seeds match.
-function sqlValueKey(v: SqlValue): string {
-  if (v === null) return 'n:';
-  if (typeof v === 'bigint') return 'i:' + v.toString();
-  if (typeof v === 'number') {
-    if (Number.isInteger(v)) return 'i:' + v.toString();
-    return 'd:' + String(v);
-  }
-  if (typeof v === 'string') return 's:' + v;
-  if (v instanceof Uint8Array) {
-    let s = 'x:';
-    for (const byte of v) s += byte.toString(16).padStart(2, '0');
-    return s;
-  }
-  return 'u:' + String(v);
-}
-
 export class DistinctValuesSubmenu
   implements m.ClassComponent<DistinctValuesSubmenuAttrs>
 {
-  // Keyed (not value-typed) so seed blobs/objects compare equal to
-  // the data source's distinct values. See sqlValueKey.
-  private selectedKeys = new Set<string>();
+  private selected = new Set<SqlValue>();
   // Initial selection captured at oninit; pins those items to the top
   // of the idle layout so edit-mode shows the current selection at a
   // glance and toggles don't shift items.
-  private pinnedKeys = new Set<string>();
-  // key → canonical SqlValue ref so onApply emits the references the
-  // caller expects, even for pinned items no longer in the data source
-  // (e.g. a filter on a deleted value).
-  private keyToValue = new Map<string, SqlValue>();
+  private pinned = new Set<SqlValue>();
   private searchQuery = '';
   private static readonly MAX_VISIBLE_ITEMS = 100;
 
   oninit({attrs}: m.Vnode<DistinctValuesSubmenuAttrs>) {
     if (attrs.initialSelectedValues !== undefined) {
       for (const v of attrs.initialSelectedValues) {
-        const k = sqlValueKey(v);
-        this.selectedKeys.add(k);
-        this.pinnedKeys.add(k);
-        this.keyToValue.set(k, v);
+        this.selected.add(v);
+        this.pinned.add(v);
       }
     }
   }
@@ -122,19 +92,12 @@ export class DistinctValuesSubmenu
     // Filter out null if requested (use "is null" filter instead)
     const distinctValues = excludeNull ? data.filter((v) => v !== null) : data;
 
-    // Prefer the data source's refs (canonical); oninit's stay around
-    // as fallback for pinned-not-in-distinct.
-    for (const v of distinctValues) {
-      this.keyToValue.set(sqlValueKey(v), v);
-    }
-
     // Use fuzzy search to filter and get highlighted segments
     const baseResults = (() => {
       if (this.searchQuery === '') {
         // No search - show all values without highlighting
         return distinctValues.map((value) => ({
           value,
-          key: sqlValueKey(value),
           segments: [{matching: false, value: valueFormatter(value)}],
         }));
       } else {
@@ -144,7 +107,6 @@ export class DistinctValuesSubmenu
         );
         return finder.find(this.searchQuery).map((result) => ({
           value: result.item,
-          key: sqlValueKey(result.item),
           segments: result.segments,
         }));
       }
@@ -156,16 +118,16 @@ export class DistinctValuesSubmenu
     // mid-edit. Skipped during search — fuzzy relevance order wins.
     const fuzzyResults = (() => {
       if (this.searchQuery !== '') return baseResults;
-      const pinned: typeof baseResults = [];
+      const pinnedItems: typeof baseResults = [];
       const rest: typeof baseResults = [];
       for (const r of baseResults) {
-        if (this.pinnedKeys.has(r.key)) {
-          pinned.push(r);
+        if (this.pinned.has(r.value)) {
+          pinnedItems.push(r);
         } else {
           rest.push(r);
         }
       }
-      return [...pinned, ...rest];
+      return [...pinnedItems, ...rest];
     })();
 
     // Limit the number of items rendered
@@ -204,7 +166,7 @@ export class DistinctValuesSubmenu
         fuzzyResults.length > 0
           ? [
               visibleResults.map((result) => {
-                const isSelected = this.selectedKeys.has(result.key);
+                const isSelected = this.selected.has(result.value);
                 // Render highlighted label
                 const labelContent = result.segments.map((segment) => {
                   if (segment.matching) {
@@ -220,9 +182,9 @@ export class DistinctValuesSubmenu
                   {
                     onclick: () => {
                       if (isSelected) {
-                        this.selectedKeys.delete(result.key);
+                        this.selected.delete(result.value);
                       } else {
-                        this.selectedKeys.add(result.key);
+                        this.selected.add(result.value);
                       }
                     },
                   },
@@ -247,19 +209,11 @@ export class DistinctValuesSubmenu
         m(MenuItem, {
           label: 'Apply',
           icon: 'check',
-          disabled: this.selectedKeys.size === 0,
+          disabled: this.selected.size === 0,
           onclick: () => {
-            if (this.selectedKeys.size > 0) {
-              // Skip unknown keys — shouldn't happen (every selected
-              // key was added to keyToValue), but the guard keeps the
-              // type honest if that ever changes.
-              const out = new Set<SqlValue>();
-              for (const k of this.selectedKeys) {
-                const v = this.keyToValue.get(k);
-                if (v !== undefined) out.add(v);
-              }
-              onApply(out);
-              this.selectedKeys.clear();
+            if (this.selected.size > 0) {
+              onApply(new Set(this.selected));
+              this.selected.clear();
               this.searchQuery = '';
             }
           },
@@ -267,10 +221,10 @@ export class DistinctValuesSubmenu
         m(MenuItem, {
           label: 'Clear selection',
           icon: 'close',
-          disabled: this.selectedKeys.size === 0,
+          disabled: this.selected.size === 0,
           closePopupOnClick: false,
           onclick: () => {
-            this.selectedKeys.clear();
+            this.selected.clear();
             m.redraw();
           },
         }),
