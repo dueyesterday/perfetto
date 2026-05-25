@@ -229,28 +229,6 @@ export class DistinctValuesSubmenu
   }
 }
 
-// String → number, or BigInt for integers past 2^53 (int64 IDs from
-// trace_processor). Returns the input string on parse failure.
-export function parseNumericInput(
-  trimmed: string,
-): string | number | bigint {
-  // Integer: BigInt past 2^53 to preserve precision, number otherwise
-  // for the common case.
-  if (/^-?\d+$/.test(trimmed)) {
-    try {
-      const big = BigInt(trimmed);
-      const safeMax = BigInt(Number.MAX_SAFE_INTEGER);
-      const safeMin = BigInt(Number.MIN_SAFE_INTEGER);
-      if (big <= safeMax && big >= safeMin) return Number(big);
-      return big;
-    } catch {
-      // Unreachable for a digit-only string but keeps the type checker honest.
-    }
-  }
-  const n = Number(trimmed);
-  return Number.isNaN(n) ? trimmed : n;
-}
-
 // Helper component for text-based filter input
 interface TextFilterSubmenuAttrs {
   readonly placeholder?: string;
@@ -260,7 +238,7 @@ interface TextFilterSubmenuAttrs {
   readonly initialValue?: string;
   // Submit-button label; defaults to 'Add Filter' (edit-mode uses 'Save').
   readonly submitLabel?: string;
-  readonly onApply: (value: string | number | bigint) => void;
+  readonly onApply: (value: string | number) => void;
 }
 
 export class TextFilterSubmenu
@@ -283,10 +261,16 @@ export class TextFilterSubmenu
     } = attrs;
 
     const applyFilter = () => {
-      const trimmed = this.inputValue.trim();
-      if (trimmed.length > 0) {
-        const value: string | number | bigint =
-          inputType === 'number' ? parseNumericInput(trimmed) : trimmed;
+      if (this.inputValue.trim().length > 0) {
+        let value: string | number = this.inputValue.trim();
+
+        if (inputType === 'number') {
+          const numValue = Number(value);
+          if (!isNaN(numValue)) {
+            value = numValue;
+          }
+        }
+
         onApply(value);
         this.inputValue = '';
       }

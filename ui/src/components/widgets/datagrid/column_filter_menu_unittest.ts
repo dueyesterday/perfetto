@@ -18,7 +18,6 @@ import {
   DistinctValuesSubmenu,
   EditFilterMenu,
   type EditFilterMenuAttrs,
-  parseNumericInput,
   TextFilterSubmenu,
 } from './column_filter_menu';
 import type {DataSource} from './data_source';
@@ -205,31 +204,6 @@ describe('EditFilterMenu — op promotion on save', () => {
     );
     v.attrs.onApply('*y*');
     expect(onFilterReplace).toHaveBeenCalledWith({op: 'glob', value: '*y*'});
-  });
-});
-
-describe('parseNumericInput', () => {
-  test('safe-integer range → number', () => {
-    expect(parseNumericInput('1234')).toBe(1234);
-    expect(typeof parseNumericInput('1234')).toBe('number');
-  });
-
-  test('past MAX_SAFE_INTEGER → bigint (no precision loss)', () => {
-    // 2^53 + 1: not representable as a JS number without precision loss.
-    expect(parseNumericInput('9007199254740993')).toBe(
-      BigInt('9007199254740993'),
-    );
-  });
-
-  test('below MIN_SAFE_INTEGER → bigint', () => {
-    expect(parseNumericInput('-9007199254740993')).toBe(
-      BigInt('-9007199254740993'),
-    );
-  });
-
-  test('decimals stay as number (BigInt only for integers)', () => {
-    expect(parseNumericInput('1.5')).toBe(1.5);
-    expect(typeof parseNumericInput('1.5')).toBe('number');
   });
 });
 
