@@ -720,7 +720,7 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
       return m(TextFilterSubmenu, {
         placeholder: 'Enter value...',
         inputType: 'number',
-        initialValue: sqlValueToString(initialFilter.value),
+        initialValue: String(initialFilter.value),
         submitLabel: 'Save',
         onApply: (value) => {
           onFilterReplace({op, value});
@@ -738,7 +738,7 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
       return m(TextFilterSubmenu, {
         placeholder: 'Enter number...',
         inputType: 'number',
-        initialValue: sqlValueToString(initialFilter.value),
+        initialValue: String(initialFilter.value),
         submitLabel: 'Save',
         onApply: (value) => {
           onFilterReplace({op, value});
@@ -751,7 +751,7 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
       return m(TextFilterSubmenu, {
         placeholder: 'Enter glob pattern...',
         inputType: 'text',
-        initialValue: sqlValueToString(initialFilter.value),
+        initialValue: String(initialFilter.value),
         submitLabel: 'Save',
         onApply: (value) => {
           onFilterReplace({op, value});
@@ -762,11 +762,4 @@ export class EditFilterMenu implements m.ClassComponent<EditFilterMenuAttrs> {
     // Exhaustiveness fall-through; FilterOpAndValue should be covered.
     return null;
   }
-}
-
-// SqlValue → input string. null → empty (a null-valued filter is
-// malformed; show empty rather than the literal "null").
-function sqlValueToString(value: SqlValue): string {
-  if (value === null) return '';
-  return String(value);
 }

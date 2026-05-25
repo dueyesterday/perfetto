@@ -157,15 +157,20 @@ describe('EditFilterMenu — op promotion on save', () => {
   test.each([
     ['=', 'in'],
     ['!=', 'not in'],
-  ] as const)('%s on text + apply emits {op: "%s", value: [...]}', (op, promoted) => {
-    const onFilterReplace = vi.fn();
-    const v = asVnode(editView({op, value: 'foo'}, 'text', {onFilterReplace}));
-    v.attrs.onApply(new Set(['foo', 'bar']));
-    expect(onFilterReplace).toHaveBeenCalledWith({
-      op: promoted,
-      value: ['foo', 'bar'],
-    });
-  });
+  ] as const)(
+    '%s on text + apply emits {op: "%s", value: [...]}',
+    (op, promoted) => {
+      const onFilterReplace = vi.fn();
+      const v = asVnode(
+        editView({op, value: 'foo'}, 'text', {onFilterReplace}),
+      );
+      v.attrs.onApply(new Set(['foo', 'bar']));
+      expect(onFilterReplace).toHaveBeenCalledWith({
+        op: promoted,
+        value: ['foo', 'bar'],
+      });
+    },
+  );
 
   test('= on quantitative + apply preserves op', () => {
     const onFilterReplace = vi.fn();
