@@ -208,7 +208,7 @@ export class DistinctValuesSubmenu
           disabled: this.selected.size === 0,
           onclick: () => {
             if (this.selected.size > 0) {
-              onApply(new Set(this.selected));
+              onApply(this.selected);
               this.selected.clear();
               this.searchQuery = '';
             }
