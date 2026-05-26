@@ -697,6 +697,9 @@ verifies:
     metadata is preserved.
 11. Result limit is **global**, not per-trace: `limit=7` over 14
     traces materializes ≤ 7 rows total.
+11a. `trace_limit` caps the **trace** list (not just the result rows)
+    — a `trace_limit=2` setting with 14 candidate traces processes
+    exactly 2.
 12. `:status` payload is **strictly the 4 progress fields**
     (`status`, `processedTraces`, `totalTraces`, `processedRows`).
     No `queryUuid` (URL key, not body), no `endTime`/`errorMessage`,
@@ -716,6 +719,47 @@ verifies:
     (`name asc, dur desc`) returns rows; bad direction (`dur sideways`)
     and unknown column both yield HTTP 400 with the offending token
     surfaced in the body.
+17. Timestamps: `startTime` / `endTime` round-trip as UTC ISO-8601
+    with millisecond precision and `start < end` is enforced.
+18. Zero-result async: a query whose filter selects zero traces still
+    reaches `SUCCESS` with `processedTraces=0` / `processedRows=0`
+    (not FAILED, not stuck in IN_PROGRESS).
+19. `:cancel` on a terminal query is a silent 200: the status is
+    preserved (e.g. SUCCESS stays SUCCESS), no row mutation, no 4xx.
+20. Server restart recovery: a query that was IN_PROGRESS at
+    process exit transitions to FAILED on the next boot via
+    `recover_stale_in_progress`, dropping its half-materialized
+    table. Soft-skips if the query naturally raced to terminal
+    before the crash point.
+21. Top-level `trace_filter: Filter[]` narrows the trace list at
+    submit time: `[{field: 'file_name', op: '=', value: '<one>'}]`
+    over a 2-trace fixture sets `totalTraces=1`.
+22. `:fetch_results?filter=...` (JSON `Filter[]`) end-to-end:
+    numeric `>`, `glob`, multi-filter AND each filter to the
+    expected row count; `totalFilteredRows` reflects the post-filter
+    count; bad JSON, unknown column, and empty `in []` each yield
+    400 INVALID_ARGUMENT with the offending entry surfaced.
+23. `/traces` + `/traces_schema` end-to-end: schema response carries
+    four columns flagged `default: true`; happy-path pagination,
+    `filter` and `order_by` parameters match `:fetch_results`
+    semantics; `columns` projection narrows the response without
+    losing filter/sort over unprojected columns; 9 bad-request
+    cases (malformed JSON, unknown column on each axis, etc.) all
+    return 400.
+24. Async `trace_metadata_columns` end-to-end: opting in creates a
+    sidecar table that `:fetch_results?columns=` transparently
+    LEFT-JOINs at projection / filter / order_by time;
+    `availableColumns` advertises both result-table and sidecar
+    columns; unknown columns at submit AND at fetch each return
+    400. The sync path stitches the same metadata inline (no
+    sidecar — `:fetch_results` doesn't apply to sync).
+25. Submit-time snapshot round-trip: `settings` / `trace_filter` /
+    `trace_metadata_columns` shipped on `/execute_*` are echoed on
+    the per-uuid full GET as `settings` / `traceFilter` /
+    `traceMetadataColumns`. `:status` omits all three (lean
+    polling). `/query_executions` list also omits them (lean
+    history sidebar). Absent / `null` / `[]` on submit all read
+    back as `[]` (never `null`).
 
 If no traces are available it prints `SKIP` and returns 0.
 
@@ -1047,18 +1091,55 @@ To verify the existing UI talks to this backend:
 
 ## Files
 
-- `server.py` — FastAPI app, request handlers, lifecycle (DB init,
-  TTL sweep task, optional DuckDB UI bring-up).
-- `db.py` — DuckDB-backed persistence: schema, all DDL/DML helpers,
-  Arrow-based bulk inserts, soft-delete, TTL sweep query, recovery on
-  startup.
+Production code:
+
+- `server.py` — FastAPI app, request handlers (including `/traces`,
+  `/traces_schema`, the submit-time snapshot fields, and
+  `:fetch_results?columns=`/`filter=`), lifecycle (DB init, TTL
+  sweep task, optional DuckDB UI bring-up).
+- `db.py` — DuckDB-backed persistence: schema (incl. snapshot
+  columns + per-query metadata sidecar tables), all DDL/DML
+  helpers, Arrow-based bulk inserts, soft-delete, TTL sweep query,
+  recovery on startup, the `parse_filter` / `compile_where` pair
+  shared by `:fetch_results` and `/traces`.
 - `query_executor.py` — `RunContext` + threaded executor that runs
-  SQL across N traces in parallel and merges rows under the run lock.
+  SQL across N traces in parallel and merges rows under the run
+  lock. Stitches `trace_metadata_columns` inline on the sync path.
 - `trace_pool.py` — LRU pool of `TraceProcessor` instances, one per
   trace path. Thread-safe sync API.
-- `settings.py` — static settings schema, plus the `trace_filter`
-  regex extractor and the `trace_directory` extractor (the two
-  settings that do real work in this backend).
-- `smoke_local.py` — end-to-end smoke (HTTP-level).
+- `settings.py` — static settings schema (`trace_directory`,
+  `trace_limit`, etc.) and the `trace_directory` extractor. The
+  legacy `trace_filter` regex setting was removed when the
+  top-level `trace_filter: Filter[]` body field on `/execute_*`
+  replaced it.
+
+Tests:
+
+- `db_unittest.py` — `parse_filter` / `compile_where` golden tests
+  (every op variant + error path).
+- `db_state_unittest.py` — DB state machine coverage (terminal
+  transitions, recovery, TTL sweep).
+- `query_executor_unittest.py` — executor under contention, cancel
+  races, merge semantics.
+- `server_unittest.py` — request-handler contract tests
+  (snapshot persistence, error mapping, etc.).
+- `settings_unittest.py` — settings schema + `trace_directory`
+  extractor.
+- `trace_pool_unittest.py` — LRU eviction + thread-safety.
+
+Smokes:
+
+- `smoke_local.py` — end-to-end HTTP smoke (no UI; spawns its own
+  server on `:18002`).
+- `smoke_ui.js` — Playwright smoke that drives the real BigTrace UI
+  against a spawned backend on `:18003`.
+- `smoke_focused.js` — Playwright probe for two specific
+  fixes (async status pill + `~` expansion in `trace_directory`).
+
+Setup & docs:
+
 - `setup_venv.sh` — one-shot venv bootstrap.
-- `requirements.txt` — pip deps (perfetto installed editable separately).
+- `requirements.txt` — pip deps (perfetto installed editable
+  separately).
+- `CUJS.md` — user-CUJ catalog mapping each journey to its smoke
+  step (`HTTP-N` / `UI-N` / `TODO` / `manual`).
