@@ -171,6 +171,9 @@ export class BreakdownTracks {
   private modulesClause: string;
   private sliceJoinClause?: string;
   private pivotJoinClause?: string;
+  // Counter tracks defer their CREATE PERFETTO TABLE here; flushed in one
+  // batched engine.query at end of createTracks().
+  private pendingTableCreates: string[] = [];
 
   constructor(props: BreakdownTrackProps) {
     this.props = props;
@@ -302,7 +305,16 @@ export class BreakdownTracks {
       pivotColNames,
     );
 
+    await this.flushPendingTableCreates();
+
     return rootTrackNode;
+  }
+
+  private async flushPendingTableCreates() {
+    if (this.pendingTableCreates.length === 0) return;
+    const batch = this.pendingTableCreates.join('\n');
+    this.pendingTableCreates = [];
+    await this.props.trace.engine.query(batch);
   }
 
   private async createBreakdownHierarchy(
@@ -422,7 +434,7 @@ export class BreakdownTracks {
     return await this.createTrackNode(
       title,
       newFilters,
-      async (uri: string, filtersClause: string) => {
+      (uri: string, filtersClause: string) => {
         return SliceTrack.create({
           trace: this.props.trace,
           uri,
@@ -466,13 +478,18 @@ export class BreakdownTracks {
       name,
       newFilters,
       (uri: string, filtersClause: string) => {
-        return CounterTrack.createMaterialized({
+        // Defer the CREATE PERFETTO TABLE so all counter tables in this
+        // BreakdownTracks instance can be created in one batched engine.query
+        // at the end of createTracks(). The renderer holds the chosen table
+        // name; the table is materialized before createTracks() returns.
+        const tableName = `_breakdown_counter_${uuidv4().replace(/-/g, '_')}`;
+        this.pendingTableCreates.push(
+          `CREATE PERFETTO TABLE ${tableName} AS SELECT ts, value FROM (${this.getAggregationQuery(filtersClause)});`,
+        );
+        return CounterTrack.create({
           trace: this.props.trace,
           uri,
-          sqlSource: `
-            SELECT ts, value
-            FROM (${this.getAggregationQuery(filtersClause)})
-          `,
+          sqlSource: tableName,
         });
       },
       (filterClause) => this.getCounterTrackSortOrder(filterClause),
@@ -482,14 +499,14 @@ export class BreakdownTracks {
   private async createTrackNode(
     name: string,
     filters: Filter[],
-    createTrack: (uri: string, filtersClause: string) => Promise<TrackRenderer>,
+    createTrack: (uri: string, filtersClause: string) => TrackRenderer,
     getSortOrder?: (filterClause: string) => Promise<number>,
   ) {
     const filtersClause =
       filters.length > 0 ? `\nWHERE ${buildFilterSqlClause(filters)}` : '';
     const uri = `${this.uri}_${uuidv4()}`;
 
-    const renderer = await createTrack(uri, filtersClause);
+    const renderer = createTrack(uri, filtersClause);
 
     this.props.trace.tracks.registerTrack({
       uri,
