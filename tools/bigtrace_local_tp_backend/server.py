@@ -265,6 +265,7 @@ def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
     d['settings'] = snap.settings
     d['traceFilter'] = snap.trace_filter
     d['traceMetadataColumns'] = snap.trace_metadata_columns
+    d['traceOrderBy'] = snap.trace_order_by
   if snap.table_name is not None:
     d['tableName'] = snap.table_name
     # tableLink is built mechanically from tableName so the two
@@ -427,15 +428,21 @@ def _resolve_trace_dir(settings: list[dict[str, Any]]) -> str:
 def _resolve_traces_for(
     settings: list[dict[str, Any]],
     trace_filter: Any,
+    trace_order_by: Optional[str] = None,
 ) -> list[dict[str, Any]]:
   """Build the list of trace entries to fan out to.
 
     Pipeline: enumerate metadata for every recognized file in
     `trace_directory`, apply the structured `trace_filter` (the
     `Filter[]` JSON the BigTrace UI's Settings page collects from
-    the trace grid), then truncate to `trace_limit` if > 0. The
-    intermediate ordering is `file_path` ASC so the cap is
-    deterministic across runs (same files end up selected).
+    the trace grid), order by `trace_order_by`, then truncate to
+    `trace_limit` if > 0.
+
+    `trace_order_by` is the AIP-132 wire string the client picked on
+    the trace grid (same parser as `/traces?order_by=`). When the
+    client doesn't ship one the order falls back to `file_path ASC`
+    so the cap is deterministic across runs (same files end up
+    selected if the grid wasn't sorted explicitly).
 
     Returns the FULL entries (one dict per trace with every column
     from `enumerate_traces`), not just paths. The execute path needs
@@ -449,19 +456,25 @@ def _resolve_traces_for(
     Same shape and parser as `:fetch_results?filter=` so the wire
     contract is unified across read paths.
 
-    Raises HTTPException(400) on a malformed filter / unknown column
-    so the user gets the same 400 INVALID_ARGUMENT shape they'd see
-    from `:fetch_results`.
+    Raises HTTPException(400) on a malformed filter / order_by or
+    unknown column so the user gets the same 400 INVALID_ARGUMENT
+    shape they'd see from `:fetch_results`.
     """
   traces_dir = _resolve_trace_dir(settings)
   traces = enumerate_traces(traces_dir)
   parsed_filter = _parse_trace_filter_or_400(trace_filter)
   try:
+    parsed_order = (
+        parse_order_by(trace_order_by) if trace_order_by else [('file_path',
+                                                                'ASC')])
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=f'trace_order_by: {e}')
+  try:
     cols, rows, _total = query_trace_list(
         traces,
         _TRACE_LIST_COLUMN_TYPES,
         parsed_filter,
-        parsed_order=[('file_path', 'ASC')],
+        parsed_order=parsed_order,
         limit=None,
     )
   except ValueError as e:
@@ -590,6 +603,7 @@ async def _run_async_query(
     settings: list[dict[str, Any]],
     trace_filter: Any,
     trace_metadata_columns: Any,
+    trace_order_by: Optional[str] = None,
 ) -> None:
   """Background coroutine: drive the threaded executor for one async run.
 
@@ -624,7 +638,7 @@ async def _run_async_query(
 
   try:
     meta_cols = _validate_trace_metadata_columns_or_400(trace_metadata_columns)
-    entries = _resolve_traces_for(settings, trace_filter)
+    entries = _resolve_traces_for(settings, trace_filter, trace_order_by)
     paths = [e['file_path'] for e in entries]
     # Async path: do NOT stitch metadata into result rows. Instead,
     # write it once to a sidecar table keyed by trace_id. The
@@ -694,15 +708,17 @@ async def _run_async_query(
 
 
 async def _parse_query_body(
-    request: Request,) -> tuple[str, int, list[dict[str, Any]], Any, Any]:
+    request: Request,
+) -> tuple[str, int, list[dict[str, Any]], Any, Any, Optional[str]]:
   """Pull `(perfetto_sql, limit, settings, trace_filter,
-    trace_metadata_columns)` from the request JSON.
+    trace_metadata_columns, trace_order_by)` from the request JSON.
 
     Shared by `execute_async` and `execute_sync` so the field names
     and defaults can't drift between the two endpoints. Defaults
-    (`''`, `100`, `[]`, `None`, `None`) match what the UI sends when
-    the user hasn't overridden a setting / has no trace-filter
-    active / hasn't opted into extra metadata columns.
+    (`''`, `100`, `[]`, `None`, `None`, `None`) match what the UI
+    sends when the user hasn't overridden a setting / has no
+    trace-filter active / hasn't opted into extra metadata columns /
+    didn't sort the trace grid.
 
     `trace_filter` is a top-level structured field (Filter[] JSON,
     same shape as `:fetch_results?filter=`). Absence here means
@@ -713,6 +729,11 @@ async def _parse_query_body(
     every result row (right after `trace_id`) so query results carry
     per-trace context without the user having to join it in SQL.
     Absence / [] means "no extra columns".
+
+    `trace_order_by` is the AIP-132 wire string (same grammar as
+    `/traces?order_by=`). When set, controls the order in which
+    traces are processed (and therefore which N are kept when
+    `trace_limit` truncates). Absence falls back to `file_path ASC`.
     """
   body = await request.json()
   return (
@@ -721,6 +742,7 @@ async def _parse_query_body(
       body.get('settings', []),
       body.get('trace_filter'),
       body.get('trace_metadata_columns'),
+      body.get('trace_order_by'),
   )
 
 
@@ -740,8 +762,8 @@ async def execute_async(request: Request) -> dict[str, Any]:
     the history list still shows the entry — same lifecycle as the
     sync path.
     """
-  (perfetto_sql, limit, settings, trace_filter,
-   trace_metadata_columns) = await _parse_query_body(request)
+  (perfetto_sql, limit, settings, trace_filter, trace_metadata_columns,
+   trace_order_by) = await _parse_query_body(request)
   db = _get_db()
 
   new_uuid = str(uuid.uuid4())
@@ -759,20 +781,30 @@ async def execute_async(request: Request) -> dict[str, Any]:
       trace_filter=_normalize_trace_filter_for_storage(trace_filter),
       trace_metadata_columns=(trace_metadata_columns if isinstance(
           trace_metadata_columns, list) else None),
+      trace_order_by=trace_order_by
+      if isinstance(trace_order_by, str) else None,
   )
 
-  # Validate the trace directory, the trace_filter shape, and the
-  # trace_metadata_columns up-front so the user gets a 400 at submit
-  # time rather than having to poll a FAILED status. The FAILED
-  # metadata still lives in DuckDB so the history list shows it;
-  # tableName is cleared (mark_failed handles that). We only do the
-  # cheap-to-validate parts here — the actual directory walk happens
-  # in the background task so a huge directory doesn't block the
-  # submit response.
+  # Validate the trace directory, the trace_filter shape, the
+  # trace_metadata_columns, and the trace_order_by string up-front
+  # so the user gets a 400 at submit time rather than having to poll
+  # a FAILED status. The FAILED metadata still lives in DuckDB so
+  # the history list shows it; tableName is cleared (mark_failed
+  # handles that). We only do the cheap-to-validate parts here — the
+  # actual directory walk happens in the background task so a huge
+  # directory doesn't block the submit response.
   try:
     _resolve_trace_dir(settings)
     _parse_trace_filter_or_400(trace_filter)
     _validate_trace_metadata_columns_or_400(trace_metadata_columns)
+    # Lexical parse only — column-name validation happens at
+    # execute-time inside `_resolve_traces_for` (it needs the
+    # column-types map).
+    if trace_order_by:
+      try:
+        parse_order_by(trace_order_by)
+      except ValueError as e:
+        raise HTTPException(status_code=400, detail=f'trace_order_by: {e}')
   except HTTPException as e:
     db.mark_failed(new_uuid, str(e.detail))
     raise
@@ -782,7 +814,7 @@ async def execute_async(request: Request) -> dict[str, Any]:
   # task.cancel().
   asyncio.create_task(
       _run_async_query(new_uuid, perfetto_sql, limit, settings, trace_filter,
-                       trace_metadata_columns),)
+                       trace_metadata_columns, trace_order_by),)
 
   # Top-level `queryUuid` instead of stuffing it into a single-cell
   # tabular response. Consistent with `RawQueryExecution.queryUuid`
@@ -806,8 +838,8 @@ async def execute_sync(request: Request) -> dict[str, Any]:
     `:fetch_results` on a sync UUID returns 404 because tableName is
     NULL.
     """
-  (perfetto_sql, limit, settings, trace_filter,
-   trace_metadata_columns) = await _parse_query_body(request)
+  (perfetto_sql, limit, settings, trace_filter, trace_metadata_columns,
+   trace_order_by) = await _parse_query_body(request)
   db = _get_db()
 
   new_uuid = str(uuid.uuid4())
@@ -826,13 +858,15 @@ async def execute_sync(request: Request) -> dict[str, Any]:
       trace_filter=_normalize_trace_filter_for_storage(trace_filter),
       trace_metadata_columns=(trace_metadata_columns if isinstance(
           trace_metadata_columns, list) else None),
+      trace_order_by=trace_order_by
+      if isinstance(trace_order_by, str) else None,
   )
 
   # Resolve the trace list (validates trace_dir, applies trace_filter +
-  # trace_limit) and the metadata-columns request. Mirrors the async
-  # path so the same caps + validations apply.
+  # trace_order_by + trace_limit) and the metadata-columns request.
+  # Mirrors the async path so the same caps + validations apply.
   try:
-    entries = _resolve_traces_for(settings, trace_filter)
+    entries = _resolve_traces_for(settings, trace_filter, trace_order_by)
     meta_cols = _validate_trace_metadata_columns_or_400(trace_metadata_columns)
   except HTTPException as e:
     db.mark_failed(new_uuid, str(e.detail))

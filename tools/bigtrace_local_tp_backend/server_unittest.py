@@ -658,6 +658,51 @@ class ResolveTracesForTest(unittest.TestCase):
           f'entry missing schema fields: {entry}',
       )
 
+  def test_trace_order_by_desc_reverses_processing_order(self):
+    # Default order is `file_path ASC`. With a `file_name DESC`
+    # trace_order_by the alphabetic walk reverses and the
+    # trace_limit cap picks DIFFERENT files (d, c not a, b).
+    out = _resolve_traces_for(
+        _settings_with(self._tmp, trace_limit=2),
+        None,
+        'file_name desc',
+    )
+    names = [os.path.basename(e['file_path']) for e in out]
+    self.assertEqual(names, ['d.pftrace', 'c.pftrace'])
+
+  def test_trace_order_by_none_falls_back_to_file_path_asc(self):
+    # Explicit None must produce the same result as omitting the arg
+    # (deterministic default for legacy clients).
+    out_default = _resolve_traces_for(
+        _settings_with(self._tmp, trace_limit=2), None)
+    out_none = _resolve_traces_for(
+        _settings_with(self._tmp, trace_limit=2), None, None)
+    self.assertEqual(out_default, out_none)
+
+  def test_trace_order_by_empty_string_falls_back_to_default(self):
+    # An empty `trace_order_by` (which is what `_row_to_snapshot`
+    # rehydrates SQL NULL as) must NOT be parsed — falls back to the
+    # default ordering, same as None.
+    out_default = _resolve_traces_for(
+        _settings_with(self._tmp, trace_limit=2), None)
+    out_empty = _resolve_traces_for(
+        _settings_with(self._tmp, trace_limit=2), None, '')
+    self.assertEqual(out_default, out_empty)
+
+  def test_trace_order_by_malformed_raises_400(self):
+    # Same error contract as `:fetch_results?order_by=` — a
+    # malformed AIP-132 string yields 400 INVALID_ARGUMENT with the
+    # offending token surfaced in `detail`.
+    with self.assertRaises(HTTPException) as ctx:
+      _resolve_traces_for(_settings_with(self._tmp), None, 'file_name sideways')
+    self.assertEqual(ctx.exception.status_code, 400)
+    self.assertIn('trace_order_by', ctx.exception.detail)
+
+  def test_trace_order_by_unknown_column_raises_400(self):
+    with self.assertRaises(HTTPException) as ctx:
+      _resolve_traces_for(_settings_with(self._tmp), None, 'no_such_col asc')
+    self.assertEqual(ctx.exception.status_code, 400)
+
 
 class ValidateTraceMetadataColumnsTest(unittest.TestCase):
   """`_validate_trace_metadata_columns_or_400` is the executor-side
@@ -803,7 +848,7 @@ class RunAsyncQueryErrorMessageTest(unittest.TestCase):
         'u1', 'SELECT 1', query_limit=10, materialized=True)
 
     # Simulate validation failure during background execution.
-    def fail(_settings, _trace_filter):
+    def fail(*_args, **_kwargs):
       raise HTTPException(
           status_code=400, detail="Trace Directory '/missing' does not exist")
 
@@ -822,7 +867,7 @@ class RunAsyncQueryErrorMessageTest(unittest.TestCase):
     server_mod.DB.insert_qe_in_progress(
         'u1', 'SELECT 1', query_limit=10, materialized=True)
 
-    def boom(_settings, _trace_filter):
+    def boom(*_args, **_kwargs):
       raise RuntimeError('unexpected')
 
     with patch.object(server_mod, '_resolve_traces_for', side_effect=boom):

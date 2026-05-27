@@ -73,11 +73,13 @@ class QESnapshot:
     server.py). All times are ISO-8601 strings (UTC) to match the wire
     protocol — the DuckDB columns are TIMESTAMP, converted on read.
 
-    `settings` / `trace_filter` / `trace_metadata_columns` are the
-    snapshot the query was submitted with — frozen at submit time and
-    surfaced on the full `/query_executions/{uuid}` endpoint so the UI
-    can answer "what did this query run with?" Empty lists for queries
-    submitted before this snapshot was introduced (NULL in DuckDB).
+    `settings` / `trace_filter` / `trace_metadata_columns` /
+    `trace_order_by` are the snapshot the query was submitted with —
+    frozen at submit time and surfaced on the full
+    `/query_executions/{uuid}` endpoint so the UI can answer "what
+    did this query run with?" Empty lists / empty string for queries
+    submitted before each snapshot field was introduced (NULL in
+    DuckDB).
     """
   query_uuid: str
   status: str
@@ -94,6 +96,12 @@ class QESnapshot:
   settings: list[dict[str, Any]] = field(default_factory=list)
   trace_filter: list[dict[str, Any]] = field(default_factory=list)
   trace_metadata_columns: list[str] = field(default_factory=list)
+  # Stored as the AIP-132 wire string (e.g. `"size_bytes desc"`) so
+  # the snapshot round-trips byte-for-byte. Empty string means the
+  # client didn't ship `trace_order_by` (or pre-dates the feature) —
+  # `_resolve_traces_for` falls back to its deterministic default
+  # (`file_path ASC`) in that case.
+  trace_order_by: str = ''
 
 
 def _ts_to_iso(ts: Any) -> Optional[str]:
@@ -583,13 +591,15 @@ class Database:
                   deleted                BOOLEAN NOT NULL DEFAULT FALSE,
                   settings               VARCHAR,
                   trace_filter           VARCHAR,
-                  trace_metadata_columns VARCHAR
+                  trace_metadata_columns VARCHAR,
+                  trace_order_by         VARCHAR
                 )
                 """)
       # Migrate older DBs that pre-date the snapshot columns. DuckDB
       # accepts ADD COLUMN IF NOT EXISTS so the call is a no-op once
       # the column is there; nullable VARCHAR keeps legacy rows valid.
-      for col in ('settings', 'trace_filter', 'trace_metadata_columns'):
+      for col in ('settings', 'trace_filter', 'trace_metadata_columns',
+                  'trace_order_by'):
         self._conn.execute(
             f'ALTER TABLE query_executions ADD COLUMN IF NOT EXISTS '
             f'{col} VARCHAR')
@@ -612,6 +622,7 @@ class Database:
       settings: Optional[list[dict[str, Any]]] = None,
       trace_filter: Optional[list[dict[str, Any]]] = None,
       trace_metadata_columns: Optional[list[str]] = None,
+      trace_order_by: Optional[str] = None,
   ) -> None:
     """Initial insert for any query (sync or async) that's about
         to start running.
@@ -643,6 +654,9 @@ class Database:
     trace_filter_json = json.dumps(trace_filter) if trace_filter else None
     trace_metadata_columns_json = (
         json.dumps(trace_metadata_columns) if trace_metadata_columns else None)
+    # trace_order_by is stored as the raw wire string (no JSON wrap).
+    # Empty / None → SQL NULL, which reads back as '' in _row_to_snapshot.
+    trace_order_by_str = trace_order_by if trace_order_by else None
     with self._lock:
       self._conn.execute(
           """
@@ -650,13 +664,13 @@ class Database:
                   (query_uuid, status, start_time, perfetto_sql, query_limit,
                    materialized, table_name, processed_traces, total_traces,
                    processed_rows, settings, trace_filter,
-                   trace_metadata_columns)
-                VALUES (?, 'IN_PROGRESS', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?)
+                   trace_metadata_columns, trace_order_by)
+                VALUES (?, 'IN_PROGRESS', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, ?)
                 """,
           [
               query_uuid, start_time, perfetto_sql, query_limit, materialized,
               table_name, settings_json, trace_filter_json,
-              trace_metadata_columns_json
+              trace_metadata_columns_json, trace_order_by_str
           ],
       )
 
@@ -948,7 +962,7 @@ class Database:
       'query_uuid, status, start_time, end_time, '
       'perfetto_sql, query_limit, materialized, table_name, '
       'processed_traces, total_traces, processed_rows, error_message, '
-      'settings, trace_filter, trace_metadata_columns')
+      'settings, trace_filter, trace_metadata_columns, trace_order_by')
 
   @staticmethod
   def _decode_json_list(raw: Optional[str]) -> list[Any]:
@@ -987,6 +1001,7 @@ class Database:
         settings=cls._decode_json_list(row[12]),
         trace_filter=cls._decode_json_list(row[13]),
         trace_metadata_columns=cls._decode_json_list(row[14]),
+        trace_order_by=row[15] or '',
     )
 
   def get_qe(self, query_uuid: str) -> Optional[QESnapshot]:

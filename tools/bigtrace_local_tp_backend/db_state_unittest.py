@@ -203,12 +203,14 @@ class SnapshotRoundTripTest(_DbCase):
         materialized=True,
         settings=settings,
         trace_filter=trace_filter,
-        trace_metadata_columns=trace_metadata_columns)
+        trace_metadata_columns=trace_metadata_columns,
+        trace_order_by='size_bytes desc')
     snap = self.db.get_qe('u1')
     assert snap is not None
     self.assertEqual(snap.settings, settings)
     self.assertEqual(snap.trace_filter, trace_filter)
     self.assertEqual(snap.trace_metadata_columns, trace_metadata_columns)
+    self.assertEqual(snap.trace_order_by, 'size_bytes desc')
 
   def test_omitted_snapshot_reads_back_as_empty_lists(self):
     # Pre-feature row OR client that didn't opt in — every snapshot
@@ -221,6 +223,10 @@ class SnapshotRoundTripTest(_DbCase):
     self.assertEqual(snap.settings, [])
     self.assertEqual(snap.trace_filter, [])
     self.assertEqual(snap.trace_metadata_columns, [])
+    # trace_order_by reads back as the empty string when omitted.
+    # `_resolve_traces_for` treats this as "use the default order"
+    # — same as None.
+    self.assertEqual(snap.trace_order_by, '')
 
   def test_explicit_empty_lists_become_null_then_empty(self):
     # Explicit `[]` on submit is semantically identical to "absent".
@@ -234,12 +240,14 @@ class SnapshotRoundTripTest(_DbCase):
         materialized=True,
         settings=[],
         trace_filter=[],
-        trace_metadata_columns=[])
+        trace_metadata_columns=[],
+        trace_order_by='')
     snap = self.db.get_qe('u1')
     assert snap is not None
     self.assertEqual(snap.settings, [])
     self.assertEqual(snap.trace_filter, [])
     self.assertEqual(snap.trace_metadata_columns, [])
+    self.assertEqual(snap.trace_order_by, '')
 
   def test_snapshot_survives_state_transitions(self):
     # Snapshot is frozen at submit. mark_success / mark_failed /

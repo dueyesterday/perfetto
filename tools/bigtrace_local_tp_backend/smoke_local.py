@@ -2105,6 +2105,101 @@ def main() -> int:
         f'{plain_full.get("traceMetadataColumns")}')
     print('    omitted trace_filter / trace_metadata_columns -> []')
 
+    print('[27] top-level trace_order_by re-orders the trace fan-out')
+    # The trace fixture dir holds 2 files. With trace_limit=1 we
+    # process exactly one; which one depends on the ordering.
+    # Default order is `file_path ASC`. A `file_name DESC` order_by
+    # must pick the OTHER file. The submit-time snapshot must echo
+    # the wire string verbatim.
+    _, two_traces = http(
+        'POST', '/traces', {
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'order_by': 'file_name asc',
+            'limit': 10,
+            'offset': 0,
+        })
+    file_name_col = two_traces['columnNames'].index('file_name')
+    names_asc = [r['values'][file_name_col] for r in two_traces['rows']]
+    assert len(names_asc) >= 2, (
+        f'need at least 2 trace fixtures for [27]; got {names_asc}')
+    first_asc, last_asc = names_asc[0], names_asc[-1]
+
+    def _submit_capped(trace_order_by):
+      _, body = http(
+          'POST', '/execute_bigtrace_query_async', {
+              'perfetto_sql':
+                  'SELECT 1 as one',
+              'limit':
+                  100,
+              'settings': [
+                  {
+                      'setting_id': 'trace_directory',
+                      'values': [traces_dir],
+                      'category': 'TRACE_ADDRESS',
+                  },
+                  {
+                      'setting_id': 'trace_limit',
+                      'values': ['1'],
+                      'category': 'TRACE_ADDRESS',
+                  },
+              ],
+              'trace_metadata_columns': ['file_name'],
+              **({
+                  'trace_order_by': trace_order_by
+              } if trace_order_by is not None else {}),
+          })
+      uuid_ = body['queryUuid']
+      wait_until(
+          lambda: http('GET', f'/query_executions/{uuid_}:status')[1]['status']
+          in ('SUCCESS', 'FAILED'),
+          timeout=30.0,
+          label=f'trace_order_by={trace_order_by!r} query terminal',
+      )
+      _, results = http(
+          'GET', f'/query_executions/{uuid_}:fetch_results?'
+          f'limit=10&offset=0&columns=trace_id,one,file_name')
+      assert len(results['rows']) == 1, (
+          f'trace_limit=1 should pick exactly 1 row; got '
+          f'{len(results["rows"])}')
+      col = results['columnNames'].index('file_name')
+      picked = results['rows'][0]['values'][col]
+      _, full = http('GET', f'/query_executions/{uuid_}')
+      return picked, full.get('traceOrderBy')
+
+    default_picked, default_echo = _submit_capped(None)
+    desc_picked, desc_echo = _submit_capped('file_name desc')
+    assert default_picked == first_asc, (
+        f'default order should pick the alphabetically-first trace '
+        f'({first_asc!r}); got {default_picked!r}')
+    assert default_echo == '', (
+        f'traceOrderBy must default to "" when omitted; got '
+        f'{default_echo!r}')
+    assert desc_picked == last_asc, (
+        f'`file_name desc` should pick the alphabetically-last trace '
+        f'({last_asc!r}); got {desc_picked!r}')
+    assert desc_echo == 'file_name desc', (
+        f'traceOrderBy must round-trip verbatim; got {desc_echo!r}')
+    # Malformed order_by yields 400 at submit.
+    bad_status, _ = http_status_and_body(
+        'POST', '/execute_bigtrace_query_async', {
+            'perfetto_sql': 'SELECT 1',
+            'limit': 10,
+            'settings': [{
+                'setting_id': 'trace_directory',
+                'values': [traces_dir],
+                'category': 'TRACE_ADDRESS',
+            }],
+            'trace_order_by': 'file_name sideways',
+        })
+    assert bad_status == 400, (
+        f'malformed trace_order_by must 400; got {bad_status}')
+    print('    default picks first-alpha; `desc` picks last-alpha; '
+          'snapshot echoes verbatim; bad order_by -> 400')
+
     print('\nALL CHECKS PASSED')
   except AssertionError as e:
     print(f'\nFAIL: {e}')

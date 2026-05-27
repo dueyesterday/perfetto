@@ -457,13 +457,13 @@ Same shapes as `bigtrace_ref_backend`. Read
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/execute_bigtrace_query_async` | Returns `{queryUuid: string}` (top-level). Spawns a background task that runs the SQL across every trace matching `trace_filter`; `tableName` is set immediately. Body accepts top-level `trace_filter: Filter[]` (structured trace-selection filter — same shape as `:fetch_results?filter=`) and `trace_metadata_columns: string[]` (catalog column names from `/traces_schema` to attach to every result row via the per-query metadata sidecar). |
-| POST | `/execute_bigtrace_query` | Sync variant. Returns `{queryUuid, columnNames, rows}` — the assembled tabular result inline plus a server-assigned identifier. Logged to history with `materialized=false`. Same `trace_filter` + `trace_metadata_columns` body fields as the async path; sync stitches metadata inline (no materialized table to JOIN against). |
+| POST | `/execute_bigtrace_query_async` | Returns `{queryUuid: string}` (top-level). Spawns a background task that runs the SQL across every trace matching `trace_filter`; `tableName` is set immediately. Body accepts top-level `trace_filter: Filter[]` (structured trace-selection filter — same shape as `:fetch_results?filter=`), `trace_metadata_columns: string[]` (catalog column names from `/traces_schema` to attach to every result row via the per-query metadata sidecar), and `trace_order_by: string` (AIP-132 string controlling the order traces are processed; matters under `trace_limit`). |
+| POST | `/execute_bigtrace_query` | Sync variant. Returns `{queryUuid, columnNames, rows}` — the assembled tabular result inline plus a server-assigned identifier. Logged to history with `materialized=false`. Same `trace_filter` + `trace_metadata_columns` + `trace_order_by` body fields as the async path; sync stitches metadata inline (no materialized table to JOIN against). |
 | GET | `/query_executions/{uuid}:status` | **Strict progress-only**: exactly `{status, processedTraces, totalTraces, processedRows}` — four fields, no submit-time-immutable metadata. UI polls this every 3s; static metadata (and the per-query snapshot) lives on the full GET. `queryUuid` is the URL key, not echoed in the body. |
-| GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata, `tableName`, and the **submit-time snapshot** (`settings` / `traceFilter` / `traceMetadataColumns`) — see the "Per-query snapshot" section below. 404 if soft-deleted. |
+| GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata, `tableName`, and the **submit-time snapshot** (`settings` / `traceFilter` / `traceMetadataColumns` / `traceOrderBy`) — see the "Per-query snapshot" section below. 404 if soft-deleted. |
 | GET | `/query_executions/{uuid}:fetch_results` | Paginated `?limit=&offset=` over the materialized result, with optional [AIP-132](https://google.aip.dev/132#ordering) `&order_by=field [asc\|desc][, field [asc\|desc]]*`, optional `&filter=` (URL-encoded JSON `Filter[]`), and optional `&columns=` (URL-encoded comma-separated field-mask over `result_table_cols ∪ metadata_sidecar_cols`). The page SQL emits a LEFT JOIN to the sidecar iff the projection / filter / order_by references a sidecar column. Response: `{columnNames, rows, totalFilteredRows, availableColumns}` — `availableColumns` is the full union the client could project. Errors follow gRPC/AIP semantics: **404 NOT_FOUND** if missing/soft-deleted or the table is gone in DuckDB; **400 FAILED_PRECONDITION** if the entry exists but isn't fetchable (`materialized=false`, `processed_rows=0`, or `tableName=null` from FAILED/CANCELLED-with-zero/TTL-expired); **400 INVALID_ARGUMENT** on malformed or unknown-column `order_by` / `filter` / `columns`. See "Sorting" / "Filtering" above. |
 | POST | `/query_executions/{uuid}:cancel` | Atomically transitions to CANCELLED under the DB lock. 200. No row lands after this returns. |
-| GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. **Omits** the per-query snapshot fields (`settings` / `traceFilter` / `traceMetadataColumns`) so the history sidebar response stays lean — fetch the per-uuid endpoint to inspect a historical query's snapshot. |
+| GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. **Omits** the per-query snapshot fields (`settings` / `traceFilter` / `traceMetadataColumns` / `traceOrderBy`) so the history sidebar response stays lean — fetch the per-uuid endpoint to inspect a historical query's snapshot. |
 | DELETE | `/query_executions/{uuid}` | Soft-delete. 200 on terminal, 409 on IN_PROGRESS, 404 if already deleted/missing. |
 | POST | `/traces` | Paginated trace metadata for the trace source named in `settings`. Body: `{settings, filter?: Filter[], order_by?: string, limit, offset, columns?: string[]}`. Response: `{columnNames, rows, totalFilteredRows, availableColumns?}` — same always-strings wire as `:fetch_results`. `filter` / `order_by` use the same parser as `:fetch_results`. `columns` is an optional field-mask; omitted means "every column the backend flags `default: true` in `/traces_schema`". Powers the trace-selection grid on the BigTrace UI's Settings page. |
 | POST | `/traces_schema` | Declares the columns `/traces` can return. Body: `{settings}` (a backend whose schema depends on the source can vary the response). Response: `{columns: [{name, type, default: boolean, description?}]}`. Local TP returns the static four-column filesystem schema (`file_path`, `file_name`, `size_bytes`, `mtime`); a real BigTrace would extend with indexer-derived per-trace metadata. |
@@ -482,9 +482,9 @@ The `settings` array on `/execute_bigtrace_query{,_async}` is applied
 to the run (trace directory, trace limit) **and** persisted as part of
 the per-query snapshot — see "Per-query snapshot" below.
 
-### Per-query snapshot (`settings` / `traceFilter` / `traceMetadataColumns`)
+### Per-query snapshot (`settings` / `traceFilter` / `traceMetadataColumns` / `traceOrderBy`)
 
-Three optional top-level fields on `/execute_bigtrace_query[_async]`
+Four optional top-level fields on `/execute_bigtrace_query[_async]`
 are persisted per execution and echoed back on the full per-uuid GET
 so the UI can answer "what did this query run with?" Powers the
 per-tab Bigtrace Settings sub-tab on `/query`.
@@ -494,6 +494,7 @@ per-tab Bigtrace Settings sub-tab on `/query`.
 | `settings` | `Array<{setting_id, values, category}>` | `settings: Array<{setting_id, values, category}>` |
 | `trace_filter` | `Filter[]` (same shape as `:fetch_results?filter=`) | `traceFilter: Filter[]` |
 | `trace_metadata_columns` | `string[]` (column names from `/traces_schema`) | `traceMetadataColumns: string[]` |
+| `trace_order_by` | `string` (AIP-132, same grammar as `/traces?order_by=`) | `traceOrderBy: string` |
 
 Persistence rules:
 
@@ -501,14 +502,16 @@ Persistence rules:
   query that 400s at submit time records what was attempted. State
   transitions (`mark_success` / `mark_failed` / `mark_cancelled`) do
   not modify the snapshot.
-- **Stored as JSON strings** in three new VARCHAR columns
-  (`settings`, `trace_filter`, `trace_metadata_columns`) on
-  `query_executions`. ALTER TABLE ADD COLUMN IF NOT EXISTS migrates
-  older DBs on `_init_schema`.
-- **Empty list semantics.** Absent / `null` / `[]` on the wire all
-  persist as SQL NULL and read back as `[]`. The full-GET response
-  always carries `[]` rather than `null` so the UI never null-checks
-  these fields.
+- **Stored on `query_executions`** in four VARCHAR columns
+  (`settings`, `trace_filter`, `trace_metadata_columns` as JSON
+  strings; `trace_order_by` as the raw AIP-132 wire string — no JSON
+  wrap, the value is already a string). ALTER TABLE ADD COLUMN IF
+  NOT EXISTS migrates older DBs on `_init_schema`.
+- **Empty semantics.** For list-typed fields, absent / `null` / `[]`
+  on the wire all persist as SQL NULL and read back as `[]`. For
+  `trace_order_by`, absent / `null` / `""` persist as SQL NULL and
+  read back as `""`. The full-GET response always carries `[]` /
+  `""` rather than `null` so the UI never null-checks these fields.
 - **Lean polling + lean history.** The snapshot is **not** echoed on
   `:status` (every 3s poll) or on `/query_executions` (history
   sidebar). Clients call the per-uuid full GET to inspect a snapshot.
@@ -520,6 +523,16 @@ The BigTrace UI Settings page embeds a paged DataGrid that calls
 catalog. The grid's filter chips become the `trace_filter` field on
 the next `/execute_*` call — the "implicit selection" model: the
 filter on the grid IS the trace set the query runs over.
+
+The grid's **sort** flows through the same way: whatever AIP-132
+`order_by` the user picked on the column header becomes the
+`trace_order_by` field on the next `/execute_*` call, and the
+backend processes traces in that order. This matters under
+`trace_limit > 0`: sort + limit together pick "the top N traces in
+this order", so changing the grid sort changes which traces a
+capped query actually runs over. When `trace_order_by` is absent,
+the backend falls back to `file_path ASC` for legacy-client
+determinism.
 
 For this backend the schema is the four filesystem columns
 (`file_path`, `file_name`, `size_bytes`, `mtime`); a Phase-2 backend
@@ -760,6 +773,13 @@ verifies:
     polling). `/query_executions` list also omits them (lean
     history sidebar). Absent / `null` / `[]` on submit all read
     back as `[]` (never `null`).
+26. Top-level `trace_order_by` re-orders the trace fan-out: with
+    `trace_limit=1` and the default order, the alphabetically-first
+    trace is processed; with `trace_order_by='file_name desc'` the
+    alphabetically-last is processed instead. The submit-time
+    snapshot echoes the wire string verbatim; omitted reads back as
+    `""`. A malformed AIP-132 string (e.g. `'file_name sideways'`)
+    yields 400 INVALID_ARGUMENT at submit, not a deferred FAILED.
 
 If no traces are available it prints `SKIP` and returns 0.
 
