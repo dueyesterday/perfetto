@@ -102,6 +102,7 @@ export class QueryRunner {
     // sub-tab.
     const traceFilter = tab.traceFilter;
     const traceMetadataColumns = tab.traceMetadataColumns;
+    const traceOrderBy = tab.traceOrderBy;
 
     const queryClient = new BigtraceQueryClient(endpoint);
     tab.queryClient = queryClient;
@@ -121,6 +122,7 @@ export class QueryRunner {
           wallStartMs,
           traceFilter,
           traceMetadataColumns,
+          traceOrderBy,
         );
       } else {
         await this.runSync(
@@ -132,6 +134,7 @@ export class QueryRunner {
           wallStartMs,
           traceFilter,
           traceMetadataColumns,
+          traceOrderBy,
         );
       }
     } catch (e) {
@@ -244,6 +247,7 @@ export class QueryRunner {
     tab.querySettings = snapshotSettingsToFilters(details.settings);
     tab.traceFilter = parseSnapshotTraceFilter(details.traceFilter);
     tab.traceMetadataColumns = [...(details.traceMetadataColumns ?? [])];
+    tab.traceOrderBy = details.traceOrderBy ?? '';
     this.cb.markDirty?.();
 
     const isTerminal = TERMINAL_STATUSES.has(exec.status);
@@ -309,6 +313,7 @@ export class QueryRunner {
     wallStartMs: number,
     traceFilter: ReadonlyArray<Filter>,
     traceMetadataColumns: ReadonlyArray<string>,
+    traceOrderBy: string,
   ): Promise<void> {
     const data = await client.executeAsync(
       query,
@@ -317,6 +322,7 @@ export class QueryRunner {
       signal,
       traceFilter,
       traceMetadataColumns,
+      traceOrderBy,
     );
     if (data.queryUuid === undefined || data.queryUuid === '') {
       throw new Error('Backend did not return a queryUuid for async execute');
@@ -360,6 +366,7 @@ export class QueryRunner {
     wallStartMs: number,
     traceFilter: ReadonlyArray<Filter>,
     traceMetadataColumns: ReadonlyArray<string>,
+    traceOrderBy: string,
   ): Promise<void> {
     const result = await client.executeSync(
       query,
@@ -368,6 +375,7 @@ export class QueryRunner {
       signal,
       traceFilter,
       traceMetadataColumns,
+      traceOrderBy,
     );
     if (result.queryUuid === undefined || result.queryUuid === '') {
       throw new Error('Backend did not return a queryUuid for sync execute');

@@ -127,6 +127,11 @@ function buildTabBindings(
       tab.traceMetadataColumns = [...cols];
       tabsState.markDirty();
     },
+    getTraceOrderBy: () => tab.traceOrderBy,
+    setTraceOrderBy: (orderBy) => {
+      tab.traceOrderBy = orderBy;
+      tabsState.markDirty();
+    },
   };
 }
 

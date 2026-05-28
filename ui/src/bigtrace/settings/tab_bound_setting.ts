@@ -44,6 +44,11 @@ export interface SettingsBindings {
   readonly setTraceFilter: (filters: readonly Filter[]) => void;
   readonly getTraceMetadataColumns: () => readonly string[];
   readonly setTraceMetadataColumns: (cols: readonly string[]) => void;
+  // Per-tab AIP-132 ordering string (e.g. "size_bytes desc"). Drives
+  // the top-level `trace_order_by` field on the next Run. Empty
+  // string defers to the backend default.
+  readonly getTraceOrderBy: () => string;
+  readonly setTraceOrderBy: (orderBy: string) => void;
   // Optional: called whenever the trace-list data source reports a
   // fresh `filteredTotalRows` (the count of traces the current filter
   // selects). Embedded callers can cache the value to surface it in a

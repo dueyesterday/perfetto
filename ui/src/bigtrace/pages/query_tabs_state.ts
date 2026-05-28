@@ -21,6 +21,7 @@ import type {BigtraceQueryClient} from '../query/bigtrace_query_client';
 import {queryStore, type QueryExecution} from '../query/query_store';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {traceFilterState} from '../settings/trace_filter_state';
+import {traceOrderByState} from '../settings/trace_order_by_state';
 import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
 import type {SettingFilter} from '../settings/settings_types';
 
@@ -96,6 +97,11 @@ export interface BigTraceEditorTab {
   querySettings: SettingFilter[];
   traceFilter: Filter[];
   traceMetadataColumns: string[];
+  // AIP-132 wire string (e.g. "size_bytes desc"). Seeded from the
+  // global traceOrderByState at tab creation; the trace-grid sort on
+  // the Settings sub-tab writes back here. Empty string = backend
+  // picks its default (file_path ASC on the reference).
+  traceOrderBy: string;
   // Tab-lifetime: every backend request plumbs `signal`; aborts on close.
   readonly lifecycle: AbortController;
   // Per-execute request: Cancel aborts this without tearing down the tab.
@@ -127,6 +133,7 @@ interface StoredTab {
   readonly querySettings?: ReadonlyArray<SettingFilter>;
   readonly traceFilter?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
+  readonly traceOrderBy?: string;
 }
 
 interface StoredState {
@@ -210,6 +217,11 @@ export class QueryTabsState {
       : isFromHistory
         ? []
         : [...traceQueryColumnsState.get()];
+    const traceOrderBy: string = isFromStorage
+      ? stored?.traceOrderBy ?? ''
+      : isFromHistory
+        ? ''
+        : traceOrderByState.get();
     const tab: BigTraceEditorTab = {
       id: shortUuid(),
       title: derivedTitle || this.nextTabName(),
@@ -221,6 +233,7 @@ export class QueryTabsState {
       querySettings,
       traceFilter,
       traceMetadataColumns,
+      traceOrderBy,
       lifecycle: new AbortController(),
       activeRequest: undefined,
       // History-reopen → Persistent; new tab → sync; caller overrides.
@@ -312,6 +325,7 @@ export class QueryTabsState {
         querySettings: t.querySettings,
         traceFilter: t.traceFilter,
         traceMetadataColumns: t.traceMetadataColumns,
+        traceOrderBy: t.traceOrderBy,
       })),
       activeTabId: this.activeTabId,
     };

@@ -53,9 +53,13 @@ export interface RawQueryExecution {
   // `traceFilter` is the JSON-encoded `Filter[]` STRING the client
   // shipped (byte-identical to `:fetch_results?filter=`). Parse with
   // `parseSnapshotTraceFilter` before handing to UI state.
+  // `traceOrderBy` is the AIP-132 wire string controlling trace
+  // fan-out order — same grammar as `/traces?order_by=`. Empty
+  // string means the backend used its default.
   readonly settings?: ReadonlyArray<SnapshotSettingEntry>;
   readonly traceFilter?: string;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
+  readonly traceOrderBy?: string;
 }
 
 // Parse the wire `traceFilter` string (JSON-encoded `Filter[]`) into

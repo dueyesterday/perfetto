@@ -86,6 +86,7 @@ export class BigtraceQueryClient {
     signal?: AbortSignal,
     traceFilter?: ReadonlyArray<Filter>,
     traceMetadataColumns?: ReadonlyArray<string>,
+    traceOrderBy?: string,
   ): Promise<QueryResultPage> {
     return this.executeAt(
       '/execute_bigtrace_query',
@@ -95,6 +96,7 @@ export class BigtraceQueryClient {
       signal,
       traceFilter,
       traceMetadataColumns,
+      traceOrderBy,
     );
   }
 
@@ -105,6 +107,7 @@ export class BigtraceQueryClient {
     signal?: AbortSignal,
     traceFilter?: ReadonlyArray<Filter>,
     traceMetadataColumns?: ReadonlyArray<string>,
+    traceOrderBy?: string,
   ): Promise<QueryResultPage> {
     return this.executeAt(
       '/execute_bigtrace_query_async',
@@ -114,6 +117,7 @@ export class BigtraceQueryClient {
       signal,
       traceFilter,
       traceMetadataColumns,
+      traceOrderBy,
     );
   }
 
@@ -282,6 +286,7 @@ export class BigtraceQueryClient {
     signal: AbortSignal | undefined,
     traceFilter?: ReadonlyArray<Filter>,
     traceMetadataColumns?: ReadonlyArray<string>,
+    traceOrderBy?: string,
   ): Promise<QueryResultPage> {
     const body: Record<string, unknown> = {
       limit,
@@ -304,6 +309,13 @@ export class BigtraceQueryClient {
     // preserved for clients that don't opt in.
     if (traceMetadataColumns && traceMetadataColumns.length > 0) {
       body.trace_metadata_columns = [...traceMetadataColumns];
+    }
+    // AIP-132 ordering string controlling the trace fan-out order.
+    // Matters under `trace_limit > 0` — the cap keeps the first N
+    // traces in this order. Omitted when empty so the backend picks
+    // its deterministic default (`file_path ASC` on the reference).
+    if (traceOrderBy && traceOrderBy.length > 0) {
+      body.trace_order_by = traceOrderBy;
     }
     const result = await this.requestJson<QueryResponsePayload>(path, {
       method: 'POST',

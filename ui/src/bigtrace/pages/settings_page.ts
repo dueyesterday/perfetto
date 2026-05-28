@@ -62,6 +62,7 @@ import {
 } from '../query/bigtrace_query_client';
 import {BigtraceTraceListDataSource} from '../query/bigtrace_trace_list_data_source';
 import {traceFilterState} from '../settings/trace_filter_state';
+import {traceOrderByState} from '../settings/trace_order_by_state';
 import {traceColumnsState} from '../settings/trace_columns_state';
 import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
 
@@ -183,6 +184,31 @@ export interface SettingsPageAttrs {
   readonly bindings?: SettingsBindings;
 }
 
+// AIP-132 single-field order_by helpers. The trace grid only supports
+// one active sort column at a time (DataGrid limit), so a one-field
+// parser is sufficient — multi-field strings are persisted verbatim
+// but we only round-trip the first entry into the UI's sort state.
+// Returns undefined for empty / unparseable input so the caller can
+// fall back to "no sort applied".
+function parseSingleFieldOrderBy(
+  raw: string,
+): {field: string; direction: SortDirection} | undefined {
+  const token = raw.split(',', 1)[0]?.trim();
+  if (!token) return undefined;
+  const [field, dir] = token.split(/\s+/);
+  if (!field) return undefined;
+  const lower = (dir ?? 'asc').toLowerCase();
+  if (lower !== 'asc' && lower !== 'desc') return undefined;
+  return {field, direction: lower === 'asc' ? 'ASC' : 'DESC'};
+}
+
+function formatSingleFieldOrderBy(
+  col: {field: string; sort?: SortDirection} | undefined,
+): string {
+  if (!col?.sort) return '';
+  return `${col.field} ${col.sort.toLowerCase()}`;
+}
+
 export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   private searchQuery = '';
   // Captured on every view() so private methods can read it without
@@ -197,14 +223,15 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   private traceListDataSource: BigtraceTraceListDataSource | undefined;
   private traceListEndpoint: string | undefined;
   private traceFilters: readonly Filter[] = [];
-  // Per-session sort state for the trace grid. The DataGrid carries
-  // sort on the `Column` object itself, so when we run in
-  // controlled-mode `columns` we have to splice it back onto the
-  // matching column on every render — otherwise the click that set
-  // it gets discarded on the next redraw. In-memory (not
-  // persisted): sort is naturally ephemeral, filter / chosen
-  // columns survive reload via LocalStorage (or per-tab snapshot
-  // when bindings is set).
+  // Sort state for the trace grid. The DataGrid carries sort on the
+  // `Column` object itself, so when we run in controlled-mode
+  // `columns` we have to splice it back onto the matching column on
+  // every render — otherwise the click that set it gets discarded
+  // on the next redraw. Persisted to `traceOrderByState` because
+  // the trace-grid sort is functionally significant (under
+  // `trace_limit > 0` it controls which traces the executor picks
+  // first); seeding on oninit means a reload doesn't reset the
+  // chosen order under the user.
   private traceListSortField: string | undefined;
   private traceListSortDirection: SortDirection | undefined;
   // /traces_schema response, refetched whenever the endpoint changes
@@ -217,6 +244,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   oninit({attrs}: m.Vnode<SettingsPageAttrs>) {
     this.bindings = attrs.bindings;
     this.traceFilters = this.readTraceFilter();
+    const parsed = parseSingleFieldOrderBy(this.readTraceOrderBy());
+    this.traceListSortField = parsed?.field;
+    this.traceListSortDirection = parsed?.direction;
     bigTraceSettingsStorage.loadSettings();
   }
 
@@ -237,6 +267,17 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     return this.bindings
       ? this.bindings.getTraceMetadataColumns()
       : traceQueryColumnsState.get();
+  }
+
+  private readTraceOrderBy(): string {
+    return this.bindings
+      ? this.bindings.getTraceOrderBy()
+      : traceOrderByState.get();
+  }
+
+  private writeTraceOrderBy(orderBy: string): void {
+    if (this.bindings) this.bindings.setTraceOrderBy(orderBy);
+    else traceOrderByState.set(orderBy);
   }
 
   private writeTraceMetadataColumns(cols: readonly string[]): void {
@@ -510,10 +551,14 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
               // Sort lives on the Column object — extract it before
               // we collapse cols to a string[] so the next render
               // can splice it back. Without this the user's
-              // header click reverts on every redraw.
+              // header click reverts on every redraw. The sort
+              // also gets persisted to traceOrderByState so a
+              // reload doesn't drop it, and a Run picks it up as
+              // `trace_order_by` on /execute_*.
               const sorted = cols.find((c) => c.sort);
               this.traceListSortField = sorted?.field;
               this.traceListSortDirection = sorted?.sort;
+              this.writeTraceOrderBy(formatSingleFieldOrderBy(sorted));
               this.updateChosenColumns(cols.map((c) => c.field));
             },
             canAddColumns: true,
