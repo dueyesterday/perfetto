@@ -75,25 +75,21 @@ _TRACE_LIST_SCHEMA: list[dict[str, Any]] = [
         'name': 'file_path',
         'type': 'VARCHAR',
         'default': True,
-        'description': 'Absolute path on the backend host.',
     },
     {
         'name': 'file_name',
         'type': 'VARCHAR',
         'default': True,
-        'description': 'Trace basename (with extension).',
     },
     {
         'name': 'size_bytes',
         'type': 'BIGINT',
         'default': True,
-        'description': 'File size in bytes.',
     },
     {
         'name': 'mtime',
         'type': 'VARCHAR',
         'default': True,
-        'description': 'Last modification time (ISO-8601 UTC).',
     },
 ]
 
@@ -1292,8 +1288,7 @@ async def traces_schema(request: Request) -> dict[str, Any]:
     Response:
       {
         "columns": [
-          {"name": "file_path",  "type": "VARCHAR", "default": true,
-           "description": "..."},
+          {"name": "file_path", "type": "VARCHAR", "default": true},
           ...
         ]
       }
@@ -1302,7 +1297,8 @@ async def traces_schema(request: Request) -> dict[str, Any]:
     render; `default: false` columns are addable via the column
     menu. `type` is informational — the grid renders every value as
     a string per the always-strings wire contract. `description`
-    surfaces as the column-info tooltip.
+    is optional (per the wire spec); the local backend omits it so
+    the grid headers don't carry placeholder tooltips.
 
     For the local TP backend the schema is static. A real BigTrace
     backend would derive it from the indexer's catalog, possibly
