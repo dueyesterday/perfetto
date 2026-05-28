@@ -27,6 +27,7 @@ import {
 import {forwardAbort} from './abort_utils';
 import {
   isoToEpochMs,
+  parseSnapshotTraceFilter,
   type RawQueryExecution,
   snapshotSettingsToFilters,
 } from './query_history_storage';
@@ -241,7 +242,7 @@ export class QueryRunner {
     // to globals (the snapshot is authoritative for a historical
     // query).
     tab.querySettings = snapshotSettingsToFilters(details.settings);
-    tab.traceFilter = [...(details.traceFilter ?? [])];
+    tab.traceFilter = parseSnapshotTraceFilter(details.traceFilter);
     tab.traceMetadataColumns = [...(details.traceMetadataColumns ?? [])];
     this.cb.markDirty?.();
 

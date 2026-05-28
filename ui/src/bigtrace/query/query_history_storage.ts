@@ -47,11 +47,29 @@ export interface RawQueryExecution {
   readonly tableName?: string;
   readonly tableLink?: string;
   // Submit-time snapshot — only on the full per-UUID GET. Empty
-  // lists when the row predates the feature (or the client didn't
+  // values when the row predates the feature (or the client didn't
   // opt in). `null` never appears on the wire.
+  //
+  // `traceFilter` is the JSON-encoded `Filter[]` STRING the client
+  // shipped (byte-identical to `:fetch_results?filter=`). Parse with
+  // `parseSnapshotTraceFilter` before handing to UI state.
   readonly settings?: ReadonlyArray<SnapshotSettingEntry>;
-  readonly traceFilter?: ReadonlyArray<Filter>;
+  readonly traceFilter?: string;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
+}
+
+// Parse the wire `traceFilter` string (JSON-encoded `Filter[]`) into
+// the in-app `Filter[]` shape. Tolerates absent / empty / malformed
+// input — snapshot rehydration is advisory; a broken value yields []
+// instead of derailing the Settings sub-tab.
+export function parseSnapshotTraceFilter(raw: string | undefined): Filter[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Filter[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 // Wire entry inside `RawQueryExecution.settings`. Same shape as

@@ -292,11 +292,12 @@ export class BigtraceQueryClient {
         category: s.category,
       })),
     };
-    // Top-level structured field. Same JSON shape as
-    // `:fetch_results?filter=`, but shipped as the decoded array (the
-    // body is JSON-parsed by the server, so no URL-encoding here).
+    // Top-level structured field — JSON-encoded `Filter[]` STRING,
+    // byte-identical to `:fetch_results?filter=`. The backend rejects
+    // native arrays with 400 INVALID_ARGUMENT under the strict-string
+    // contract.
     if (traceFilter && traceFilter.length > 0) {
-      body.trace_filter = traceFilter;
+      body.trace_filter = JSON.stringify(traceFilter);
     }
     // Trace-metadata columns to staple onto each result row. Omitted
     // when empty so the legacy `[trace_id, *sql_cols]` shape is
