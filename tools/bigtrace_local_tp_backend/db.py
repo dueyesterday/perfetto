@@ -77,9 +77,14 @@ class QESnapshot:
     `trace_order_by` are the snapshot the query was submitted with —
     frozen at submit time and surfaced on the full
     `/query_executions/{uuid}` endpoint so the UI can answer "what
-    did this query run with?" Empty lists / empty string for queries
-    submitted before each snapshot field was introduced (NULL in
-    DuckDB).
+    did this query run with?" Default values: `[]` for the list-typed
+    fields, `""` for the string-typed fields.
+
+    NOTE: `trace_filter` is the JSON-encoded wire STRING (matches
+    `:fetch_results?filter=` byte-for-byte modulo URL encoding), not
+    a parsed list. Round-trips verbatim through DB storage and the
+    full GET response. Internal SQL composition re-parses it via
+    `parse_filter` when needed.
     """
   query_uuid: str
   status: str
@@ -94,7 +99,7 @@ class QESnapshot:
   error_message: Optional[str]
   table_name: Optional[str]
   settings: list[dict[str, Any]] = field(default_factory=list)
-  trace_filter: list[dict[str, Any]] = field(default_factory=list)
+  trace_filter: str = ''
   trace_metadata_columns: list[str] = field(default_factory=list)
   # Stored as the AIP-132 wire string (e.g. `"size_bytes desc"`) so
   # the snapshot round-trips byte-for-byte. Empty string means the
@@ -620,7 +625,7 @@ class Database:
       materialized: bool,
       start_time: Optional[datetime] = None,
       settings: Optional[list[dict[str, Any]]] = None,
-      trace_filter: Optional[list[dict[str, Any]]] = None,
+      trace_filter: Optional[str] = None,
       trace_metadata_columns: Optional[list[str]] = None,
       trace_order_by: Optional[str] = None,
   ) -> None:
@@ -640,18 +645,26 @@ class Database:
         request should pass it explicitly so the recorded duration
         matches reality.
 
-        `settings` / `trace_filter` / `trace_metadata_columns` are
-        the snapshot the query is being submitted with. Stored as
-        JSON strings; None / missing → SQL NULL, which reads back as
-        `[]` in `_row_to_snapshot`. Persisted unconditionally before
-        any validation runs, so even a query that's about to fail at
-        submit time records what it was attempting.
+        Snapshot fields are persisted unconditionally before any
+        validation runs, so even a query that's about to fail at
+        submit time records what it was attempting:
+         - `settings`: JSON-encoded list (this layer dumps).
+         - `trace_filter`: the JSON-encoded wire STRING — passed
+           through verbatim, no encode/decode at this layer. Matches
+           the `:fetch_results?filter=` form so the snapshot
+           round-trips byte-for-byte.
+         - `trace_metadata_columns`: JSON-encoded list.
+         - `trace_order_by`: raw wire string.
+        None / empty → SQL NULL, which reads back as `[]` / `""` in
+        `_row_to_snapshot`.
         """
     if start_time is None:
       start_time = utcnow()
     table_name = safe_table_id(query_uuid) if materialized else None
     settings_json = json.dumps(settings) if settings else None
-    trace_filter_json = json.dumps(trace_filter) if trace_filter else None
+    # trace_filter is already the wire string — store as-is. Empty
+    # string is treated as "no filter" and persisted as SQL NULL.
+    trace_filter_str = trace_filter if trace_filter else None
     trace_metadata_columns_json = (
         json.dumps(trace_metadata_columns) if trace_metadata_columns else None)
     # trace_order_by is stored as the raw wire string (no JSON wrap).
@@ -669,7 +682,7 @@ class Database:
                 """,
           [
               query_uuid, start_time, perfetto_sql, query_limit, materialized,
-              table_name, settings_json, trace_filter_json,
+              table_name, settings_json, trace_filter_str,
               trace_metadata_columns_json, trace_order_by_str
           ],
       )
@@ -999,7 +1012,9 @@ class Database:
         processed_rows=row[10],
         error_message=row[11],
         settings=cls._decode_json_list(row[12]),
-        trace_filter=cls._decode_json_list(row[13]),
+        # trace_filter is stored as the wire string; round-trip
+        # verbatim. NULL → ''.
+        trace_filter=row[13] or '',
         trace_metadata_columns=cls._decode_json_list(row[14]),
         trace_order_by=row[15] or '',
     )

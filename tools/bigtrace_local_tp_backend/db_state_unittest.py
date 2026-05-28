@@ -181,12 +181,16 @@ class InsertAndReadTest(_DbCase):
 
 class SnapshotRoundTripTest(_DbCase):
   """`insert_qe_in_progress` + `get_qe` round-trip the submit-time
-    snapshot fields (settings / trace_filter / trace_metadata_columns).
-    These power the per-tab Bigtrace Settings sub-tab on /query — the
-    UI rehydrates from `/query_executions/{uuid}` to show what each
-    historical query ran with. Stored as JSON strings; surfaced as
-    Python lists; absent / NULL reads back as `[]` so the UI never
-    needs a null-check at render time."""
+    snapshot fields. These power the per-tab Bigtrace Settings sub-tab
+    on /query — the UI rehydrates from `/query_executions/{uuid}` to
+    show what each historical query ran with.
+
+    `trace_filter` is the JSON-encoded wire string (strict-string-only
+    contract per WIRE_SPEC.md §10.1, §12.1) — round-trips
+    byte-for-byte; empty / NULL reads back as `""`. `settings` and
+    `trace_metadata_columns` are JSON-encoded lists; empty / NULL
+    reads back as `[]`. `trace_order_by` is a raw wire string; empty
+    / NULL reads back as `""`."""
 
   def test_full_snapshot_round_trips(self):
     settings = [{
@@ -194,7 +198,7 @@ class SnapshotRoundTripTest(_DbCase):
         'values': ['/tmp/traces'],
         'category': 'TRACE_ADDRESS',
     }]
-    trace_filter = [{'field': 'file_name', 'op': 'glob', 'value': '*.pftrace'}]
+    trace_filter = ('[{"field":"file_name","op":"glob","value":"*.pftrace"}]')
     trace_metadata_columns = ['file_name', 'size_bytes']
     self.db.insert_qe_in_progress(
         'u1',
@@ -208,44 +212,43 @@ class SnapshotRoundTripTest(_DbCase):
     snap = self.db.get_qe('u1')
     assert snap is not None
     self.assertEqual(snap.settings, settings)
+    # Wire string round-trips byte-for-byte.
     self.assertEqual(snap.trace_filter, trace_filter)
     self.assertEqual(snap.trace_metadata_columns, trace_metadata_columns)
     self.assertEqual(snap.trace_order_by, 'size_bytes desc')
 
-  def test_omitted_snapshot_reads_back_as_empty_lists(self):
-    # Pre-feature row OR client that didn't opt in — every snapshot
-    # field reads as []. The UI renders this as "no filter / no
-    # extra metadata" uniformly.
+  def test_omitted_snapshot_reads_back_as_defaults(self):
+    # Pre-feature row OR client that didn't opt in — list-typed
+    # fields read as `[]`, string-typed fields read as `""`. The UI
+    # renders this as "no filter / no extra metadata" uniformly.
     self.db.insert_qe_in_progress(
         'u1', 'SELECT 1', query_limit=10, materialized=True)
     snap = self.db.get_qe('u1')
     assert snap is not None
     self.assertEqual(snap.settings, [])
-    self.assertEqual(snap.trace_filter, [])
+    # trace_filter is now a string — empty for omitted.
+    self.assertEqual(snap.trace_filter, '')
     self.assertEqual(snap.trace_metadata_columns, [])
-    # trace_order_by reads back as the empty string when omitted.
-    # `_resolve_traces_for` treats this as "use the default order"
-    # — same as None.
     self.assertEqual(snap.trace_order_by, '')
 
   def test_explicit_empty_lists_become_null_then_empty(self):
-    # Explicit `[]` on submit is semantically identical to "absent".
-    # The persistence layer stores NULL (avoiding a `'[]'` literal
-    # in the column for the common case); the read normalizes back
-    # to `[]`.
+    # Explicit empties on submit are semantically identical to
+    # "absent". The persistence layer stores NULL (avoiding a `'[]'`
+    # / `'""'` literal in the column for the common case); the read
+    # normalizes back.
     self.db.insert_qe_in_progress(
         'u1',
         'SELECT 1',
         query_limit=10,
         materialized=True,
         settings=[],
-        trace_filter=[],
+        trace_filter='',
         trace_metadata_columns=[],
         trace_order_by='')
     snap = self.db.get_qe('u1')
     assert snap is not None
     self.assertEqual(snap.settings, [])
-    self.assertEqual(snap.trace_filter, [])
+    self.assertEqual(snap.trace_filter, '')
     self.assertEqual(snap.trace_metadata_columns, [])
     self.assertEqual(snap.trace_order_by, '')
 
@@ -253,7 +256,7 @@ class SnapshotRoundTripTest(_DbCase):
     # Snapshot is frozen at submit. mark_success / mark_failed /
     # mark_cancelled don't touch it — important so the UI can keep
     # showing the historical context after the query has terminated.
-    f = [{'field': 'file_name', 'op': '=', 'value': 'a.pftrace'}]
+    f = '[{"field":"file_name","op":"=","value":"a.pftrace"}]'
     self.db.insert_qe_in_progress(
         'u1', 'SELECT 1', query_limit=10, materialized=True, trace_filter=f)
     self.db.mark_success('u1', processed_rows=5)
@@ -266,7 +269,7 @@ class SnapshotRoundTripTest(_DbCase):
     # A query that fails at submit-validation still records what
     # was attempted — the UI surfaces "this filter is broken" with
     # the actual offending value, not an empty placeholder.
-    f = [{'field': 'unknown_col', 'op': '=', 'value': 'x'}]
+    f = '[{"field":"unknown_col","op":"=","value":"x"}]'
     self.db.insert_qe_in_progress(
         'u1', 'SELECT 1', query_limit=10, materialized=True, trace_filter=f)
     self.db.mark_failed('u1', 'unknown filter column')
@@ -316,26 +319,20 @@ class SnapshotRoundTripTest(_DbCase):
     snap = self.db.get_qe('u_legacy')
     assert snap is not None
     self.assertEqual(snap.settings, [])
-    self.assertEqual(snap.trace_filter, [])
+    # trace_filter is now a string — empty for legacy rows.
+    self.assertEqual(snap.trace_filter, '')
     self.assertEqual(snap.trace_metadata_columns, [])
     # And new inserts can populate them normally.
+    f_string = '[{"field":"file_name","op":"=","value":"x.pftrace"}]'
     self.db.insert_qe_in_progress(
         'u_new',
         'SELECT 2',
         query_limit=20,
         materialized=True,
-        trace_filter=[{
-            'field': 'file_name',
-            'op': '=',
-            'value': 'x.pftrace'
-        }])
+        trace_filter=f_string)
     snap_new = self.db.get_qe('u_new')
     assert snap_new is not None
-    self.assertEqual(snap_new.trace_filter, [{
-        'field': 'file_name',
-        'op': '=',
-        'value': 'x.pftrace'
-    }])
+    self.assertEqual(snap_new.trace_filter, f_string)
 
 
 class ConditionalTransitionTest(_DbCase):

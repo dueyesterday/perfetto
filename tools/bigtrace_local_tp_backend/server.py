@@ -539,56 +539,90 @@ def _validate_trace_metadata_columns_or_400(
   return out
 
 
-def _normalize_trace_filter_for_storage(tf: Any) -> list[dict[str, Any]] | None:
+def _normalize_trace_filter_for_storage(tf: Any) -> Optional[str]:
   """Normalize the request-body trace_filter to its persisted shape.
 
-    Returns a list-of-dicts (canonical wire form) or None. Tolerates
-    the legacy JSON-string form by re-decoding it. Semantic validation
-    is `_parse_trace_filter_or_400`'s job — this helper exists so
-    `insert_qe_in_progress` can persist a snapshot even if validation
-    later 400s the request. Any unrecognized shape persists as None so
-    we never corrupt the JSON column.
+    Returns the wire STRING or None. The wire contract is strict-
+    string-only ([§10.1, §12.1] of WIRE_SPEC.md) — `trace_filter` is
+    a JSON-encoded `Filter[]` string byte-identical to the form
+    `:fetch_results?filter=` uses. Anything that isn't a string
+    persists as None; semantic validation (parse + column check)
+    happens in `_parse_trace_filter_or_400` and surfaces a 400
+    before the row sees a SQL query.
     """
   if tf is None:
     return None
-  if isinstance(tf, list):
-    return tf
   if isinstance(tf, str):
-    try:
-      decoded = json.loads(tf)
-    except json.JSONDecodeError:
-      return None
-    return decoded if isinstance(decoded, list) else None
+    return tf if tf else None
+  # Non-string shapes are rejected by _parse_trace_filter_or_400 with
+  # a 400; persist None here so the snapshot column doesn't carry
+  # garbage. (The handler will mark_failed the just-inserted row.)
   return None
 
 
 def _parse_trace_filter_or_400(trace_filter: Any) -> list:
-  """Coerce the raw `trace_filter` body field to `list[ParsedFilter]`.
+  """Parse the raw `trace_filter` body field to `list[ParsedFilter]`.
 
-    Accepts: None / missing → no filter. A JSON-decoded list (the
-    common case — clients PUT the structured array directly into the
-    request body). A JSON string (legacy / hand-rolled clients) is
-    re-parsed for convenience.
+    Wire contract (strict-string-only, [§10.1, §12.1] of
+    WIRE_SPEC.md): `trace_filter` on the wire is the JSON-encoded
+    `Filter[]` string — the same form `:fetch_results?filter=` ships
+    in its query parameter. Body callers send this STRING in the
+    JSON body (not a native JSON array).
 
-    Anything else (a dict, a number, ...) is a 400. `parse_filter`
-    surfaces its own ValueErrors as the detail.
+    Accepts: None / missing / empty string → no filter. A non-empty
+    string → re-parsed via `parse_filter`. Anything else (native
+    array, dict, number, …) → 400 INVALID_ARGUMENT pointing at the
+    type mismatch. The historical native-array form was deprecated
+    on the strict-string migration; clients shipping it now get a
+    clear error rather than a silent acceptance.
     """
-  if trace_filter is None:
+  if trace_filter is None or trace_filter == '':
     return parse_filter('')
-  if isinstance(trace_filter, list):
-    serialized = json.dumps(trace_filter)
-  elif isinstance(trace_filter, str):
-    serialized = trace_filter
-  else:
+  if not isinstance(trace_filter, str):
     raise HTTPException(
         status_code=400,
-        detail=f'trace_filter must be a JSON array of filter entries, '
-        f'got {type(trace_filter).__name__}',
+        detail=(f'trace_filter must be the JSON-encoded Filter[] STRING '
+                f'(same form as :fetch_results?filter=); got '
+                f'{type(trace_filter).__name__}. Wrap your filter array '
+                f'with JSON.stringify before sending.'),
     )
   try:
-    return parse_filter(serialized)
+    return parse_filter(trace_filter)
   except ValueError as e:
     raise HTTPException(status_code=400, detail=str(e))
+
+
+def _parse_native_or_string_filter_or_400(raw_filter: Any) -> list:
+  """Parse the `filter` body field for `/traces` (native-array contract).
+
+    `/traces` predates the strict-string migration and its
+    documented wire shape is a native JSON `Filter[]` array
+    (CLAUDE.md / WIRE_SPEC.md §10.2). For client convenience this
+    parser also accepts the JSON-encoded string form
+    (`:fetch_results?filter=` shape) so a single composer can serve
+    both endpoints.
+
+    Accepts: None / missing / empty list / empty string → no filter.
+    Native list → JSON-encoded then re-parsed. Non-empty string →
+    parsed directly. Other shapes (dict, number, …) → 400.
+    """
+  if raw_filter is None:
+    return parse_filter('')
+  if isinstance(raw_filter, list):
+    try:
+      return parse_filter(json.dumps(raw_filter))
+    except ValueError as e:
+      raise HTTPException(status_code=400, detail=str(e))
+  if isinstance(raw_filter, str):
+    try:
+      return parse_filter(raw_filter)
+    except ValueError as e:
+      raise HTTPException(status_code=400, detail=str(e))
+  raise HTTPException(
+      status_code=400,
+      detail=(f'filter must be a JSON array or JSON-encoded array string; '
+              f'got {type(raw_filter).__name__}'),
+  )
 
 
 # ---------------------------------------------------------------------------
@@ -1215,7 +1249,7 @@ async def traces(request: Request) -> dict[str, Any]:
   projected = body.get('columns')
 
   traces_dir = _resolve_trace_dir(settings)
-  parsed_filter = _parse_trace_filter_or_400(raw_filter)
+  parsed_filter = _parse_native_or_string_filter_or_400(raw_filter)
   try:
     parsed_order = parse_order_by(order_by)
   except ValueError as e:

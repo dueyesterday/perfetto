@@ -385,11 +385,10 @@ class QeToRawSnapshotTest(unittest.TestCase):
             'values': [50],
             'category': 'TRACE_ADDRESS',
         }],
-        trace_filter=[{
-            'field': 'file_name',
-            'op': 'glob',
-            'value': '*.pftrace',
-        }],
+        # trace_filter is the wire string (strict-string-only contract,
+        # WIRE_SPEC §10.1, §12.1). Round-trips byte-for-byte from
+        # request to snapshot to response.
+        trace_filter='[{"field":"file_name","op":"glob","value":"*.pftrace"}]',
         trace_metadata_columns=['file_name', 'size_bytes'],
         **overrides,
     )
@@ -402,11 +401,11 @@ class QeToRawSnapshotTest(unittest.TestCase):
         'values': [50],
         'category': 'TRACE_ADDRESS',
     }])
-    self.assertEqual(out['traceFilter'], [{
-        'field': 'file_name',
-        'op': 'glob',
-        'value': '*.pftrace',
-    }])
+    # traceFilter is emitted as the wire string — same form clients
+    # send on /execute_* / /traces, and same form :fetch_results?filter=
+    # uses (modulo URL encoding).
+    self.assertEqual(out['traceFilter'],
+                     '[{"field":"file_name","op":"glob","value":"*.pftrace"}]')
     self.assertEqual(out['traceMetadataColumns'], ['file_name', 'size_bytes'])
 
   def test_list_omits_all_three_snapshot_fields(self):
@@ -416,50 +415,54 @@ class QeToRawSnapshotTest(unittest.TestCase):
     self.assertNotIn('traceFilter', out)
     self.assertNotIn('traceMetadataColumns', out)
 
-  def test_full_get_emits_empty_lists_when_no_snapshot(self):
+  def test_full_get_emits_default_values_when_no_snapshot(self):
     # A pre-snapshot historical row (or a future client that omitted
-    # the fields) reads back as empty lists — distinct from missing,
-    # so the UI can render "this query had no trace filter" the same
-    # way regardless of when the row was written.
+    # the fields) reads back as documented defaults: `[]` for
+    # list-typed fields, `""` for string-typed (trace_filter,
+    # trace_order_by) — distinct from missing, so the UI can render
+    # "this query had no trace filter" the same way regardless of
+    # when the row was written.
     snap = _make_snap()
     out = _qe_to_raw(snap, truncate=False)
     self.assertEqual(out['settings'], [])
-    self.assertEqual(out['traceFilter'], [])
+    self.assertEqual(out['traceFilter'], '')
     self.assertEqual(out['traceMetadataColumns'], [])
 
 
 class NormalizeTraceFilterForStorageTest(unittest.TestCase):
   """`_normalize_trace_filter_for_storage` coerces the raw body
     field into the list-or-None shape we persist. Tolerant of legacy
-    JSON-string clients; never raises (snapshot persistence is
-    advisory, not load-bearing)."""
+    `trace_filter` is strict-string-only on the wire (WIRE_SPEC §10.1,
+    §12.1) — this normalizer passes the wire string through as the
+    storage form. Empty / non-string inputs persist as None;
+    semantic validation of the string content is
+    `_parse_trace_filter_or_400`'s job and surfaces a 400 before
+    the row reaches a SQL query."""
 
   def test_none_returns_none(self):
     from server import _normalize_trace_filter_for_storage as norm
     self.assertIsNone(norm(None))
 
-  def test_list_passes_through(self):
+  def test_string_passes_through(self):
+    # Wire form: JSON-encoded Filter[] string. Storage layer keeps
+    # it verbatim — no encode / decode, no canonicalization.
     from server import _normalize_trace_filter_for_storage as norm
-    f = [{'field': 'x', 'op': '=', 'value': 'y'}]
+    f = '[{"field":"x","op":"=","value":"y"}]'
     self.assertEqual(norm(f), f)
 
-  def test_json_string_is_decoded(self):
+  def test_empty_string_returns_none(self):
+    # Wire's "no filter" sentinel; persists as SQL NULL.
     from server import _normalize_trace_filter_for_storage as norm
-    self.assertEqual(
-        norm('[{"field":"x","op":"=","value":"y"}]'), [{
-            'field': 'x',
-            'op': '=',
-            'value': 'y'
-        }])
+    self.assertIsNone(norm(''))
 
-  def test_malformed_json_string_returns_none(self):
+  def test_native_list_persists_as_none(self):
+    # Strict-string-only contract: a native array is REJECTED with
+    # 400 by _parse_trace_filter_or_400. This normalizer is called
+    # BEFORE that validation (so even queries that 400 produce a
+    # history row), so a non-string input here persists as None
+    # rather than corrupting the snapshot column.
     from server import _normalize_trace_filter_for_storage as norm
-    self.assertIsNone(norm('{not json'))
-
-  def test_non_list_json_string_returns_none(self):
-    from server import _normalize_trace_filter_for_storage as norm
-    self.assertIsNone(norm('"a string"'))
-    self.assertIsNone(norm('42'))
+    self.assertIsNone(norm([{'field': 'x', 'op': '=', 'value': 'y'}]))
 
   def test_unrecognized_type_returns_none(self):
     from server import _normalize_trace_filter_for_storage as norm
@@ -575,12 +578,10 @@ class ResolveTracesForTest(unittest.TestCase):
                      {'a.pftrace', 'b.pftrace', 'c.pftrace', 'd.pftrace'})
 
   def test_filter_narrows_set(self):
+    # Wire contract: trace_filter is the JSON-encoded Filter[] STRING.
     out = _resolve_traces_for(
-        _settings_with(self._tmp), [{
-            'field': 'file_name',
-            'op': 'glob',
-            'value': 'a*'
-        }])
+        _settings_with(self._tmp),
+        '[{"field":"file_name","op":"glob","value":"a*"}]')
     names = [os.path.basename(e['file_path']) for e in out]
     self.assertEqual(names, ['a.pftrace'])
 
@@ -598,11 +599,9 @@ class ResolveTracesForTest(unittest.TestCase):
   def test_filter_then_limit_compose(self):
     # Filter narrows to {a, b, c}; cap=2 keeps the first 2 alpha.
     out = _resolve_traces_for(
-        _settings_with(self._tmp, trace_limit=2), [{
-            'field': 'file_name',
-            'op': 'in',
-            'value': ['a.pftrace', 'b.pftrace', 'c.pftrace']
-        }])
+        _settings_with(self._tmp, trace_limit=2),
+        '[{"field":"file_name","op":"in",'
+        '"value":["a.pftrace","b.pftrace","c.pftrace"]}]')
     names = [os.path.basename(e['file_path']) for e in out]
     self.assertEqual(names, ['a.pftrace', 'b.pftrace'])
 
@@ -611,9 +610,23 @@ class ResolveTracesForTest(unittest.TestCase):
       _resolve_traces_for(_settings_with(''), None)
     self.assertEqual(ctx.exception.status_code, 400)
 
+  def test_native_array_trace_filter_raises_400(self):
+    # Strict-string-only wire (WIRE_SPEC §10.1, §12.1). A native
+    # JSON array is REJECTED at parse time — clients must
+    # JSON.stringify before sending. The error detail tells the
+    # client what to do.
+    with self.assertRaises(HTTPException) as ctx:
+      _resolve_traces_for(
+          _settings_with(self._tmp), [{
+              'field': 'file_name',
+              'op': '=',
+              'value': 'a.pftrace'
+          }])
+    self.assertEqual(ctx.exception.status_code, 400)
+    self.assertIn('STRING', ctx.exception.detail)
+
   def test_malformed_trace_filter_raises_400(self):
-    # Anything that isn't a JSON array (or None / JSON string of an
-    # array) is rejected with 400 INVALID_ARGUMENT, matching the
+    # Anything that isn't a string (or None) is 400, matching the
     # `:fetch_results?filter=` contract on the read path.
     with self.assertRaises(HTTPException) as ctx:
       _resolve_traces_for(_settings_with(self._tmp), {'not': 'an array'})
@@ -624,26 +637,16 @@ class ResolveTracesForTest(unittest.TestCase):
     # mtime). A filter referencing anything else is a user bug.
     with self.assertRaises(HTTPException) as ctx:
       _resolve_traces_for(
-          _settings_with(self._tmp), [{
-              'field': 'no_such_col',
-              'op': '=',
-              'value': 'x'
-          }])
+          _settings_with(self._tmp),
+          '[{"field":"no_such_col","op":"=","value":"x"}]')
     self.assertEqual(ctx.exception.status_code, 400)
 
-  def test_trace_filter_accepts_json_string_form(self):
-    # Hand-rolled clients may ship the filter as a JSON-encoded
-    # string; the parser re-decodes it. (The UI uses the structured
-    # list form.)
-    out = _resolve_traces_for(
-        _settings_with(self._tmp),
-        json.dumps([{
-            'field': 'file_name',
-            'op': '=',
-            'value': 'b.pftrace'
-        }]))
-    names = [os.path.basename(e['file_path']) for e in out]
-    self.assertEqual(names, ['b.pftrace'])
+  def test_malformed_json_string_raises_400(self):
+    # Bad JSON inside a string → 400 INVALID_ARGUMENT. (The
+    # historical "tolerate hand-rolled clients" path is gone.)
+    with self.assertRaises(HTTPException) as ctx:
+      _resolve_traces_for(_settings_with(self._tmp), '{not json')
+    self.assertEqual(ctx.exception.status_code, 400)
 
   def test_resolve_returns_full_entries_with_metadata(self):
     # The execute path stitches trace metadata onto query rows; it
