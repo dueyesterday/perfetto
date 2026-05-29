@@ -245,7 +245,14 @@ export class BigtraceQueryClient {
       path += `&columns=${encodeURIComponent(columns.join(','))}`;
     }
     const result = await this.requestJson<QueryResponsePayload>(path, {signal});
-    return parseQueryResponse(result);
+    // `availableColumns` is `:fetch_results`-only by spec (WIRE_SPEC §9.9
+    // / §14.6): `/traces` mustn't echo a column catalog because
+    // `/traces_schema` is the source of truth, so the parser stays
+    // endpoint-agnostic and only this call site exposes the field.
+    return {
+      ...parseQueryResponse(result),
+      availableColumns: result.availableColumns,
+    };
   }
 
   async cancelQuery(uuid: string, signal?: AbortSignal): Promise<void> {
@@ -411,6 +418,5 @@ export function parseQueryResponse(
     columns,
     queryUuid: result.queryUuid,
     totalFilteredRows: result.totalFilteredRows,
-    availableColumns: result.availableColumns,
   };
 }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {afterEach, describe, expect, test, vi} from 'vitest';
 import {
   BigtraceQueryClient,
   QueryNotFoundError,
@@ -97,6 +98,19 @@ describe('parseQueryResponse', () => {
     });
     expect(result.totalFilteredRows).toBeUndefined();
   });
+
+  test('does not plumb availableColumns (fetchResults attaches it)', () => {
+    // WIRE_SPEC §9.9 / §14.6: `availableColumns` is `:fetch_results`-
+    // only. Keeping the parser endpoint-agnostic means the field can't
+    // accidentally leak from `/traces` (whose column catalog lives on
+    // `/traces_schema`, not echoed in the page response).
+    const result = parseQueryResponse({
+      columnNames: ['n'],
+      rows: [{values: ['1']}],
+      availableColumns: ['n', 'extra_col'],
+    });
+    expect(result.availableColumns).toBeUndefined();
+  });
 });
 
 describe('encodeFilters', () => {
@@ -162,14 +176,14 @@ describe('BigtraceQueryClient.fetchResults URL construction', () => {
     global.fetch = originalFetch;
   });
 
-  function captureFetch(): jest.Mock {
+  function captureFetch(): ReturnType<typeof vi.fn> {
     const fakeResp = {
       ok: true,
       status: 200,
       text: () => Promise.resolve(JSON.stringify({columnNames: [], rows: []})),
       json: () => Promise.resolve({columnNames: [], rows: []}),
     };
-    const fn = jest.fn().mockResolvedValue(fakeResp);
+    const fn = vi.fn().mockResolvedValue(fakeResp);
     global.fetch = fn as unknown as typeof fetch;
     return fn;
   }
@@ -250,10 +264,12 @@ describe('BigtraceQueryClient.fetchResults URL construction', () => {
     );
   });
 
-  test('parseQueryResponse passes availableColumns through', async () => {
-    // The new field surfaces the union of result + sidecar columns
-    // so the UI's column-picker knows what's selectable.
-    global.fetch = jest.fn().mockResolvedValue({
+  test('fetchResults surfaces availableColumns from the wire', async () => {
+    // WIRE_SPEC §9.5: `:fetch_results` ships the union of result +
+    // sidecar columns so the UI's column-picker knows what's
+    // selectable. The parser stays endpoint-agnostic; only fetchResults
+    // attaches the field on the way out.
+    global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       text: () =>
@@ -293,7 +309,7 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
     global.fetch = originalFetch;
   });
 
-  function captureFetch(): jest.Mock {
+  function captureFetch(): ReturnType<typeof vi.fn> {
     const fakeResp = {
       ok: true,
       status: 200,
@@ -304,12 +320,14 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
       json: () =>
         Promise.resolve({columnNames: [], rows: [], totalFilteredRows: 0}),
     };
-    const fn = jest.fn().mockResolvedValue(fakeResp);
+    const fn = vi.fn().mockResolvedValue(fakeResp);
     global.fetch = fn as unknown as typeof fetch;
     return fn;
   }
 
-  function bodyFrom(fetchMock: jest.Mock): Record<string, unknown> {
+  function bodyFrom(
+    fetchMock: ReturnType<typeof vi.fn>,
+  ): Record<string, unknown> {
     const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
     return JSON.parse(init.body as string);
   }
@@ -396,6 +414,36 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
     ]);
     expect(bodyFrom(fetchMock).columns).toEqual(['file_name', 'size_bytes']);
   });
+
+  test('does not surface availableColumns even if the wire ships one', async () => {
+    // WIRE_SPEC §9.9: `/traces` MUST NOT echo a column catalog —
+    // `/traces_schema` is the source of truth. Even if a non-compliant
+    // backend ships `availableColumns`, the client drops it so no
+    // consumer can grow a dependency on it.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            columnNames: ['file_name'],
+            rows: [{values: ['a.pftrace']}],
+            totalFilteredRows: 1,
+            availableColumns: ['file_path', 'file_name', 'size_bytes'],
+          }),
+        ),
+      json: () =>
+        Promise.resolve({
+          columnNames: ['file_name'],
+          rows: [{values: ['a.pftrace']}],
+          totalFilteredRows: 1,
+          availableColumns: ['file_path', 'file_name', 'size_bytes'],
+        }),
+    }) as unknown as typeof fetch;
+    const client = new BigtraceQueryClient('http://example/');
+    const page = await client.listTraces([], 100, 0);
+    expect(page.availableColumns).toBeUndefined();
+  });
 });
 
 describe('BigtraceQueryClient.listTracesSchema body construction', () => {
@@ -404,14 +452,14 @@ describe('BigtraceQueryClient.listTracesSchema body construction', () => {
     global.fetch = originalFetch;
   });
 
-  function captureFetch(): jest.Mock {
+  function captureFetch(): ReturnType<typeof vi.fn> {
     const fakeResp = {
       ok: true,
       status: 200,
       text: () => Promise.resolve(JSON.stringify({columns: []})),
       json: () => Promise.resolve({columns: []}),
     };
-    const fn = jest.fn().mockResolvedValue(fakeResp);
+    const fn = vi.fn().mockResolvedValue(fakeResp);
     global.fetch = fn as unknown as typeof fetch;
     return fn;
   }
@@ -441,7 +489,7 @@ describe('BigtraceQueryClient.listTracesSchema body construction', () => {
   });
 
   test('returns the parsed columns array', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
+    global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       text: () =>
@@ -481,7 +529,7 @@ describe('BigtraceQueryClient executeSync/executeAsync trace_filter', () => {
     global.fetch = originalFetch;
   });
 
-  function captureFetch(): jest.Mock {
+  function captureFetch(): ReturnType<typeof vi.fn> {
     const fakeResp = {
       ok: true,
       status: 200,
@@ -491,12 +539,14 @@ describe('BigtraceQueryClient executeSync/executeAsync trace_filter', () => {
         ),
       json: () => Promise.resolve({queryUuid: 'u', columnNames: [], rows: []}),
     };
-    const fn = jest.fn().mockResolvedValue(fakeResp);
+    const fn = vi.fn().mockResolvedValue(fakeResp);
     global.fetch = fn as unknown as typeof fetch;
     return fn;
   }
 
-  function bodyFrom(fetchMock: jest.Mock): Record<string, unknown> {
+  function bodyFrom(
+    fetchMock: ReturnType<typeof vi.fn>,
+  ): Record<string, unknown> {
     const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
     return JSON.parse(init.body as string);
   }
@@ -545,6 +595,75 @@ describe('BigtraceQueryClient executeSync/executeAsync trace_filter', () => {
   });
 });
 
+describe('BigtraceQueryClient executeSync/executeAsync trace_order_by', () => {
+  // Top-level AIP-132 ordering string controlling the trace fan-out
+  // order. Matters under `trace_limit > 0` — the cap keeps the first
+  // N traces in this order. Absence means "let the backend pick its
+  // default" (`file_path ASC` on the reference).
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function captureFetch(): ReturnType<typeof vi.fn> {
+    const fakeResp = {
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({queryUuid: 'u', columnNames: [], rows: []}),
+        ),
+      json: () => Promise.resolve({queryUuid: 'u', columnNames: [], rows: []}),
+    };
+    const fn = vi.fn().mockResolvedValue(fakeResp);
+    global.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function bodyFrom(
+    fetchMock: ReturnType<typeof vi.fn>,
+  ): Record<string, unknown> {
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    return JSON.parse(init.body as string);
+  }
+
+  test('omits trace_order_by when undefined or empty', async () => {
+    const client = new BigtraceQueryClient('http://example/');
+    let fetchMock = captureFetch();
+    await client.executeAsync('SELECT 1', 10, [], undefined, [], [], '');
+    expect(bodyFrom(fetchMock).trace_order_by).toBeUndefined();
+    fetchMock = captureFetch();
+    await client.executeAsync('SELECT 1', 10, [], undefined);
+    expect(bodyFrom(fetchMock).trace_order_by).toBeUndefined();
+  });
+
+  test('ships trace_order_by verbatim when set', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.executeAsync(
+      'SELECT 1',
+      10,
+      [],
+      undefined,
+      [],
+      [],
+      'size_bytes desc',
+    );
+    expect(bodyFrom(fetchMock).trace_order_by).toBe('size_bytes desc');
+  });
+
+  test('sync and async share the trace_order_by shape', async () => {
+    const orderBy = 'file_name asc';
+    const client = new BigtraceQueryClient('http://example/');
+    let fetchMock = captureFetch();
+    await client.executeSync('SELECT 1', 10, [], undefined, [], [], orderBy);
+    expect(bodyFrom(fetchMock).trace_order_by).toBe(orderBy);
+    fetchMock = captureFetch();
+    await client.executeAsync('SELECT 1', 10, [], undefined, [], [], orderBy);
+    expect(bodyFrom(fetchMock).trace_order_by).toBe(orderBy);
+  });
+});
+
 describe('BigtraceQueryClient 404 handling', () => {
   // resume-from-history relies on 404 → QueryNotFoundError to drop dead UUIDs.
   // Jest runs in Node, so we hand-roll a minimal Response-shaped object.
@@ -563,7 +682,7 @@ describe('BigtraceQueryClient 404 handling', () => {
   }
 
   function mockStatus(status: number, body: string): void {
-    global.fetch = jest.fn().mockResolvedValue(fakeResponse(status, body));
+    global.fetch = vi.fn().mockResolvedValue(fakeResponse(status, body));
   }
 
   test('getQueryExecution rejects with QueryNotFoundError on 404', async () => {
