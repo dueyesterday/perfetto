@@ -64,8 +64,9 @@ from trace_pool import TracePool  # noqa: E402
 # Trace-list schema. The endpoint surfaces this through /traces_schema
 # so the UI can render the column-selection menu without baking in any
 # names. Order is the default projection order (used when the client
-# doesn't supply a `columns` field-mask); `default` flags the columns
-# the UI shows on first render. `description` is surfaced as a tooltip.
+# doesn't supply a `columns` field-mask); `defaultVisible` flags the
+# columns the UI shows on first render. `description` is surfaced as a
+# tooltip.
 #
 # Phase 1 = pure filesystem metadata. A real BigTrace backend with a
 # metadata index would add device_name, android_id, app_version, etc.
@@ -74,22 +75,22 @@ _TRACE_LIST_SCHEMA: list[dict[str, Any]] = [
     {
         'name': 'file_path',
         'type': 'VARCHAR',
-        'default': True,
+        'defaultVisible': True,
     },
     {
         'name': 'file_name',
         'type': 'VARCHAR',
-        'default': True,
+        'defaultVisible': True,
     },
     {
         'name': 'size_bytes',
         'type': 'BIGINT',
-        'default': True,
+        'defaultVisible': True,
     },
     {
         'name': 'mtime',
         'type': 'VARCHAR',
-        'default': True,
+        'defaultVisible': True,
     },
 ]
 
@@ -1223,8 +1224,8 @@ async def traces(request: Request) -> dict[str, Any]:
     Response: `{columnNames, rows, totalFilteredRows}` — same wire
     shape and always-strings contract as `:fetch_results`. Default
     column set (when `columns` is absent): all entries from
-    /traces_schema flagged `default: true`. Otherwise the response
-    projects exactly the named columns in the given order.
+    /traces_schema flagged `defaultVisible: true`. Otherwise the
+    response projects exactly the named columns in the given order.
 
     `filter` / `order_by` may reference columns that aren't in the
     projection — they still apply (because the underlying scan sees
@@ -1288,14 +1289,14 @@ async def traces_schema(request: Request) -> dict[str, Any]:
     Response:
       {
         "columns": [
-          {"name": "file_path", "type": "VARCHAR", "default": true},
+          {"name": "file_path", "type": "VARCHAR", "defaultVisible": true},
           ...
         ]
       }
 
-    `default: true` flags the columns the grid shows on first
-    render; `default: false` columns are addable via the column
-    menu. `type` is informational — the grid renders every value as
+    `defaultVisible: true` flags the columns the grid shows on first
+    render; `defaultVisible: false` columns are addable via the
+    column menu. `type` is informational — the grid renders every value as
     a string per the always-strings wire contract. `description`
     is optional (per the wire spec); the local backend omits it so
     the grid headers don't carry placeholder tooltips.

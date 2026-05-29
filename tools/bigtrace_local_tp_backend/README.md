@@ -465,8 +465,8 @@ Same shapes as `bigtrace_ref_backend`. Read
 | POST | `/query_executions/{uuid}:cancel` | Atomically transitions to CANCELLED under the DB lock. 200. No row lands after this returns. |
 | GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. **Omits** the per-query snapshot fields (`settings` / `traceFilter` / `traceMetadataColumns` / `traceOrderBy`) so the history sidebar response stays lean — fetch the per-uuid endpoint to inspect a historical query's snapshot. |
 | DELETE | `/query_executions/{uuid}` | Soft-delete. 200 on terminal, 409 on IN_PROGRESS, 404 if already deleted/missing. |
-| POST | `/traces` | Paginated trace metadata for the trace source named in `settings`. Body: `{settings, filter?: Filter[] \| string, order_by?: string, limit, offset, columns?: string[]}`. `filter` accepts BOTH a native JSON array AND a JSON-encoded string form (the same wire as `:fetch_results?filter=` / `/execute_*` `trace_filter`) — dual-accept so a single composer can serve all three filter sites. Response: `{columnNames, rows, totalFilteredRows, availableColumns?}` — same always-strings wire as `:fetch_results`. `filter` / `order_by` use the same parser as `:fetch_results`. `columns` is an optional field-mask; omitted means "every column the backend flags `default: true` in `/traces_schema`". Powers the trace-selection grid on the BigTrace UI's Settings page. |
-| POST | `/traces_schema` | Declares the columns `/traces` can return. Body: `{settings}` (a backend whose schema depends on the source can vary the response). Response: `{columns: [{name, type, default: boolean, description?}]}`. Local TP returns the static four-column filesystem schema (`file_path`, `file_name`, `size_bytes`, `mtime`); a real BigTrace would extend with indexer-derived per-trace metadata. |
+| POST | `/traces` | Paginated trace metadata for the trace source named in `settings`. Body: `{settings, filter?: Filter[] \| string, order_by?: string, limit, offset, columns?: string[]}`. `filter` accepts BOTH a native JSON array AND a JSON-encoded string form (the same wire as `:fetch_results?filter=` / `/execute_*` `trace_filter`) — dual-accept so a single composer can serve all three filter sites. Response: `{columnNames, rows, totalFilteredRows}` — same always-strings rows wire as `:fetch_results`, but **without** `availableColumns`: the column catalog lives on `/traces_schema` (see WIRE_SPEC §9.9). `filter` / `order_by` use the same parser as `:fetch_results`. `columns` is an optional field-mask; omitted means "every column the backend flags `defaultVisible: true` in `/traces_schema`". Powers the trace-selection grid on the BigTrace UI's Settings page. |
+| POST | `/traces_schema` | Declares the columns `/traces` can return. Body: `{settings}` (a backend whose schema depends on the source can vary the response). Response: `{columns: [{name, type, defaultVisible: boolean, description?}]}`. Local TP returns the static four-column filesystem schema (`file_path`, `file_name`, `size_bytes`, `mtime`); a real BigTrace would extend with indexer-derived per-trace metadata. |
 | POST | `/bigtrace_execution_config` | Static settings schema (see `settings.py`). |
 | POST | `/trace_metadata_settings` | Empty (no indexer). UI hides the section. |
 
@@ -761,7 +761,7 @@ verifies:
     count; bad JSON, unknown column, and empty `in []` each yield
     400 INVALID_ARGUMENT with the offending entry surfaced.
 23. `/traces` + `/traces_schema` end-to-end: schema response carries
-    four columns flagged `default: true`; happy-path pagination,
+    four columns flagged `defaultVisible: true`; happy-path pagination,
     `filter` and `order_by` parameters match `:fetch_results`
     semantics; `columns` projection narrows the response without
     losing filter/sort over unprojected columns; 9 bad-request

@@ -789,7 +789,7 @@ Soft-deleted rows MUST be filtered out.
 | `order_by` | string | MAY | `""` | Same grammar as `:fetch_results?order_by=`. See [§13](#13-order_by-grammar-aip-132-§ordering-subset). |
 | `limit` | number | MUST | — | Page size. |
 | `offset` | number | MUST | `0` | Page offset. |
-| `columns` | string[] | MAY | (every `default:true` column from `/traces_schema`) | Field-mask projection. See [§14](#14-columns-field-mask). |
+| `columns` | string[] | MAY | (every `defaultVisible:true` column from `/traces_schema`) | Field-mask projection. See [§14](#14-columns-field-mask). |
 
 **Response (200):**
 
@@ -863,7 +863,7 @@ The schema MAY depend on the trace source (different `trace_directory` → diffe
     {
       "name": "<col>",
       "type": "<sqltype>",
-      "default": <bool>,
+      "defaultVisible": <bool>,
       "description": "<str>"
     }
   ]
@@ -874,7 +874,7 @@ The schema MAY depend on the trace source (different `trace_directory` → diffe
 |---|---|---|---|
 | `name` | string | MUST | The column identifier used in `Filter[].field`, `order_by` field-names, the `columns` field-mask on `/traces`, and `trace_metadata_columns` on `/execute_*`. |
 | `type` | string | MUST | Informational — the wire is always-strings. Suggested values: `BIGINT`, `INTEGER`, `DOUBLE`, `VARCHAR`, `TIMESTAMP`, `BOOLEAN`. Used by the UI for cell-renderer hints (`size_bytes` typed as `BIGINT` may be rendered as "4.5 MB"). |
-| `default` | bool | MUST | `true` → column appears in the trace-list grid on first render; `false` → addable via the picker. |
+| `defaultVisible` | bool | MUST | `true` → column appears in the trace-list grid on first render; `false` → addable via the picker. Renamed from `default` to avoid the JS keyword collision (destructuring `default` requires aliasing in strict mode) and to make the field self-describing. |
 | `description` | string | MAY | Tooltip / help text the UI surfaces on the column-picker entry. |
 
 **Errors:** None expected on a happy path. 400 INVALID_ARGUMENT if settings reference an unknown / invalid trace source.
@@ -891,10 +891,10 @@ Content-Type: application/json
 ```json
 {
   "columns": [
-    {"name": "file_path",  "type": "VARCHAR", "default": true, "description": "Absolute path on the backend host."},
-    {"name": "file_name",  "type": "VARCHAR", "default": true, "description": "Trace basename (with extension)."},
-    {"name": "size_bytes", "type": "BIGINT",  "default": true, "description": "File size in bytes."},
-    {"name": "mtime",      "type": "VARCHAR", "default": true, "description": "Last modification time (ISO-8601 UTC)."}
+    {"name": "file_path",  "type": "VARCHAR", "defaultVisible": true, "description": "Absolute path on the backend host."},
+    {"name": "file_name",  "type": "VARCHAR", "defaultVisible": true, "description": "Trace basename (with extension)."},
+    {"name": "size_bytes", "type": "BIGINT",  "defaultVisible": true, "description": "File size in bytes."},
+    {"name": "mtime",      "type": "VARCHAR", "defaultVisible": true, "description": "Last modification time (ISO-8601 UTC)."}
   ]
 }
 ```
