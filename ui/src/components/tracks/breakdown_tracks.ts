@@ -177,22 +177,26 @@ export class BreakdownTracks {
   private pendingTableCreates: string[] = [];
 
   // Projected-path state. When useProjectedPath is true, createTracks builds
-  // one (id, ts, dur, k0..kN, s0..sN) projection plus one self-intersect
-  // segments table, and per-track renderers query those instead of running
-  // intervals_overlap_count! per node. Eliminates the O(N_tracks) macro
-  // multiplier that dominates trace load for big hierarchies.
+  // a (id, ts, dur, k0..kN, s0..sN) projection plus a self-intersect segments
+  // table plus a per-(segment, partition tuple) counts table; per-track
+  // renderers query those instead of running intervals_overlap_count! per
+  // node. Eliminates the O(N_tracks) macro multiplier that dominates trace
+  // load for big hierarchies.
   private readonly useProjectedPath: boolean;
   private projectedTableName?: string;
   private segmentsTableName?: string;
   private projectedAggColNames?: readonly string[];
   private projectedSliceColNames?: readonly string[];
 
-  // Sort-order pre-computation (only when useProjectedPath && sortTracks).
-  // perGroupTableName: materialized (k0..kN, group_id, cnt) so we can run
-  // K+1 cheap MAX-by-prefix queries from a stable pre-aggregated source.
-  // sortOrderMap: '<level>SEPv0SEPv1...' -> MAX(cnt) for that filter prefix.
-  // Populated once before the hierarchy walk; the walk then looks up
-  // sortOrder synchronously instead of awaiting N per-node MAX queries.
+  // perGroupTableName: (k0..kN, group_id, cnt) — one row per (atomic segment,
+  // distinct partition tuple active in segment) with cnt = active intervals
+  // matching that tuple. Aggregated in SQL from _segments via
+  // SUM(IIF(NOT interval_ends_at_ts, 1, 0)). Drives both per-track counter
+  // renderers and buildSortOrderMap.
+  // sortOrderMap (only when sortTracks): '<level>SEPv0SEPv1...' -> MAX of the
+  // per-prefix per-segment summed count. Populated once before the hierarchy
+  // walk; the walk then resolves sortOrder synchronously instead of awaiting
+  // N per-node MAX queries.
   private perGroupTableName?: string;
   private sortOrderMap?: Map<string, number>;
 
@@ -207,7 +211,7 @@ export class BreakdownTracks {
 
     if (this.props.aggregationType === BreakdownTrackAggType.COUNT) {
       this.modulesClause += this.useProjectedPath
-        ? `\nINCLUDE PERFETTO MODULE intervals.intersect;`
+        ? `\nINCLUDE PERFETTO MODULE intervals.self_intersect;`
         : `\nINCLUDE PERFETTO MODULE intervals.overlap;`;
     }
 
@@ -215,15 +219,15 @@ export class BreakdownTracks {
       const unique = uuidv4().replace(/-/g, '_');
       this.projectedTableName = `_breakdown_projected_${unique}`;
       this.segmentsTableName = `_breakdown_segments_${unique}`;
+      // _per_group is always built on the projected path — per-track render
+      // queries depend on it (not just sort-order pre-computation).
+      this.perGroupTableName = `_breakdown_per_group_${unique}`;
       this.projectedAggColNames = this.props.aggregation.columns.map(
         (_, i) => `k${i}`,
       );
       this.projectedSliceColNames = (this.props.slice?.columns ?? []).map(
         (_, i) => `s${i}`,
       );
-      if (this.props.sortTracks) {
-        this.perGroupTableName = `_breakdown_per_group_${unique}`;
-      }
     }
 
     if (this.props.slice?.joins !== undefined) {
@@ -246,18 +250,17 @@ export class BreakdownTracks {
 
   private getAggregationQuery(filtersClause: string) {
     if (this.useProjectedPath) {
-      // Query the shared self-intersect segments table. One row per
-      // (atomic segment, original interval) pair, plus an end-marker row at
-      // each interval's end. SUM(IIF(NOT interval_ends_at_ts, 1, 0)) per
-      // group_id counts active intervals at each segment; end-markers
-      // contribute 0 so the counter naturally drops on segment boundaries
-      // where intervals end.
+      // Query the shared per-group counts table aggregated from the C++
+      // _interval_self_intersect's segments. Each row carries the count of
+      // active intervals matching a specific (k0..kN) partition tuple at a
+      // specific atomic segment, so the per-track query reduces to filtering
+      // by the level's prefix and summing across the deeper partition
+      // columns at each ts.
       return `
-        SELECT MIN(ts) AS ts,
-               SUM(IIF(interval_ends_at_ts = FALSE, 1, 0)) AS value
-        FROM ${this.segmentsTableName}
+        SELECT ts, SUM(cnt) AS value
+        FROM ${this.perGroupTableName}
         ${filtersClause}
-        GROUP BY group_id
+        GROUP BY ts
         ORDER BY ts
       `;
     }
@@ -319,18 +322,19 @@ export class BreakdownTracks {
       .join('\n');
   }
 
-  // Build the tables that drive the projected path:
-  //   _breakdown_projected: (id, ts, dur, k0..kN, s0..sN) — one row per source
-  //     row, with the user-supplied agg/slice column expressions pre-evaluated
-  //     under stable names. Filters everywhere downstream become raw column
-  //     equality on this table.
-  //   _breakdown_segments: per-atomic-segment, per-active-id rows from
-  //     interval_self_intersect, denormalized with the agg cols inline so
-  //     per-track counter renderers don't need to JOIN back.
-  //   _breakdown_per_group (sortTracks only): (k0..kN, group_id, cnt) —
-  //     pre-aggregated active-interval counts per atomic segment per full
-  //     filter path. Stable source for buildSortOrderMap's K+1 cheap
-  //     MAX-by-prefix queries.
+  // Build the three tables that drive the projected path:
+  //   _breakdown_projected: (id, ts, dur, k0..kN, s0..sN) — one row per
+  //     source row, with the user-supplied agg/slice column expressions
+  //     pre-evaluated under stable names. Drives slice tracks directly;
+  //     filters everywhere downstream become raw column equality here.
+  //   _breakdown_segments: (ts, dur, group_id, k0..kN, interval_ends_at_ts)
+  //     — per-(atomic segment, active interval) rows from the C++
+  //     _interval_self_intersect (single-pass O(n log n) sweep that matches
+  //     the SQL stdlib's interval_self_intersect contract), JOINed back to
+  //     _projected to attach the agg cols.
+  //   _breakdown_per_group: (k0..kN, group_id, cnt) — aggregated counts
+  //     per (partition tuple, atomic segment). Drives both per-track counter
+  //     renderers and buildSortOrderMap.
   private async buildProjectedTables() {
     const {tsCol, durCol, tableName} = this.props.aggregation;
     const aggCols = this.props.aggregation.columns;
@@ -350,16 +354,6 @@ export class BreakdownTracks {
       .map((n) => `p.${n}`)
       .join(', ');
 
-    const perGroupCreate = this.perGroupTableName
-      ? `
-        CREATE PERFETTO TABLE ${this.perGroupTableName} AS
-        SELECT ${aggColNamesCsv}, group_id,
-               SUM(IIF(interval_ends_at_ts = FALSE, 1, 0)) AS cnt
-        FROM ${this.segmentsTableName}
-        GROUP BY ${aggColNamesCsv}, group_id;
-      `
-      : '';
-
     await this.props.trace.engine.query(`
       CREATE PERFETTO TABLE ${this.projectedTableName} AS
       SELECT ${projectedSelect}
@@ -371,12 +365,16 @@ export class BreakdownTracks {
         iss.group_id,
         iss.interval_ends_at_ts,
         ${denormAggCols}
-      FROM interval_self_intersect!((
+      FROM _interval_self_intersect!((
         SELECT id, ts, dur FROM ${this.projectedTableName}
       )) iss
       JOIN ${this.projectedTableName} p USING(id);
 
-      ${perGroupCreate}
+      CREATE PERFETTO TABLE ${this.perGroupTableName} AS
+      SELECT ${aggColNamesCsv}, group_id, MIN(ts) AS ts,
+             SUM(IIF(interval_ends_at_ts = 0, 1, 0)) AS cnt
+      FROM ${this.segmentsTableName}
+      GROUP BY ${aggColNamesCsv}, group_id;
     `);
   }
 
@@ -393,7 +391,7 @@ export class BreakdownTracks {
   // keys would be reported at MAX 1 instead of N. The inner aggregation
   // matches the per-render SUM(IIF) shape that fires for each track.
   private async buildSortOrderMap() {
-    if (!this.perGroupTableName) return;
+    if (!this.perGroupTableName || !this.props.sortTracks) return;
     const ks = this.projectedAggColNames!;
     const K = ks.length;
 
@@ -454,7 +452,7 @@ export class BreakdownTracks {
 
     if (this.useProjectedPath) {
       await this.buildProjectedTables();
-      if (this.perGroupTableName) {
+      if (this.props.sortTracks) {
         await this.buildSortOrderMap();
       }
     } else if (this.props.aggregationType !== BreakdownTrackAggType.COUNT) {
