@@ -1819,16 +1819,16 @@ def main() -> int:
     assert schema_names == {'file_path', 'file_name', 'size_bytes', 'mtime'
                            }, (f'unexpected schema columns: {schema_names}')
     for c in schema_cols:
-      for field in ('name', 'type', 'default'):
+      for field in ('name', 'type', 'defaultVisible'):
         assert field in c, f'schema entry missing {field}: {c}'
-      assert isinstance(c['default'],
-                        bool), (f'schema `default` must be bool: {c}')
-    default_names = {c['name'] for c in schema_cols if c['default']}
+      assert isinstance(c['defaultVisible'],
+                        bool), (f'schema `defaultVisible` must be bool: {c}')
+    default_names = {c['name'] for c in schema_cols if c['defaultVisible']}
     assert default_names == schema_names, (
-        f'Phase-1 schema: every column should be default=true; got '
-        f'defaults={default_names}, all={schema_names}')
+        f'Phase-1 schema: every column should be defaultVisible=true; got '
+        f'defaultVisible={default_names}, all={schema_names}')
     print(f'        schema returns {len(schema_cols)} columns, '
-          f'all default=true')
+          f'all defaultVisible=true')
 
     # (f) trace_filter on execute_* restricts the executed trace set
     # (mirrors block [16] but at the wire level pinning the
