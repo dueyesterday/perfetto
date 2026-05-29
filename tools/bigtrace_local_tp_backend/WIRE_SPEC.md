@@ -797,12 +797,11 @@ Soft-deleted rows MUST be filtered out.
 {
   "columnNames": ["<col>", ...],
   "rows": [{"values": ["<str>" | null, ...]}, ...],
-  "totalFilteredRows": <number>,
-  "availableColumns": ["<col>", ...]
+  "totalFilteredRows": <number>
 }
 ```
 
-Same always-strings wire as `:fetch_results`. `availableColumns` MAY be present; if absent the UI falls back to inferring from `/traces_schema`. SHOULD be present for consistency.
+Same always-strings wire as `:fetch_results`, but **without** `availableColumns`: the column catalog for `/traces` lives on `/traces_schema` ([§9.10](#910-post-traces_schema)), so echoing it here would create two sources of truth that could drift. Backends MUST NOT include `availableColumns` in this response; clients MUST NOT read it.
 
 **Errors:**
 
@@ -840,8 +839,7 @@ Content-Type: application/json
     {"values": ["large.pftrace", "10485760"]},
     {"values": ["medium.pftrace", "1048576"]}
   ],
-  "totalFilteredRows": 12,
-  "availableColumns": ["file_path", "file_name", "size_bytes", "mtime"]
+  "totalFilteredRows": 12
 }
 ```
 
@@ -1483,9 +1481,11 @@ Backends MUST validate every column name and return 400 INVALID_ARGUMENT:
 | `columns=,trace_id` | Leading empty entry |
 | `columns=trace_id,trace_id` | Duplicate — backends MAY accept and dedupe, or reject (the reference rejects) |
 
-### 14.6 availableColumns invariant
+### 14.6 availableColumns invariant (`:fetch_results` only)
 
-The `availableColumns` field in the response MUST be IDENTICAL across all `columns` projections for the same query — it advertises the FULL union, independent of the current projection. This is so the UI's column picker can offer columns not currently shown.
+On `:fetch_results`, the `availableColumns` field in the response MUST be IDENTICAL across all `columns` projections for the same query — it advertises the FULL union of (result-table cols ∪ sidecar cols), independent of the current projection. This is so the UI's column picker can offer columns not currently shown.
+
+`/traces` MUST NOT echo `availableColumns` — its column catalog lives on `/traces_schema` ([§9.10](#910-post-traces_schema)). See [§9.9](#99-post-traces).
 
 ---
 
