@@ -43,12 +43,15 @@ export interface QueryResultPage {
 }
 
 // One row of the `/traces_schema` response. Mirrors the wire shape:
-// `name` and `type` are required, `default` flags the columns the
-// grid shows on first render, `description` is optional tooltip copy.
+// `name` and `type` are required, `defaultVisible` flags the columns
+// the grid shows on first render, `description` is optional tooltip
+// copy. (`defaultVisible` not `default` — `default` is awkward to
+// destructure in strict mode and visually collides with the JS
+// keyword.)
 export interface TraceColumnDescriptor {
   readonly name: string;
   readonly type: string;
-  readonly default: boolean;
+  readonly defaultVisible: boolean;
   readonly description?: string;
 }
 
@@ -130,8 +133,8 @@ export class BigtraceQueryClient {
   //
   // `columns` is an optional field-mask: when set, only those columns
   // appear in the response (in the given order). When omitted, the
-  // backend returns every column flagged `default: true` in its
-  // schema (see `listTracesSchema`). `filter` / `orderBy` may
+  // backend returns every column flagged `defaultVisible: true` in
+  // its schema (see `listTracesSchema`). `filter` / `orderBy` may
   // reference columns outside the projection — the underlying scan
   // still sees them so the predicates apply.
   async listTraces(

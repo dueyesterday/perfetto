@@ -496,16 +496,16 @@ describe('BigtraceQueryClient.listTracesSchema body construction', () => {
         Promise.resolve(
           JSON.stringify({
             columns: [
-              {name: 'file_name', type: 'VARCHAR', default: true},
-              {name: 'mtime', type: 'VARCHAR', default: false},
+              {name: 'file_name', type: 'VARCHAR', defaultVisible: true},
+              {name: 'mtime', type: 'VARCHAR', defaultVisible: false},
             ],
           }),
         ),
       json: () =>
         Promise.resolve({
           columns: [
-            {name: 'file_name', type: 'VARCHAR', default: true},
-            {name: 'mtime', type: 'VARCHAR', default: false},
+            {name: 'file_name', type: 'VARCHAR', defaultVisible: true},
+            {name: 'mtime', type: 'VARCHAR', defaultVisible: false},
           ],
         }),
     }) as unknown as typeof fetch;
@@ -513,8 +513,8 @@ describe('BigtraceQueryClient.listTracesSchema body construction', () => {
     const resp = await client.listTracesSchema([]);
     expect(resp.columns).toHaveLength(2);
     expect(resp.columns[0].name).toBe('file_name');
-    expect(resp.columns[0].default).toBe(true);
-    expect(resp.columns[1].default).toBe(false);
+    expect(resp.columns[0].defaultVisible).toBe(true);
+    expect(resp.columns[1].defaultVisible).toBe(false);
   });
 });
 

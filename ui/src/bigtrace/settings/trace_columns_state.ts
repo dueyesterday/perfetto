@@ -22,12 +22,14 @@ import {LocalStorage} from '../../core/local_storage';
 //
 // Storage strategy: keep an explicit `chosen` array when the user has
 // made a selection, and `null` (the "default") when they haven't.
-// `null` means "use the schema's default-flagged columns" — that way
-// a backend upgrade that adds new default-true columns surfaces them
-// immediately without the user having to opt in.
+// `null` means "use the schema's defaultVisible-flagged columns" —
+// that way a backend upgrade that adds new defaultVisible-true
+// columns surfaces them immediately without the user having to opt
+// in.
 //
 // The wire-side defaults (server.py:_TRACE_LIST_SCHEMA) and the
-// per-column `default: true` flag let this stay backend-agnostic.
+// per-column `defaultVisible: true` flag let this stay
+// backend-agnostic.
 
 const STORAGE_KEY = 'bigtraceTraceColumns';
 const CHOSEN_FIELD = 'chosen';
@@ -62,16 +64,19 @@ class TraceColumnsState {
 
   // Convenience: resolves to the effective column list given a
   // schema response. When the user hasn't made a selection (`null`),
-  // returns the schema's default-flagged columns in declaration
-  // order. When they have, returns the persisted selection
-  // intersected with the schema (so a stale localStorage entry
-  // referencing a removed column doesn't blow up the grid).
+  // returns the schema's defaultVisible-flagged columns in
+  // declaration order. When they have, returns the persisted
+  // selection intersected with the schema (so a stale localStorage
+  // entry referencing a removed column doesn't blow up the grid).
   effective(
-    schema: ReadonlyArray<{readonly name: string; readonly default: boolean}>,
+    schema: ReadonlyArray<{
+      readonly name: string;
+      readonly defaultVisible: boolean;
+    }>,
   ): string[] {
     const chosen = this.get();
     if (chosen === null) {
-      return schema.filter((c) => c.default).map((c) => c.name);
+      return schema.filter((c) => c.defaultVisible).map((c) => c.name);
     }
     const known = new Set(schema.map((c) => c.name));
     return chosen.filter((c) => known.has(c));
