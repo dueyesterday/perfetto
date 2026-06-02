@@ -12,33 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {isoToEpochMs, parseSnapshotTraceFilter} from './query_history_storage';
-
-describe('parseSnapshotTraceFilter', () => {
-  test('parses a JSON-encoded Filter[] string into the in-app shape', () => {
-    const wire = '[{"field":"file_name","op":"=","value":"a.pftrace"}]';
-    expect(parseSnapshotTraceFilter(wire)).toEqual([
-      {field: 'file_name', op: '=', value: 'a.pftrace'},
-    ]);
-  });
-
-  test('returns [] for empty wire string', () => {
-    expect(parseSnapshotTraceFilter('')).toEqual([]);
-  });
-
-  test('returns [] for undefined input', () => {
-    expect(parseSnapshotTraceFilter(undefined)).toEqual([]);
-  });
-
-  test('returns [] for malformed JSON instead of throwing', () => {
-    expect(parseSnapshotTraceFilter('not-json')).toEqual([]);
-  });
-
-  test('returns [] when JSON parses but is not an array', () => {
-    expect(parseSnapshotTraceFilter('{"field":"x"}')).toEqual([]);
-    expect(parseSnapshotTraceFilter('null')).toEqual([]);
-  });
-});
+import {isoToEpochMs} from './query_history_storage';
 
 describe('isoToEpochMs', () => {
   test('parses a valid ISO-8601 timestamp', () => {

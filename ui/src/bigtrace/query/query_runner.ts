@@ -27,7 +27,6 @@ import {
 import {forwardAbort} from './abort_utils';
 import {
   isoToEpochMs,
-  parseSnapshotTraceFilter,
   type RawQueryExecution,
   snapshotSettingsToFilters,
 } from './query_history_storage';
@@ -245,7 +244,12 @@ export class QueryRunner {
     // to globals (the snapshot is authoritative for a historical
     // query).
     tab.querySettings = snapshotSettingsToFilters(details.settings);
-    tab.traceFilter = parseSnapshotTraceFilter(details.traceFilter);
+    // Snapshot ships the native `Filter[]` array under the
+    // strict-native body contract; defensive copy so the wire result
+    // stays read-only.
+    tab.traceFilter = Array.isArray(details.traceFilter)
+      ? [...details.traceFilter]
+      : [];
     tab.traceMetadataColumns = [...(details.traceMetadataColumns ?? [])];
     tab.traceOrderBy = details.traceOrderBy ?? '';
     this.cb.markDirty?.();

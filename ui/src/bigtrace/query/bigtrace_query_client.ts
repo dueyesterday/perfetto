@@ -307,12 +307,13 @@ export class BigtraceQueryClient {
         category: s.category,
       })),
     };
-    // Top-level structured field — JSON-encoded `Filter[]` STRING,
-    // byte-identical to `:fetch_results?filter=`. The backend rejects
-    // native arrays with 400 INVALID_ARGUMENT under the strict-string
-    // contract.
+    // Top-level structured field — native `Filter[]` JSON array
+    // under the strict-native body contract. The backend rejects
+    // JSON-encoded strings with 400. (`:fetch_results?filter=` still
+    // ships the encoded string in its URL — only body sites switched
+    // to native on the 2026-06-03 migration.)
     if (traceFilter && traceFilter.length > 0) {
-      body.trace_filter = JSON.stringify(traceFilter);
+      body.trace_filter = [...traceFilter];
     }
     // Trace-metadata columns to staple onto each result row. Omitted
     // when empty so the legacy `[trace_id, *sql_cols]` shape is

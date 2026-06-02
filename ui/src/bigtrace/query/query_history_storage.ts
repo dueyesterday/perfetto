@@ -50,30 +50,16 @@ export interface RawQueryExecution {
   // values when the row predates the feature (or the client didn't
   // opt in). `null` never appears on the wire.
   //
-  // `traceFilter` is the JSON-encoded `Filter[]` STRING the client
-  // shipped (byte-identical to `:fetch_results?filter=`). Parse with
-  // `parseSnapshotTraceFilter` before handing to UI state.
-  // `traceOrderBy` is the AIP-132 wire string controlling trace
-  // fan-out order — same grammar as `/traces?order_by=`. Empty
-  // string means the backend used its default.
+  // `traceFilter` is the native `Filter[]` array the client shipped
+  // (strict-native body contract; only the `:fetch_results?filter=`
+  // URL form still ships a JSON-encoded string). `traceOrderBy` is
+  // the AIP-132 wire string controlling trace fan-out order — same
+  // grammar as `/traces?order_by=`. Empty string means the backend
+  // used its default.
   readonly settings?: ReadonlyArray<SnapshotSettingEntry>;
-  readonly traceFilter?: string;
+  readonly traceFilter?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
   readonly traceOrderBy?: string;
-}
-
-// Parse the wire `traceFilter` string (JSON-encoded `Filter[]`) into
-// the in-app `Filter[]` shape. Tolerates absent / empty / malformed
-// input — snapshot rehydration is advisory; a broken value yields []
-// instead of derailing the Settings sub-tab.
-export function parseSnapshotTraceFilter(raw: string | undefined): Filter[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Filter[]) : [];
-  } catch {
-    return [];
-  }
 }
 
 // Wire entry inside `RawQueryExecution.settings`. Same shape as
