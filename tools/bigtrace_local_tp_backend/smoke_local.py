@@ -220,7 +220,7 @@ def main() -> int:
     # trace_filter is NOT a setting anymore — it was promoted to a
     # top-level structured field on /execute_* + a /traces body
     # field. Pin its removal so a future revert breaks here loudly.
-    assert 'trace_filter' not in ids, (
+    assert 'trace_filters' not in ids, (
         f'trace_filter must not be a setting; live wire field instead '
         f'(see /traces block below). Got: {ids}')
     assert 'trace_directory' in ids, (
@@ -1003,7 +1003,7 @@ def main() -> int:
             'settings':
                 with_traces(),
             # Strict-native-array wire (WIRE_SPEC §10.1, §12.1).
-            'trace_filter': [{
+            'trace_filters': [{
                 'field': 'file_name',
                 'op': '=',
                 'value': target_name,
@@ -1102,7 +1102,7 @@ def main() -> int:
                 'SELECT 1',
             'settings':
                 with_traces(),
-            'trace_filter': [{
+            'trace_filters': [{
                 'field': 'file_name',
                 'op': '=',
                 'value': 'definitely-no-match-anywhere.pftrace',
@@ -1432,7 +1432,7 @@ def main() -> int:
         body={
             'limit': 200,
             'offset': 0,
-            'filter': f_gt
+            'filters': f_gt
         },
     )
     gt_rows = gt.get('rows', [])
@@ -1455,7 +1455,7 @@ def main() -> int:
         body={
             'limit': 200,
             'offset': 0,
-            'filter': f_glob
+            'filters': f_glob
         },
     )
     glob_rows = glob_resp.get('rows', [])
@@ -1481,7 +1481,7 @@ def main() -> int:
         body={
             'limit': 200,
             'offset': 0,
-            'filter': f_and
+            'filters': f_and
         },
     )
     and_total = int(and_resp['totalFilteredRows'])
@@ -1491,7 +1491,7 @@ def main() -> int:
     bad_str_code, bad_str_body = http_status_and_body(
         'POST',
         f'/query_executions/{f_uuid}:fetch_results',
-        body={'filter': '[{"field":"name","op":"=","value":"x"}]'},
+        body={'filters': '[{"field":"name","op":"=","value":"x"}]'},
     )
     assert bad_str_code == 400, (
         f'string filter expected 400, got {bad_str_code}: {bad_str_body}')
@@ -1500,7 +1500,7 @@ def main() -> int:
     bad_col_code, bad_col_body = http_status_and_body(
         'POST',
         f'/query_executions/{f_uuid}:fetch_results',
-        body={'filter': f_unknown},
+        body={'filters': f_unknown},
     )
     assert bad_col_code == 400, (
         f'unknown filter column expected 400, got {bad_col_code}: '
@@ -1514,7 +1514,7 @@ def main() -> int:
     empty_code, empty_body = http_status_and_body(
         'POST',
         f'/query_executions/{f_uuid}:fetch_results',
-        body={'filter': f_empty_in},
+        body={'filters': f_empty_in},
     )
     assert empty_code == 400, (
         f'empty in[] expected 400, got {empty_code}: {empty_body}')
@@ -1567,7 +1567,7 @@ def main() -> int:
           body={
               'limit': 200,
               'offset': 0,
-              'filter': filter_list
+              'filters': filter_list
           },
       )
       total = int(resp['totalFilteredRows'])
@@ -1633,7 +1633,7 @@ def main() -> int:
                 'values': [traces_dir],
                 'category': 'TRACE_ADDRESS',
             }],
-            'filter': [{
+            'filters': [{
                 'field': 'file_name',
                 'op': '=',
                 'value': target_name_for_lt,
@@ -1714,7 +1714,7 @@ def main() -> int:
                 'values': [traces_dir],
                 'category': 'TRACE_ADDRESS',
             }],
-            'filter': [{
+            'filters': [{
                 'field': 'size_bytes',
                 'op': '>=',
                 'value': '0',  # string, server coerces to BIGINT
@@ -1736,7 +1736,7 @@ def main() -> int:
                     'values': [traces_dir],
                     'category': 'TRACE_ADDRESS',
                 }],
-                'filter': {
+                'filters': {
                     'not': 'an array'
                 },
             },
@@ -1750,7 +1750,7 @@ def main() -> int:
                     'values': [traces_dir],
                     'category': 'TRACE_ADDRESS',
                 }],
-                'filter': [{
+                'filters': [{
                     'field': 'no_such_col',
                     'op': '=',
                     'value': 'x',
@@ -1856,7 +1856,7 @@ def main() -> int:
             }],
             'columns': ['file_name', 'size_bytes'],
             'order_by': 'file_path asc',  # ASC on UNPROJECTED column
-            'filter': [{  # filter on UNPROJECTED column
+            'filters': [{  # filter on UNPROJECTED column
                 'field': 'mtime',
                 'op': 'is not null',
             }],
@@ -1925,7 +1925,7 @@ def main() -> int:
                 'SELECT 1',
             'settings':
                 with_traces(),
-            'trace_filter': [{
+            'trace_filters': [{
                 'field': 'file_name',
                 'op': '=',
                 'value': target_name_for_lt,
@@ -2034,7 +2034,7 @@ def main() -> int:
             'limit': 50,
             'offset': 0,
             'columns': ['name'],
-            'filter': [{
+            'filters': [{
                 'field': 'size_bytes',
                 'op': '>=',
                 'value': '0'
@@ -2114,7 +2114,7 @@ def main() -> int:
             'limit': 5,
             'perfetto_sql': 'SELECT name FROM slice LIMIT 1',
             'settings': with_traces(),
-            'trace_filter': snap_filter,
+            'trace_filters': snap_filter,
             'trace_metadata_columns': snap_meta_cols,
         },
     )
@@ -2127,7 +2127,7 @@ def main() -> int:
     )
     # 26a. Full GET carries all three snapshot fields.
     _, snap_full = http('GET', f'/query_executions/{snap_uuid}')
-    assert snap_full.get('traceFilter') == snap_filter, (
+    assert snap_full.get('traceFilters') == snap_filter, (
         f'traceFilter snapshot mismatch: got {snap_full.get("traceFilter")!r}, '
         f'expected {snap_filter!r}')
     assert snap_full.get('traceMetadataColumns') == snap_meta_cols, (
@@ -2147,7 +2147,7 @@ def main() -> int:
 
     # 26b. :status omits all three.
     _, snap_status = http('GET', f'/query_executions/{snap_uuid}:status')
-    for forbidden in ('settings', 'traceFilter', 'traceMetadataColumns',
+    for forbidden in ('settings', 'traceFilters', 'traceMetadataColumns',
                       'queryUuid', 'perfettoSql', 'limit'):
       assert forbidden not in snap_status, (
           f':status leaked {forbidden!r}: {snap_status}')
@@ -2162,7 +2162,7 @@ def main() -> int:
     for entry in snap_list.get('queryExecutions') or []:
       if entry.get('queryUuid') == snap_uuid:
         found = True
-        for forbidden in ('settings', 'traceFilter', 'traceMetadataColumns'):
+        for forbidden in ('settings', 'traceFilters', 'traceMetadataColumns'):
           assert forbidden not in entry, (
               f'list entry leaked {forbidden!r}: {entry}')
         break
@@ -2192,7 +2192,7 @@ def main() -> int:
         label='plain snapshot query terminal',
     )
     _, plain_full = http('GET', f'/query_executions/{plain_uuid}')
-    assert plain_full.get('traceFilter') == [], (
+    assert plain_full.get('traceFilters') == [], (
         f'traceFilter should default to [] '
         f'(empty native array): {plain_full.get("traceFilter")!r}')
     assert plain_full.get('traceMetadataColumns') == [], (
@@ -2214,7 +2214,7 @@ def main() -> int:
                 'SELECT 1',
             'settings':
                 with_traces(),
-            'trace_filter':
+            'trace_filters':
                 json.dumps([{
                     'field': 'file_name',
                     'op': '=',

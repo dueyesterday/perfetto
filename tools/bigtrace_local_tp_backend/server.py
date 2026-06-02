@@ -230,7 +230,7 @@ def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
 
     `tableLink` is derived on the fly from `tableName` (we don't
     persist it). The submit-time snapshot fields (`settings`,
-    `traceFilter`, `traceMetadataColumns`) appear only on the
+    `traceFilters`, `traceMetadataColumns`) appear only on the
     per-UUID full GET (`truncate=False`) — never on the list
     endpoint, which stays lean — and never on `:status`.
     """
@@ -262,7 +262,7 @@ def _qe_to_raw(snap: QESnapshot, truncate: bool = False) -> dict[str, Any]:
     d['settings'] = snap.settings
     # Storage holds the JSON-encoded `Filter[]` string; the wire ships
     # the native array (strict-native body contract, §10.1).
-    d['traceFilter'] = (
+    d['traceFilters'] = (
         json.loads(snap.trace_filter) if snap.trace_filter else [])
     d['traceMetadataColumns'] = snap.trace_metadata_columns
     d['traceOrderBy'] = snap.trace_order_by
@@ -433,7 +433,7 @@ def _resolve_traces_for(
   """Build the list of trace entries to fan out to.
 
     Pipeline: enumerate metadata for every recognized file in
-    `trace_directory`, apply the structured `trace_filter` (the
+    `trace_directory`, apply the structured `trace_filters` (the
     `Filter[]` JSON the BigTrace UI's Settings page collects from
     the trace grid), order by `trace_order_by`, then truncate to
     `trace_limit` if > 0.
@@ -451,9 +451,9 @@ def _resolve_traces_for(
     into the result row by the executor. Callers that only want the
     paths extract them with `[e['file_path'] for e in entries]`.
 
-    `trace_filter` is whatever came off the wire — expected to be a
+    `trace_filters` is whatever came off the wire — expected to be a
     JSON list-of-dicts; missing / None is treated as "no filter".
-    Same shape and parser as `:fetch_results` `filter` so the wire
+    Same shape and parser as `:fetch_results` `filters` so the wire
     contract is unified across read paths.
 
     Raises HTTPException(400) on a malformed filter / order_by or
@@ -561,11 +561,11 @@ def _normalize_trace_filter_for_storage(tf: Any) -> Optional[str]:
 
 
 def _parse_trace_filter_or_400(raw: Any,
-                               field_name: str = 'trace_filter') -> list:
+                               field_name: str = 'trace_filters') -> list:
   """Parse a JSON-body filter field to `list[ParsedFilter]`.
 
-    Shared by all three filter sites — `/execute_*` `trace_filter`,
-    `/traces` `filter`, and `:fetch_results` `filter` — every one of
+    Shared by all three filter sites — `/execute_*` `trace_filters`,
+    `/traces` `filters`, and `:fetch_results` `filters` — every one of
     them takes a native JSON `Filter[]` array under the strict-native
     body contract ([§10.1, §12.1] of WIRE_SPEC.md). One parser, one
     composer, one wire shape.
@@ -722,8 +722,8 @@ async def _parse_query_body(
     trace-filter active / hasn't opted into extra metadata columns /
     didn't sort the trace grid.
 
-    `trace_filter` is a top-level structured field (Filter[] JSON,
-    same shape as `:fetch_results` `filter`). Absence here means
+    `trace_filters` is a top-level structured field (Filter[] JSON,
+    same shape as `:fetch_results` `filters`). Absence here means
     "process every trace in the directory" subject to `trace_limit`.
 
     `trace_metadata_columns` is a top-level array of column names
@@ -742,7 +742,7 @@ async def _parse_query_body(
       body.get('perfetto_sql', ''),
       body.get('limit', 100),
       body.get('settings', []),
-      body.get('trace_filter'),
+      body.get('trace_filters'),
       body.get('trace_metadata_columns'),
       body.get('trace_order_by'),
   )
@@ -982,10 +982,10 @@ async def get_status(uuid: str) -> dict[str, Any]:
 async def fetch_results(uuid: str, request: Request) -> dict[str, Any]:
   """Paginated read over the per-query materialized table.
 
-    POST + body (not GET + query string) so `filter` can ride as a
+    POST + body (not GET + query string) so `filters` can ride as a
     native JSON array under the strict-native body contract shared
     by all three filter sites (this endpoint, `/execute_*`
-    `trace_filter`, and `/traces` `filter`). Migrated 2026-06-03.
+    `trace_filters`, and `/traces` `filters`). Migrated 2026-06-03.
 
     Request body:
         {
@@ -1006,7 +1006,7 @@ async def fetch_results(uuid: str, request: Request) -> dict[str, Any]:
       fetchable state: sync queries (`materialized=false`),
       `processed_rows == 0`, or `table_name is null` (FAILED,
       CANCELLED-with-zero-rows, TTL-swept).
-    - **400 INVALID_ARGUMENT** — `order_by` or `filter` is malformed
+    - **400 INVALID_ARGUMENT** — `order_by` or `filters` is malformed
       or references an unknown column (raised from the parsers).
       Same status code, different `detail` shape from the
       FAILED_PRECONDITION case.
@@ -1014,7 +1014,7 @@ async def fetch_results(uuid: str, request: Request) -> dict[str, Any]:
     `order_by` follows AIP-132 §Ordering: a comma-separated list of
     field names, each optionally followed by ` desc` (default `asc`).
 
-    `filter` is a native JSON `Filter[]` array. Empty / absent → no
+    `filters` is a native JSON `Filter[]` array. Empty / absent → no
     `WHERE`. Multi-entry arrays are AND'd. The wire shape mirrors
     the DataGrid's `model.ts:Filter`:
         [{"field": <col>, "op": <op>, "value": <string|list>}, ...]
@@ -1059,14 +1059,14 @@ async def fetch_results(uuid: str, request: Request) -> dict[str, Any]:
   limit = int(body.get('limit', 50))
   offset = int(body.get('offset', 0))
   order_by = body.get('order_by', '') or ''
-  raw_filter = body.get('filter')
+  raw_filter = body.get('filters')
   raw_columns = body.get('columns')
 
   # Validate the filter shape up front (rejects strings with 400
   # under the strict-native body contract). The parsed result is
   # ignored here — `fetch_paginated` re-parses from a JSON string
   # so the SQL-composition layer stays endpoint-agnostic.
-  _parse_trace_filter_or_400(raw_filter, field_name='filter')
+  _parse_trace_filter_or_400(raw_filter, field_name='filters')
   filter_str = json.dumps(raw_filter) if raw_filter else ''
 
   # `columns` body field: native JSON list of column names — a
@@ -1209,7 +1209,7 @@ async def traces(request: Request) -> dict[str, Any]:
     Powers the trace grid embedded in the BigTrace UI's Settings
     page. The grid drives filter/sort/page exactly as if it were
     paging a materialized query result, and the Settings page ships
-    the active filter to `/execute_*` as the top-level `trace_filter`
+    the active filter to `/execute_*` as the top-level `trace_filters`
     field — the user's "implicit selection" model (the filter
     chosen on the grid is the trace set the query runs over).
 
@@ -1229,7 +1229,7 @@ async def traces(request: Request) -> dict[str, Any]:
     /traces_schema flagged `defaultVisible: true`. Otherwise the
     response projects exactly the named columns in the given order.
 
-    `filter` / `order_by` may reference columns that aren't in the
+    `filters` / `order_by` may reference columns that aren't in the
     projection — they still apply (because the underlying scan sees
     every column), they just don't appear in the response.
 
@@ -1241,14 +1241,14 @@ async def traces(request: Request) -> dict[str, Any]:
     """
   body = await request.json()
   settings = body.get('settings', [])
-  raw_filter = body.get('filter')
+  raw_filter = body.get('filters')
   order_by = body.get('order_by', '') or ''
   limit = int(body.get('limit', 100))
   offset = int(body.get('offset', 0))
   projected = body.get('columns')
 
   traces_dir = _resolve_trace_dir(settings)
-  parsed_filter = _parse_trace_filter_or_400(raw_filter, field_name='filter')
+  parsed_filter = _parse_trace_filter_or_400(raw_filter, field_name='filters')
   try:
     parsed_order = parse_order_by(order_by)
   except ValueError as e:

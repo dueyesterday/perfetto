@@ -187,10 +187,10 @@ third-page slice of the new ordering), matching the in-tree
 want "top of new sort" semantics must explicitly request
 `offset=0`.
 
-### Filtering (`filter` on `:fetch_results`)
+### Filtering (`filters` on `:fetch_results`)
 
 `POST /query_executions/{uuid}:fetch_results` accepts an optional
-`filter` body field — a native JSON array describing predicates to
+`filters` body field — a native JSON array describing predicates to
 AND together (strict-native body contract; JSON-encoded strings get
 400). The wire shape mirrors the BigTrace UI's DataGrid
 `model.ts:Filter`, so the UI can ship `model.filters` through
@@ -281,9 +281,9 @@ rather than a 5xx.
 `:fetch_results` always returns `totalFilteredRows` alongside
 `columnNames` / `rows`:
 
-- No `filter` set → materialized table size (a
+- No `filters` set → materialized table size (a
   `SELECT COUNT(*) FROM <tbl>`).
-- `filter` set → post-filter count
+- `filters` set → post-filter count
   (`SELECT COUNT(*) FROM <tbl> WHERE …`).
 
 The UI uses it to size the DataGrid's virtual scrollbar over the
@@ -458,15 +458,15 @@ Same shapes as `bigtrace_ref_backend`. Read
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/execute_bigtrace_query_async` | Returns `{queryUuid: string}` (top-level). Spawns a background task that runs the SQL across every trace matching `trace_filter`; `tableName` is set immediately. Body accepts top-level `trace_filter: Filter[]` (**native JSON array** — JSON-encoded strings MUST be rejected with 400 under the strict-native body contract), `trace_metadata_columns: string[]` (catalog column names from `/traces_schema` to attach to every result row via the per-query metadata sidecar), and `trace_order_by: string` (AIP-132 string controlling the order traces are processed; matters under `trace_limit`). |
-| POST | `/execute_bigtrace_query` | Sync variant. Returns `{queryUuid, columnNames, rows}` — the assembled tabular result inline plus a server-assigned identifier. Logged to history with `materialized=false`. Same `trace_filter` + `trace_metadata_columns` + `trace_order_by` body fields as the async path (same strict-native contract on `trace_filter`); sync stitches metadata inline (no materialized table to JOIN against). |
+| POST | `/execute_bigtrace_query_async` | Returns `{queryUuid: string}` (top-level). Spawns a background task that runs the SQL across every trace matching `trace_filters`; `tableName` is set immediately. Body accepts top-level `trace_filters: Filter[]` (**native JSON array** — JSON-encoded strings MUST be rejected with 400 under the strict-native body contract), `trace_metadata_columns: string[]` (catalog column names from `/traces_schema` to attach to every result row via the per-query metadata sidecar), and `trace_order_by: string` (AIP-132 string controlling the order traces are processed; matters under `trace_limit`). |
+| POST | `/execute_bigtrace_query` | Sync variant. Returns `{queryUuid, columnNames, rows}` — the assembled tabular result inline plus a server-assigned identifier. Logged to history with `materialized=false`. Same `trace_filters` + `trace_metadata_columns` + `trace_order_by` body fields as the async path (same strict-native contract on `trace_filters`); sync stitches metadata inline (no materialized table to JOIN against). |
 | GET | `/query_executions/{uuid}:status` | **Strict progress-only**: exactly `{status, processedTraces, totalTraces, processedRows}` — four fields, no submit-time-immutable metadata. UI polls this every 3s; static metadata (and the per-query snapshot) lives on the full GET. `queryUuid` is the URL key, not echoed in the body. |
-| GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata, `tableName`, and the **submit-time snapshot** (`settings` / `traceFilter` / `traceMetadataColumns` / `traceOrderBy`) — see the "Per-query snapshot" section below. 404 if soft-deleted. |
-| POST | `/query_executions/{uuid}:fetch_results` | Paginated read of the materialized result. Body: `{limit, offset, order_by?, filter?, columns?}`. `order_by` is an [AIP-132](https://google.aip.dev/132#ordering) string. `filter` is a **native** JSON `Filter[]` array (strict-native body contract — JSON-encoded strings get 400; same wire shape as `/execute_*` `trace_filter` and `/traces` `filter`). `columns` is an array of column names — a field-mask over `result_table_cols ∪ metadata_sidecar_cols`; omitted means "every result column, no sidecar". The page SQL emits a LEFT JOIN to the sidecar iff the projection / filter / order_by references a sidecar column. Response: `{columnNames, rows, totalFilteredRows, availableColumnNames}` — `availableColumnNames` is the full union the client could project. Errors follow gRPC/AIP semantics: **404 NOT_FOUND** if missing/soft-deleted or the table is gone in DuckDB; **400 FAILED_PRECONDITION** if the entry exists but isn't fetchable (`materialized=false`, `processed_rows=0`, or `tableName=null` from FAILED/CANCELLED-with-zero/TTL-expired); **400 INVALID_ARGUMENT** on malformed or unknown-column `order_by` / `filter` / `columns`. See "Sorting" / "Filtering" above. |
+| GET | `/query_executions/{uuid}` | Full execution details. Read once at submit and again on terminal-state transition for the static metadata, `tableName`, and the **submit-time snapshot** (`settings` / `traceFilters` / `traceMetadataColumns` / `traceOrderBy`) — see the "Per-query snapshot" section below. 404 if soft-deleted. |
+| POST | `/query_executions/{uuid}:fetch_results` | Paginated read of the materialized result. Body: `{limit, offset, order_by?, filters?, columns?}`. `order_by` is an [AIP-132](https://google.aip.dev/132#ordering) string. `filters` is a **native** JSON `Filter[]` array (strict-native body contract — JSON-encoded strings get 400; same wire shape as `/execute_*` `trace_filters` and `/traces` `filters`). `columns` is an array of column names — a field-mask over `result_table_cols ∪ metadata_sidecar_cols`; omitted means "every result column, no sidecar". The page SQL emits a LEFT JOIN to the sidecar iff the projection / filter / order_by references a sidecar column. Response: `{columnNames, rows, totalFilteredRows, availableColumnNames}` — `availableColumnNames` is the full union the client could project. Errors follow gRPC/AIP semantics: **404 NOT_FOUND** if missing/soft-deleted or the table is gone in DuckDB; **400 FAILED_PRECONDITION** if the entry exists but isn't fetchable (`materialized=false`, `processed_rows=0`, or `tableName=null` from FAILED/CANCELLED-with-zero/TTL-expired); **400 INVALID_ARGUMENT** on malformed or unknown-column `order_by` / `filters` / `columns`. See "Sorting" / "Filtering" above. |
 | POST | `/query_executions/{uuid}:cancel` | Atomically transitions to CANCELLED under the DB lock. 200. No row lands after this returns. |
-| GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. **Omits** the per-query snapshot fields (`settings` / `traceFilter` / `traceMetadataColumns` / `traceOrderBy`) so the history sidebar response stays lean — fetch the per-uuid endpoint to inspect a historical query's snapshot. |
+| GET | `/query_executions` | Lists all non-soft-deleted executions, newest first. `perfettoSql` and `errorMessage` truncated to 200 chars; full text on the per-uuid endpoint. **Omits** the per-query snapshot fields (`settings` / `traceFilters` / `traceMetadataColumns` / `traceOrderBy`) so the history sidebar response stays lean — fetch the per-uuid endpoint to inspect a historical query's snapshot. |
 | DELETE | `/query_executions/{uuid}` | Soft-delete. 200 on terminal, 409 on IN_PROGRESS, 404 if already deleted/missing. |
-| POST | `/traces` | Paginated trace metadata for the trace source named in `settings`. Body: `{settings, filter?: Filter[], order_by?: string, limit, offset, columns?: string[]}`. `filter` is a **native JSON array** under the strict-native body contract (JSON-encoded strings MUST be rejected with 400); same inner grammar as `:fetch_results` `filter` / `/execute_*` `trace_filter`. Response: `{columnNames, rows, totalFilteredRows}` — same always-strings rows wire as `:fetch_results`, but **without** `availableColumnNames`: the column catalog lives on `/traces_schema` (see WIRE_SPEC §9.9). `filter` / `order_by` use the same parser as `:fetch_results`. `columns` is an optional field-mask; omitted means "every column the backend flags `defaultVisible: true` in `/traces_schema`". Powers the trace-selection grid on the BigTrace UI's Settings page. |
+| POST | `/traces` | Paginated trace metadata for the trace source named in `settings`. Body: `{settings, filters?: Filter[], order_by?: string, limit, offset, columns?: string[]}`. `filters` is a **native JSON array** under the strict-native body contract (JSON-encoded strings MUST be rejected with 400); same inner grammar as `:fetch_results` `filters` / `/execute_*` `trace_filters`. Response: `{columnNames, rows, totalFilteredRows}` — same always-strings rows wire as `:fetch_results`, but **without** `availableColumnNames`: the column catalog lives on `/traces_schema` (see WIRE_SPEC §9.9). `filters` / `order_by` use the same parser as `:fetch_results`. `columns` is an optional field-mask; omitted means "every column the backend flags `defaultVisible: true` in `/traces_schema`". Powers the trace-selection grid on the BigTrace UI's Settings page. |
 | POST | `/traces_schema` | Declares the columns `/traces` can return. Body: `{settings}` (a backend whose schema depends on the source can vary the response). Response: `{columns: [{name, type, defaultVisible: boolean, description?}]}`. Local TP returns the static four-column filesystem schema (`file_path`, `file_name`, `size_bytes`, `mtime`); a real BigTrace would extend with indexer-derived per-trace metadata. |
 | POST | `/bigtrace_execution_config` | Static settings schema (see `settings.py`). |
 | POST | `/trace_metadata_settings` | Empty (no indexer). UI hides the section. |
@@ -483,7 +483,7 @@ The `settings` array on `/execute_bigtrace_query{,_async}` is applied
 to the run (trace directory, trace limit) **and** persisted as part of
 the per-query snapshot — see "Per-query snapshot" below.
 
-### Per-query snapshot (`settings` / `traceFilter` / `traceMetadataColumns` / `traceOrderBy`)
+### Per-query snapshot (`settings` / `traceFilters` / `traceMetadataColumns` / `traceOrderBy`)
 
 Four optional top-level fields on `/execute_bigtrace_query[_async]`
 are persisted per execution and echoed back on the full per-uuid GET
@@ -493,7 +493,7 @@ per-tab Bigtrace Settings sub-tab on `/query`.
 | Field | Request body shape | Response shape (per-uuid GET) |
 |---|---|---|
 | `settings` | `Array<{setting_id, values, category}>` | `settings: Array<{setting_id, values, category}>` |
-| `trace_filter` | `Filter[]` (native JSON array; same inner grammar as `:fetch_results` `filter`) | `traceFilter: Filter[]` |
+| `trace_filters` | `Filter[]` (native JSON array; same inner grammar as `:fetch_results` `filters`) | `traceFilters: Filter[]` |
 | `trace_metadata_columns` | `string[]` (column names from `/traces_schema`) | `traceMetadataColumns: string[]` |
 | `trace_order_by` | `string` (AIP-132, same grammar as `/traces?order_by=`) | `traceOrderBy: string` |
 
@@ -504,18 +504,18 @@ Persistence rules:
   transitions (`mark_success` / `mark_failed` / `mark_cancelled`) do
   not modify the snapshot.
 - **Stored on `query_executions`** in four VARCHAR columns
-  (`settings`, `trace_metadata_columns`, and `trace_filter` as
+  (`settings`, `trace_metadata_columns`, and `trace_filters` as
   JSON-encoded strings; `trace_order_by` as the raw wire string —
   the only field that's natively a string on the wire). ALTER TABLE
   ADD COLUMN IF NOT EXISTS migrates older DBs on `_init_schema`.
 - **Empty semantics.** For list-typed fields (`settings`,
-  `trace_metadata_columns`, `trace_filter`), absent / `null` / `[]`
+  `trace_metadata_columns`, `trace_filters`), absent / `null` / `[]`
   on the wire all persist as SQL NULL and read back as `[]`. For
   string-typed fields (`trace_order_by`), absent / `null` / `""`
   persist as SQL NULL and read back as `""`. The full-GET response
   always carries `[]` / `""` rather than `null` so the UI never
   null-checks these fields.
-- **Strict-native-only `trace_filter`.** A JSON-encoded string
+- **Strict-native-only `trace_filters`.** A JSON-encoded string
   shipped in the body is rejected with 400 INVALID_ARGUMENT. Clients
   MUST send the array natively. The full-GET parses the stored
   JSON-string back to a native array on read so submit and echo
@@ -528,7 +528,7 @@ Persistence rules:
 
 The BigTrace UI Settings page embeds a paged DataGrid that calls
 `/traces` for trace metadata and `/traces_schema` for the column
-catalog. The grid's filter chips become the `trace_filter` field on
+catalog. The grid's filter chips become the `trace_filters` field on
 the next `/execute_*` call — the "implicit selection" model: the
 filter on the grid IS the trace set the query runs over.
 
@@ -752,18 +752,18 @@ verifies:
     `recover_stale_in_progress`, dropping its half-materialized
     table. Soft-skips if the query naturally raced to terminal
     before the crash point.
-21. Top-level `trace_filter` (native `Filter[]` array) narrows the
+21. Top-level `trace_filters` (native `Filter[]` array) narrows the
     trace list at submit time:
     `[{"field":"file_name","op":"=","value":"<one>"}]` over a
     2-trace fixture sets `totalTraces=1`.
-22. `:fetch_results` `filter` body field (native `Filter[]`) end-to-end:
+22. `:fetch_results` `filters` body field (native `Filter[]`) end-to-end:
     numeric `>`, `glob`, multi-filter AND each filter to the
     expected row count; `totalFilteredRows` reflects the post-filter
     count; bad JSON, unknown column, and empty `in []` each yield
     400 INVALID_ARGUMENT with the offending entry surfaced.
 23. `/traces` + `/traces_schema` end-to-end: schema response carries
     four columns flagged `defaultVisible: true`; happy-path pagination,
-    `filter` and `order_by` parameters match `:fetch_results`
+    `filters` and `order_by` parameters match `:fetch_results`
     semantics; `columns` projection narrows the response without
     losing filter/sort over unprojected columns; 9 bad-request
     cases (malformed JSON, unknown column on each axis, etc.) all
@@ -775,9 +775,9 @@ verifies:
     columns; unknown columns at submit AND at fetch each return
     400. The sync path stitches the same metadata inline (no
     sidecar — `:fetch_results` doesn't apply to sync).
-25. Submit-time snapshot round-trip: `settings` / `trace_filter` /
+25. Submit-time snapshot round-trip: `settings` / `trace_filters` /
     `trace_metadata_columns` shipped on `/execute_*` are echoed on
-    the per-uuid full GET as `settings` / `traceFilter` /
+    the per-uuid full GET as `settings` / `traceFilters` /
     `traceMetadataColumns`. `:status` omits all three (lean
     polling). `/query_executions` list also omits them (lean
     history sidebar). Absent / `null` / `[]` on submit all read
@@ -1138,8 +1138,8 @@ Production code:
   trace path. Thread-safe sync API.
 - `settings.py` — static settings schema (`trace_directory`,
   `trace_limit`, etc.) and the `trace_directory` extractor. The
-  legacy `trace_filter` regex setting was removed when the
-  top-level `trace_filter` body field on `/execute_*` replaced it
+  legacy `trace_filters` regex setting was removed when the
+  top-level `trace_filters` body field on `/execute_*` replaced it
   (now a native `Filter[]` JSON array under the strict-native body
   contract).
 

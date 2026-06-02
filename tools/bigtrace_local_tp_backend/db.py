@@ -73,14 +73,14 @@ class QESnapshot:
     server.py). All times are ISO-8601 strings (UTC) to match the wire
     protocol — the DuckDB columns are TIMESTAMP, converted on read.
 
-    `settings` / `trace_filter` / `trace_metadata_columns` /
+    `settings` / `trace_filters` / `trace_metadata_columns` /
     `trace_order_by` are the snapshot the query was submitted with —
     frozen at submit time and surfaced on the full
     `/query_executions/{uuid}` endpoint so the UI can answer "what
     did this query run with?" Default values: `[]` for the list-typed
     fields, `""` for the string-typed fields.
 
-    NOTE: `trace_filter` is the JSON-encoded STRING form used for
+    NOTE: `trace_filters` is the JSON-encoded STRING form used for
     DB storage. The wire shape (both submit and full-GET echo) is a
     native `Filter[]` array — `server.py` `json.dumps`/`json.loads`
     converts at the API boundary. Internal SQL composition re-parses
@@ -428,7 +428,7 @@ def query_trace_list(
     `Database.fetch_paginated` (which paginates over the materialized
     table for a query result). Reusing `parse_filter` / `compile_where`
     / `parse_order_by` means the `/traces` endpoint and the top-level
-    `trace_filter` on `/execute_*` see one parser implementation —
+    `trace_filters` on `/execute_*` see one parser implementation —
     no second copy to drift.
 
     Inputs:
@@ -649,7 +649,7 @@ class Database:
         validation runs, so even a query that's about to fail at
         submit time records what it was attempting:
          - `settings`: JSON-encoded list (this layer dumps).
-         - `trace_filter`: a JSON-encoded STRING form (produced by
+         - `trace_filters`: a JSON-encoded STRING form (produced by
            `_normalize_trace_filter_for_storage` in server.py from
            the wire's native array). Passed through verbatim at this
            layer.

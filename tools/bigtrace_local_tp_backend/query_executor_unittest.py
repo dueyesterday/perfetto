@@ -86,7 +86,7 @@ class EnumerateTracesTest(unittest.TestCase):
   """`enumerate_traces` walks a directory once, filters by extension
     whitelist (or no-extension), and emits one metadata dict per
     file. Filtering by regex/glob is no longer done here — it lives
-    on the wire as the structured `trace_filter` field handled by
+    on the wire as the structured `trace_filters` field handled by
     db.query_trace_list. Pin the schema, the inclusion rules, and
     the sort order."""
 

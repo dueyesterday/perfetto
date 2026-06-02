@@ -185,7 +185,7 @@ class SnapshotRoundTripTest(_DbCase):
     on /query — the UI rehydrates from `/query_executions/{uuid}` to
     show what each historical query ran with.
 
-    `trace_filter` is stored as a JSON-encoded string (the DB layer
+    `trace_filters` is stored as a JSON-encoded string (the DB layer
     only sees this storage form — `server.py` converts to/from the
     wire's native `Filter[]` array per the strict-native body
     contract, WIRE_SPEC.md §10.1, §12.1). Round-trips byte-for-byte

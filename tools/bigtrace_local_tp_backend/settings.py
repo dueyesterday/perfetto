@@ -15,7 +15,7 @@ The traces directory is supplied by the client on every request via the
 `trace_directory` setting (set in the BigTrace UI Settings page). The
 server has no startup-time fallback. `trace_limit` caps the number of
 traces processed per query (applied AFTER the top-level structured
-`trace_filter` field — see server._resolve_traces_for).
+`trace_filters` field — see server._resolve_traces_for).
 
 NOTE: `trace_directory` exposes an arbitrary filesystem path through an
 HTTP setting, which is UNSAFE in any multi-tenant deployment. This
@@ -43,7 +43,7 @@ EXECUTION_SETTINGS: list[dict[str, Any]] = [
     },
     {
         # Caps the number of trace files processed per query, applied AFTER
-        # the structured top-level `trace_filter` field narrows the
+        # the structured top-level `trace_filters` field narrows the
         # candidates. With 200 matching traces and trace_limit=20, only
         # the first 20 (alphabetical by file_path) are scheduled. 0
         # disables the cap.

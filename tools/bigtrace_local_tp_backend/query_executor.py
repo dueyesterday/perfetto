@@ -62,7 +62,7 @@ log = logging.getLogger('bigtrace_local.executor')
 _TRACE_EXTS: tuple[str, ...] = ('.perfetto-trace', '.pftrace', '.pb', '.trace')
 
 # Column schema for trace-metadata rows on the wire. Mirrors what
-# /list_traces returns and what the top-level `trace_filter` field on
+# /list_traces returns and what the top-level `trace_filters` field on
 # /execute_* can reference. Phase 1 is pure filesystem metadata — no
 # per-trace introspection. Order matters: dict-of-list construction in
 # db.query_trace_list relies on key order to build the Arrow table.

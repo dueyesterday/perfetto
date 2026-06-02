@@ -14,7 +14,7 @@ delegate to `_first_setting_value`. These tests pin:
   - default-value fallbacks when a setting is absent / empty;
   - type coercion edge cases for `trace_limit`.
 
-(`trace_filter` is no longer a setting — it lives as a top-level
+(`trace_filters` is no longer a setting — it lives as a top-level
 structured field on `/execute_*` and `/list_traces`. See
 server.py:_parse_trace_filter_or_400 + db.parse_filter.)
 
@@ -217,7 +217,7 @@ class ExecutionSettingsSchemaTest(unittest.TestCase):
     hardcodes it. Pin the structural invariants the UI depends on."""
 
   def test_includes_two_known_settings(self):
-    # `trace_filter` is deliberately absent — it was promoted to a
+    # `trace_filters` is deliberately absent — it was promoted to a
     # top-level structured field on /execute_* + /list_traces, not
     # a setting. The smoke + ResolveTracesForTest pin that path.
     ids = {s['id'] for s in EXECUTION_SETTINGS}

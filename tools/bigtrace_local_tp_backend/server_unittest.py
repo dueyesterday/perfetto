@@ -55,7 +55,7 @@ def _settings_with(trace_directory: str = '',
   """Build a settings list in the on-the-wire shape.
 
     Trace selection is no longer a setting — it lives as the
-    top-level `trace_filter` field on /execute_*. Callers that want
+    top-level `trace_filters` field on /execute_*. Callers that want
     to exercise the filter pass it directly to _resolve_traces_for.
     """
   out: list[dict] = []
@@ -285,7 +285,7 @@ class QeToStatusTest(unittest.TestCase):
             'materialized',
             'startTime',
             'settings',
-            'traceFilter',
+            'traceFilters',
             'traceMetadataColumns',
         ):
           self.assertNotIn(forbidden, out)
@@ -402,7 +402,7 @@ class QeToRawSnapshotTest(unittest.TestCase):
     # shape clients submit on every filter site (/execute_*
     # trace_filter, /traces filter, :fetch_results filter) under the
     # strict-native body contract.
-    self.assertEqual(out['traceFilter'], [{
+    self.assertEqual(out['traceFilters'], [{
         'field': 'file_name',
         'op': 'glob',
         'value': '*.pftrace'
@@ -413,7 +413,7 @@ class QeToRawSnapshotTest(unittest.TestCase):
     snap = self._snap_with_snapshot()
     out = _qe_to_raw(snap, truncate=True)
     self.assertNotIn('settings', out)
-    self.assertNotIn('traceFilter', out)
+    self.assertNotIn('traceFilters', out)
     self.assertNotIn('traceMetadataColumns', out)
 
   def test_full_get_emits_default_values_when_no_snapshot(self):
@@ -427,7 +427,7 @@ class QeToRawSnapshotTest(unittest.TestCase):
     snap = _make_snap()
     out = _qe_to_raw(snap, truncate=False)
     self.assertEqual(out['settings'], [])
-    self.assertEqual(out['traceFilter'], [])
+    self.assertEqual(out['traceFilters'], [])
     self.assertEqual(out['traceMetadataColumns'], [])
 
 
@@ -557,7 +557,7 @@ class ResolveTracesForTest(unittest.TestCase):
     structured trace_filter → trace_limit cap. Each component is
     individually tested elsewhere; this exercises the wiring.
 
-    `trace_filter` is the top-level structured field (Filter[] JSON),
+    `trace_filters` is the top-level structured field (Filter[] JSON),
     not a setting. Passed directly as the second positional arg so
     these tests pin the wire-level contract that `/execute_*` uses.
     """
