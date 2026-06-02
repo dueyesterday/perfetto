@@ -28,7 +28,7 @@ import type {QueryExecution} from './query_store';
 //   response).
 // - `/query_executions/{uuid}` (full GET) returns the full shape
 //   including the submit-time snapshot
-//   (`settings` / `traceFilter` / `traceMetadataColumns`).
+//   (`settings` / `traceFilters` / `traceMetadataColumns`).
 // - `/query_executions` (list) returns everything except the
 //   snapshot — the history sidebar stays lean.
 export interface RawQueryExecution {
@@ -50,14 +50,14 @@ export interface RawQueryExecution {
   // values when the row predates the feature (or the client didn't
   // opt in). `null` never appears on the wire.
   //
-  // `traceFilter` is the native `Filter[]` array the client shipped
+  // `traceFilters` is the native `Filter[]` array the client shipped
   // (strict-native body contract; only the `:fetch_results?filter=`
   // URL form still ships a JSON-encoded string). `traceOrderBy` is
   // the AIP-132 wire string controlling trace fan-out order — same
   // grammar as `/traces?order_by=`. Empty string means the backend
   // used its default.
   readonly settings?: ReadonlyArray<SnapshotSettingEntry>;
-  readonly traceFilter?: ReadonlyArray<Filter>;
+  readonly traceFilters?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
   readonly traceOrderBy?: string;
 }

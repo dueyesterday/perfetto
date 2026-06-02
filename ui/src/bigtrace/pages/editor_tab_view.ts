@@ -117,9 +117,9 @@ function buildTabBindings(
       tab.querySettings = next;
       tabsState.markDirty();
     },
-    getTraceFilter: () => tab.traceFilter,
-    setTraceFilter: (filters) => {
-      tab.traceFilter = [...filters];
+    getTraceFilters: () => tab.traceFilters,
+    setTraceFilters: (filters) => {
+      tab.traceFilters = [...filters];
       tabsState.markDirty();
     },
     getTraceMetadataColumns: () => tab.traceMetadataColumns,

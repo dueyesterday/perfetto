@@ -40,8 +40,8 @@ export interface SettingsBindings {
     values: readonly string[],
     category: string,
   ) => void;
-  readonly getTraceFilter: () => readonly Filter[];
-  readonly setTraceFilter: (filters: readonly Filter[]) => void;
+  readonly getTraceFilters: () => readonly Filter[];
+  readonly setTraceFilters: (filters: readonly Filter[]) => void;
   readonly getTraceMetadataColumns: () => readonly string[];
   readonly setTraceMetadataColumns: (cols: readonly string[]) => void;
   // Per-tab AIP-132 ordering string (e.g. "size_bytes desc"). Drives

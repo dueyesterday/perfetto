@@ -25,17 +25,17 @@ import {LocalStorage} from '../../core/local_storage';
 // `bigTraceSettingsStorage` and stash it in LocalStorage.
 //
 // `QueryRunner` reads this when building the execute request and ships
-// it as the top-level `traceFilter` field. The Settings page reads it
+// it as the top-level `traceFilters` field. The Settings page reads it
 // to seed the DataGrid in controlled mode and writes it back from
 // `onFiltersChanged`. The `BigtraceTraceListDataSource` doesn't touch
 // this module directly — it just receives the filter via the grid's
 // model — but its results reflect the same filter because the Settings
 // page wires both sides to the same Filter[].
 
-const STORAGE_KEY = 'bigtraceTraceFilter';
+const STORAGE_KEY = 'bigtraceTraceFilters';
 const FILTERS_FIELD = 'filters';
 
-class TraceFilterState {
+class TraceFilterssState {
   private readonly storage = new LocalStorage(STORAGE_KEY);
 
   // Returns [] when nothing is persisted, when the stored value is
@@ -57,4 +57,4 @@ class TraceFilterState {
   }
 }
 
-export const traceFilterState = new TraceFilterState();
+export const traceFiltersState = new TraceFilterssState();

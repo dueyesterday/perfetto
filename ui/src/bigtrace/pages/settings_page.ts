@@ -61,7 +61,7 @@ import {
   type TracesSchemaResponse,
 } from '../query/bigtrace_query_client';
 import {BigtraceTraceListDataSource} from '../query/bigtrace_trace_list_data_source';
-import {traceFilterState} from '../settings/trace_filter_state';
+import {traceFiltersState} from '../settings/trace_filter_state';
 import {traceOrderByState} from '../settings/trace_order_by_state';
 import {traceColumnsState} from '../settings/trace_columns_state';
 import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
@@ -177,7 +177,7 @@ type SchemaState = undefined | 'loading' | SchemaError | TracesSchemaResponse;
 
 export interface SettingsPageAttrs {
   // When provided, every read/write that would normally hit
-  // bigTraceSettingsStorage / traceFilterState / traceQueryColumnsState
+  // bigTraceSettingsStorage / traceFiltersState / traceQueryColumnsState
   // is routed through the bindings instead. The /settings route
   // mounts SettingsPage without bindings (global state); the Query
   // page's "Bigtrace Settings" sub-tab mounts with per-tab bindings.
@@ -222,7 +222,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   // sees the per-tab snapshot, not the global defaults.
   private traceListDataSource: BigtraceTraceListDataSource | undefined;
   private traceListEndpoint: string | undefined;
-  private traceFilters: readonly Filter[] = [];
+  private traceFilterss: readonly Filter[] = [];
   // Sort state for the trace grid. The DataGrid carries sort on the
   // `Column` object itself, so when we run in controlled-mode
   // `columns` we have to splice it back onto the matching column on
@@ -243,7 +243,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   private schemaEndpoint: string | undefined;
   oninit({attrs}: m.Vnode<SettingsPageAttrs>) {
     this.bindings = attrs.bindings;
-    this.traceFilters = this.readTraceFilter();
+    this.traceFilterss = this.readTraceFilters();
     const parsed = parseSingleFieldOrderBy(this.readTraceOrderBy());
     this.traceListSortField = parsed?.field;
     this.traceListSortDirection = parsed?.direction;
@@ -252,15 +252,15 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
 
   // ----- Binding-aware accessors (fall back to globals) -----
 
-  private readTraceFilter(): readonly Filter[] {
+  private readTraceFilters(): readonly Filter[] {
     return this.bindings
-      ? this.bindings.getTraceFilter()
-      : traceFilterState.get();
+      ? this.bindings.getTraceFilters()
+      : traceFiltersState.get();
   }
 
-  private writeTraceFilter(filters: readonly Filter[]): void {
-    if (this.bindings) this.bindings.setTraceFilter(filters);
-    else traceFilterState.set(filters);
+  private writeTraceFilters(filters: readonly Filter[]): void {
+    if (this.bindings) this.bindings.setTraceFilters(filters);
+    else traceFiltersState.set(filters);
   }
 
   private readTraceMetadataColumns(): readonly string[] {
@@ -564,13 +564,13 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
             canAddColumns: true,
             canRemoveColumns: true,
             // Controlled-mode filter: source of truth is the binding
-            // (per-tab snapshot) or `traceFilterState` (global on
+            // (per-tab snapshot) or `traceFiltersState` (global on
             // /settings). Persist immediately so a Run picks up the
             // latest selection without a separate "apply" step.
-            filters: this.traceFilters,
+            filters: this.traceFilterss,
             onFiltersChanged: (filters: readonly Filter[]) => {
-              this.traceFilters = filters;
-              this.writeTraceFilter(filters);
+              this.traceFilterss = filters;
+              this.writeTraceFilters(filters);
             },
             emptyStateMessage:
               'No traces match your filter (or Trace Directory is empty).',
@@ -630,7 +630,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     // re-fetching. No-op when the standalone /settings route is the
     // caller — that mount doesn't set onTraceMatchCount.
     this.bindings?.onTraceMatchCount?.(n);
-    const hasFilter = this.traceFilters.length > 0;
+    const hasFilter = this.traceFilterss.length > 0;
     const text =
       n === undefined
         ? 'Counting traces…'

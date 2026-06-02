@@ -33,7 +33,7 @@ function coerceScalar(v: unknown): unknown {
 // Returns a fresh `Filter[]` with every scalar value coerced to the
 // always-strings wire form. Used by the HTTP client to ship filters in
 // JSON request bodies (all three sites now native — `/execute_*`
-// `trace_filter`, `/traces` `filter`, `:fetch_results` `filter`).
+// `trace_filters`, `/traces` `filters`, `:fetch_results` `filters`).
 export function coerceFiltersForWire(filters: ReadonlyArray<Filter>): Filter[] {
   return filters.map((f) => {
     const out: Record<string, unknown> = {field: f.field, op: f.op};

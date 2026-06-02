@@ -20,7 +20,7 @@ import {shortUuid} from '../../base/uuid';
 import type {BigtraceQueryClient} from '../query/bigtrace_query_client';
 import {queryStore, type QueryExecution} from '../query/query_store';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
-import {traceFilterState} from '../settings/trace_filter_state';
+import {traceFiltersState} from '../settings/trace_filter_state';
 import {traceOrderByState} from '../settings/trace_order_by_state';
 import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
 import type {SettingFilter} from '../settings/settings_types';
@@ -95,7 +95,7 @@ export interface BigTraceEditorTab {
   // Read back from the backend on history-tab open via the new
   // `/query_executions/{uuid}` snapshot fields.
   querySettings: SettingFilter[];
-  traceFilter: Filter[];
+  traceFilters: Filter[];
   traceMetadataColumns: string[];
   // AIP-132 wire string (e.g. "size_bytes desc"). Seeded from the
   // global traceOrderByState at tab creation; the trace-grid sort on
@@ -131,7 +131,7 @@ interface StoredTab {
   readonly queryUuid?: string;
   readonly error?: string;
   readonly querySettings?: ReadonlyArray<SettingFilter>;
-  readonly traceFilter?: ReadonlyArray<Filter>;
+  readonly traceFilters?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
   readonly traceOrderBy?: string;
 }
@@ -207,11 +207,11 @@ export class QueryTabsState {
       : isFromHistory
         ? []
         : [...bigTraceSettingsStorage.buildSettingFilters()];
-    const traceFilter: Filter[] = isFromStorage
-      ? [...(stored?.traceFilter ?? [])]
+    const traceFilters: Filter[] = isFromStorage
+      ? [...(stored?.traceFilters ?? [])]
       : isFromHistory
         ? []
-        : [...traceFilterState.get()];
+        : [...traceFiltersState.get()];
     const traceMetadataColumns: string[] = isFromStorage
       ? [...(stored?.traceMetadataColumns ?? [])]
       : isFromHistory
@@ -231,7 +231,7 @@ export class QueryTabsState {
       isLoading: false,
       dataSource: undefined,
       querySettings,
-      traceFilter,
+      traceFilters,
       traceMetadataColumns,
       traceOrderBy,
       lifecycle: new AbortController(),
@@ -323,7 +323,7 @@ export class QueryTabsState {
         // Settings sub-tab survive reloads. Restored on the next
         // session via the `stored` arg on addNewTab.
         querySettings: t.querySettings,
-        traceFilter: t.traceFilter,
+        traceFilters: t.traceFilters,
         traceMetadataColumns: t.traceMetadataColumns,
         traceOrderBy: t.traceOrderBy,
       })),

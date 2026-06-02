@@ -173,7 +173,7 @@ describe('BigtraceQueryClient.fetchResults body construction', () => {
   // :fetch_results is POST + body since the strict-native filter migration
   // (2026-06-03). The URL is plain (no query string); the body carries
   // limit/offset/order_by?/filter?/columns?. Filter ships as a native
-  // array (matches /execute_* trace_filter + /traces filter contracts).
+  // array (matches /execute_* trace_filters + /traces filter contracts).
   const originalFetch = global.fetch;
   afterEach(() => {
     global.fetch = originalFetch;
@@ -232,9 +232,9 @@ describe('BigtraceQueryClient.fetchResults body construction', () => {
     ]);
     const body = bodyFrom(fetchMock);
     // Native array, NOT a JSON-encoded string.
-    expect(Array.isArray(body.filter)).toBe(true);
+    expect(Array.isArray(body.filters)).toBe(true);
     // bigint → string for lossless int64 round-trip across JS Number.
-    expect(body.filter).toEqual([
+    expect(body.filters).toEqual([
       {field: 'name', op: 'glob', value: 'ui::*'},
       {field: 'dur', op: '>', value: '9223372036854775807'},
     ]);
@@ -248,7 +248,7 @@ describe('BigtraceQueryClient.fetchResults body construction', () => {
     ]);
     const body = bodyFrom(fetchMock);
     expect(body.order_by).toBe('name desc');
-    expect(body.filter).toEqual([{field: 'kind', op: '=', value: 'sched'}]);
+    expect(body.filters).toEqual([{field: 'kind', op: '=', value: 'sched'}]);
   });
 
   test('columns is omitted from body when empty, included as array when set', async () => {
@@ -542,8 +542,8 @@ describe('BigtraceQueryClient.listTracesSchema body construction', () => {
   });
 });
 
-describe('BigtraceQueryClient executeSync/executeAsync trace_filter', () => {
-  // The top-level `trace_filter` field on /execute_* is a native
+describe('BigtraceQueryClient executeSync/executeAsync trace_filters', () => {
+  // The top-level `trace_filters` field on /execute_* is a native
   // `Filter[]` JSON array under the strict-native body contract.
   // The backend rejects JSON-encoded strings with 400. Absence on
   // the wire means "process every trace in the directory".
@@ -576,17 +576,17 @@ describe('BigtraceQueryClient executeSync/executeAsync trace_filter', () => {
     return JSON.parse(init.body as string);
   }
 
-  test('omits trace_filter when undefined or empty', async () => {
+  test('omits trace_filters when undefined or empty', async () => {
     const client = new BigtraceQueryClient('http://example/');
     let fetchMock = captureFetch();
     await client.executeSync('SELECT 1', 10, []);
-    expect(bodyFrom(fetchMock).trace_filter).toBeUndefined();
+    expect(bodyFrom(fetchMock).trace_filters).toBeUndefined();
     fetchMock = captureFetch();
     await client.executeAsync('SELECT 1', 10, [], undefined, []);
-    expect(bodyFrom(fetchMock).trace_filter).toBeUndefined();
+    expect(bodyFrom(fetchMock).trace_filters).toBeUndefined();
   });
 
-  test('ships trace_filter as a native JSON array at the wire boundary', async () => {
+  test('ships trace_filters as a native JSON array at the wire boundary', async () => {
     const fetchMock = captureFetch();
     const client = new BigtraceQueryClient('http://example/');
     await client.executeAsync('SELECT 1', 10, [], undefined, [
@@ -595,17 +595,17 @@ describe('BigtraceQueryClient executeSync/executeAsync trace_filter', () => {
     const body = bodyFrom(fetchMock);
     // Strict-native body contract: the wire value MUST be a native
     // array, not a JSON-encoded string. Backend rejects strings with 400.
-    expect(Array.isArray(body.trace_filter)).toBe(true);
-    expect(body.trace_filter).toEqual([
+    expect(Array.isArray(body.trace_filterss)).toBe(true);
+    expect(body.trace_filterss).toEqual([
       {field: 'file_name', op: '=', value: 'a.pftrace'},
     ]);
-    // The "is" here is intentional: trace_filter sits at the same level
+    // The "is" here is intentional: trace_filters sits at the same level
     // as `perfetto_sql` and `settings`, not nested inside settings.
     expect(body.perfetto_sql).toBe('SELECT 1');
     expect(body.settings).toEqual([]);
   });
 
-  test('sync and async share the trace_filter wire shape (native array)', async () => {
+  test('sync and async share the trace_filters wire shape (native array)', async () => {
     const filter = [{field: 'size_bytes', op: '>', value: '1024'}] as const;
     const client = new BigtraceQueryClient('http://example/');
     let fetchMock = captureFetch();
@@ -615,8 +615,8 @@ describe('BigtraceQueryClient executeSync/executeAsync trace_filter', () => {
     await client.executeAsync('SELECT 1', 10, [], undefined, filter);
     const asyncBody = bodyFrom(fetchMock);
     const expected = [{field: 'size_bytes', op: '>', value: '1024'}];
-    expect(syncBody.trace_filter).toEqual(expected);
-    expect(asyncBody.trace_filter).toEqual(expected);
+    expect(syncBody.trace_filters).toEqual(expected);
+    expect(asyncBody.trace_filters).toEqual(expected);
   });
 });
 

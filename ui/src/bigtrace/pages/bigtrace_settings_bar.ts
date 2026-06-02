@@ -172,13 +172,13 @@ function renderFilterChips(
   tabsState: QueryTabsState,
   bindings: SettingsBindings,
 ): m.Children {
-  return tab.traceFilter.map((filter, idx) =>
+  return tab.traceFilters.map((filter, idx) =>
     m(Chip, {
       label: formatFilterChipLabel(filter),
       removable: true,
       onRemove: () => {
-        const next = tab.traceFilter.filter((_, i) => i !== idx);
-        bindings.setTraceFilter(next);
+        const next = tab.traceFilters.filter((_, i) => i !== idx);
+        bindings.setTraceFilters(next);
         tabsState.markDirty();
         m.redraw();
       },
@@ -390,7 +390,7 @@ function openMetadataColumnsModal(bindings: SettingsBindings): void {
   });
 }
 
-// Focused modal for editing one trace_filter entry. Field is shown
+// Focused modal for editing one trace_filters entry. Field is shown
 // read-only (to swap fields, the user removes + re-adds the filter
 // via +Add). Op picker switches the value editor flavor: text input
 // for scalar comparisons / patterns, comma-separated text for in /
@@ -400,10 +400,10 @@ function openFilterChipModal(
   tab: BigTraceEditorTab,
   bindings: SettingsBindings,
 ): void {
-  const initial = tab.traceFilter[filterIndex];
+  const initial = tab.traceFilters[filterIndex];
   if (initial === undefined) return;
   // Draft state local to the modal. Committed on Save (writes through
-  // bindings.setTraceFilter). Cancel / Esc / close → discard.
+  // bindings.setTraceFilters). Cancel / Esc / close → discard.
   let op: FilterOpAndValue['op'] = initial.op;
   let valueStr = filterValueToEditString(initial);
   const field = initial.field;
@@ -467,9 +467,9 @@ function openFilterChipModal(
         action: () => {
           const built = buildFilterEntry(field, op, valueStr);
           if (built === undefined) return;
-          const next = [...tab.traceFilter];
+          const next = [...tab.traceFilters];
           next[filterIndex] = built;
-          bindings.setTraceFilter(next);
+          bindings.setTraceFilters(next);
           m.redraw();
           // Close the modal manually since `action` doesn't auto-close.
           closeModal();

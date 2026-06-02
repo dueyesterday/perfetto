@@ -87,7 +87,7 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal?: AbortSignal,
-    traceFilter?: ReadonlyArray<Filter>,
+    traceFilters?: ReadonlyArray<Filter>,
     traceMetadataColumns?: ReadonlyArray<string>,
     traceOrderBy?: string,
   ): Promise<QueryResultPage> {
@@ -97,7 +97,7 @@ export class BigtraceQueryClient {
       limit,
       settings,
       signal,
-      traceFilter,
+      traceFilters,
       traceMetadataColumns,
       traceOrderBy,
     );
@@ -108,7 +108,7 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal?: AbortSignal,
-    traceFilter?: ReadonlyArray<Filter>,
+    traceFilters?: ReadonlyArray<Filter>,
     traceMetadataColumns?: ReadonlyArray<string>,
     traceOrderBy?: string,
   ): Promise<QueryResultPage> {
@@ -118,7 +118,7 @@ export class BigtraceQueryClient {
       limit,
       settings,
       signal,
-      traceFilter,
+      traceFilters,
       traceMetadataColumns,
       traceOrderBy,
     );
@@ -128,7 +128,7 @@ export class BigtraceQueryClient {
   // paged metadata with the same always-strings wire shape. The
   // Settings page embeds a DataGrid driven by
   // `BigtraceTraceListDataSource`, whose filter state then ships back
-  // as `traceFilter` on the execute call — "filter on the grid is the
+  // as `traceFilters` on the execute call — "filter on the grid is the
   // trace set the query runs over".
   //
   // `columns` is an optional field-mask: when set, only those columns
@@ -162,7 +162,7 @@ export class BigtraceQueryClient {
       // Strict-native body contract: ship the array directly with
       // always-strings value coercion (bigints / numbers / booleans
       // → String()) so the wire stays uniform across body sites.
-      body.filter = coerceFiltersForWire(filter);
+      body.filters = coerceFiltersForWire(filter);
     }
     if (columns && columns.length > 0) {
       body.columns = [...columns];
@@ -228,7 +228,7 @@ export class BigtraceQueryClient {
   //
   // POST + body (not GET + query string) because the strict-native body
   // contract requires `filter` to be a native JSON array — same contract as
-  // `/execute_*` `trace_filter` and `/traces` `filter`. Migrated 2026-06-03.
+  // `/execute_*` `trace_filters` and `/traces` `filters`. Migrated 2026-06-03.
   async fetchResults(
     uuid: string,
     limit: number,
@@ -243,7 +243,7 @@ export class BigtraceQueryClient {
       body.order_by = orderBy;
     }
     if (filter && filter.length > 0) {
-      body.filter = coerceFiltersForWire(filter);
+      body.filters = coerceFiltersForWire(filter);
     }
     if (columns && columns.length > 0) {
       body.columns = [...columns];
@@ -303,7 +303,7 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal | undefined,
-    traceFilter?: ReadonlyArray<Filter>,
+    traceFilters?: ReadonlyArray<Filter>,
     traceMetadataColumns?: ReadonlyArray<string>,
     traceOrderBy?: string,
   ): Promise<QueryResultPage> {
@@ -320,8 +320,8 @@ export class BigtraceQueryClient {
     // under the strict-native body contract (all three filter sites
     // now share this wire shape after the 2026-06-03 migration).
     // The backend rejects JSON-encoded strings with 400.
-    if (traceFilter && traceFilter.length > 0) {
-      body.trace_filter = coerceFiltersForWire(traceFilter);
+    if (traceFilters && traceFilters.length > 0) {
+      body.trace_filters = coerceFiltersForWire(traceFilters);
     }
     // Trace-metadata columns to staple onto each result row. Omitted
     // when empty so the legacy `[trace_id, *sql_cols]` shape is

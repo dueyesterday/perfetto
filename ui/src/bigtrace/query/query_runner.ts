@@ -99,7 +99,7 @@ export class QueryRunner {
     // /settings page state) are read only at tab-creation time;
     // here we ship what the user staged on this tab's Settings
     // sub-tab.
-    const traceFilter = tab.traceFilter;
+    const traceFilters = tab.traceFilters;
     const traceMetadataColumns = tab.traceMetadataColumns;
     const traceOrderBy = tab.traceOrderBy;
 
@@ -119,7 +119,7 @@ export class QueryRunner {
           settings,
           requestController.signal,
           wallStartMs,
-          traceFilter,
+          traceFilters,
           traceMetadataColumns,
           traceOrderBy,
         );
@@ -131,7 +131,7 @@ export class QueryRunner {
           settings,
           requestController.signal,
           wallStartMs,
-          traceFilter,
+          traceFilters,
           traceMetadataColumns,
           traceOrderBy,
         );
@@ -247,8 +247,8 @@ export class QueryRunner {
     // Snapshot ships the native `Filter[]` array under the
     // strict-native body contract; defensive copy so the wire result
     // stays read-only.
-    tab.traceFilter = Array.isArray(details.traceFilter)
-      ? [...details.traceFilter]
+    tab.traceFilters = Array.isArray(details.traceFilters)
+      ? [...details.traceFilters]
       : [];
     tab.traceMetadataColumns = [...(details.traceMetadataColumns ?? [])];
     tab.traceOrderBy = details.traceOrderBy ?? '';
@@ -315,7 +315,7 @@ export class QueryRunner {
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal,
     wallStartMs: number,
-    traceFilter: ReadonlyArray<Filter>,
+    traceFilters: ReadonlyArray<Filter>,
     traceMetadataColumns: ReadonlyArray<string>,
     traceOrderBy: string,
   ): Promise<void> {
@@ -324,7 +324,7 @@ export class QueryRunner {
       tab.limit,
       settings,
       signal,
-      traceFilter,
+      traceFilters,
       traceMetadataColumns,
       traceOrderBy,
     );
@@ -368,7 +368,7 @@ export class QueryRunner {
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal,
     wallStartMs: number,
-    traceFilter: ReadonlyArray<Filter>,
+    traceFilters: ReadonlyArray<Filter>,
     traceMetadataColumns: ReadonlyArray<string>,
     traceOrderBy: string,
   ): Promise<void> {
@@ -377,7 +377,7 @@ export class QueryRunner {
       tab.limit,
       settings,
       signal,
-      traceFilter,
+      traceFilters,
       traceMetadataColumns,
       traceOrderBy,
     );
