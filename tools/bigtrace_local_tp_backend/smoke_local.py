@@ -274,8 +274,12 @@ def main() -> int:
     # entry exists, just isn't in a fetchable state — that's
     # FAILED_PRECONDITION (HTTP 400), not NOT_FOUND.
     sync_code, sync_body = http_status_and_body(
-        'GET',
-        f'/query_executions/{sync_uuid}:fetch_results?limit=10&offset=0',
+        'POST',
+        f'/query_executions/{sync_uuid}:fetch_results',
+        body={
+            'limit': 10,
+            'offset': 0
+        },
     )
     assert sync_code == 400, (
         f'sync :fetch_results expected 400 FAILED_PRECONDITION, '
@@ -419,7 +423,13 @@ def main() -> int:
     # Fetch results.
     print('[5] :fetch_results')
     _, page = http(
-        'GET', f'/query_executions/{async_uuid}:fetch_results?limit=5&offset=0')
+        'POST',
+        f'/query_executions/{async_uuid}:fetch_results',
+        body={
+            'limit': 5,
+            'offset': 0
+        },
+    )
     assert page.get('rows'), f'no rows in fetch_results: {page}'
     print(f'    columns={page["columnNames"]} rows={len(page["rows"])}')
     assert 'trace_id' in page['columnNames'], 'trace_id column missing'
@@ -463,9 +473,12 @@ def main() -> int:
           # trace done. Don't keep refetching — racing the
           # worker thread makes the row count nondeterministic.
           _, midpage = http(
-              'GET',
-              f'/query_executions/{stream_uuid}:fetch_results'
-              '?limit=10&offset=0',
+              'POST',
+              f'/query_executions/{stream_uuid}:fetch_results',
+              body={
+                  'limit': 10,
+                  'offset': 0
+              },
           )
           observed_inflight_rows = len(midpage.get('rows') or [])
       if sst_status in ('SUCCESS', 'FAILED', 'CANCELLED'):
@@ -519,8 +532,12 @@ def main() -> int:
     assert fst.get('tableName') is None, (
         f'FAILED query must have tableName=None, got {fst.get("tableName")}')
     fcode, fbody = http_status_and_body(
-        'GET',
-        f'/query_executions/{fail_uuid}:fetch_results?limit=10&offset=0',
+        'POST',
+        f'/query_executions/{fail_uuid}:fetch_results',
+        body={
+            'limit': 10,
+            'offset': 0
+        },
     )
     assert fcode == 400, (
         f'FAILED :fetch_results expected 400 FAILED_PRECONDITION, '
@@ -627,9 +644,12 @@ def main() -> int:
         assert pst.get('tableLink'), (
             'CANCELLED partials must set tableLink (materialized)')
         _, ppage = http(
-            'GET',
-            f'/query_executions/{partial_uuid}:fetch_results'
-            '?limit=10&offset=0',
+            'POST',
+            f'/query_executions/{partial_uuid}:fetch_results',
+            body={
+                'limit': 10,
+                'offset': 0
+            },
         )
         assert ppage.get('rows'), (
             'CANCELLED partials :fetch_results returned no rows')
@@ -685,14 +705,18 @@ def main() -> int:
         'queryExecutions',
         [])) == n_before - 1, ('soft-deleted row still visible in list')
     # Per-uuid endpoints all 404 after soft-delete.
-    for path in (
-        f'/query_executions/{fail_uuid}',
-        f'/query_executions/{fail_uuid}:status',
-        f'/query_executions/{fail_uuid}:fetch_results?limit=10&offset=0',
-    ):
-      sd_code, _ = http_status_and_body('GET', path)
+    soft_delete_probes = [
+        ('GET', f'/query_executions/{fail_uuid}', None),
+        ('GET', f'/query_executions/{fail_uuid}:status', None),
+        ('POST', f'/query_executions/{fail_uuid}:fetch_results', {
+            'limit': 10,
+            'offset': 0,
+        }),
+    ]
+    for sd_method, sd_path, sd_body in soft_delete_probes:
+      sd_code, _ = http_status_and_body(sd_method, sd_path, sd_body)
       assert sd_code == 404, (
-          f'expected 404 on {path} after soft-delete, got {sd_code}')
+          f'expected 404 on {sd_path} after soft-delete, got {sd_code}')
     # Re-DELETE same uuid → 404 (already gone).
     re_code = http_status('DELETE', f'/query_executions/{fail_uuid}')
     assert re_code == 404, f'expected 404 on re-DELETE, got {re_code}'
@@ -724,8 +748,12 @@ def main() -> int:
     )
     # Pre-TTL fetch must succeed.
     _, page_pre = http(
-        'GET',
-        f'/query_executions/{ttl_uuid}:fetch_results?limit=5&offset=0',
+        'POST',
+        f'/query_executions/{ttl_uuid}:fetch_results',
+        body={
+            'limit': 5,
+            'offset': 0
+        },
     )
     assert page_pre.get('rows'), (f'pre-TTL fetch returned no rows: {page_pre}')
     _, det_pre = http('GET', f'/query_executions/{ttl_uuid}')
@@ -737,8 +765,12 @@ def main() -> int:
     # FAILED_PRECONDITION ("no longer has a materialized table").
     # Status / metadata preserved on the row itself.
     ttl_code, ttl_body = http_status_and_body(
-        'GET',
-        f'/query_executions/{ttl_uuid}:fetch_results?limit=5&offset=0',
+        'POST',
+        f'/query_executions/{ttl_uuid}:fetch_results',
+        body={
+            'limit': 5,
+            'offset': 0
+        },
     )
     assert ttl_code == 400, (
         f'post-TTL fetch expected 400 FAILED_PRECONDITION, '
@@ -786,8 +818,12 @@ def main() -> int:
         '(per-trace cap leaked)')
     # Also verify via :fetch_results — same cap.
     _, gl_page = http(
-        'GET',
-        f'/query_executions/{gl_uuid}:fetch_results?limit=100&offset=0',
+        'POST',
+        f'/query_executions/{gl_uuid}:fetch_results',
+        body={
+            'limit': 100,
+            'offset': 0
+        },
     )
     assert len(gl_page.get('rows') or []) <= N, (
         f'fetch_results returned {len(gl_page.get("rows") or [])} rows; '
@@ -930,14 +966,17 @@ def main() -> int:
     print('[14] unknown UUID 404 across all per-uuid endpoints')
     UNKNOWN = '00000000-0000-0000-0000-000000000000'
     endpoints = [
-        ('GET', f'/query_executions/{UNKNOWN}'),
-        ('GET', f'/query_executions/{UNKNOWN}:status'),
-        ('GET', f'/query_executions/{UNKNOWN}:fetch_results?limit=10&offset=0'),
-        ('POST', f'/query_executions/{UNKNOWN}:cancel'),
-        ('DELETE', f'/query_executions/{UNKNOWN}'),
+        ('GET', f'/query_executions/{UNKNOWN}', None),
+        ('GET', f'/query_executions/{UNKNOWN}:status', None),
+        ('POST', f'/query_executions/{UNKNOWN}:fetch_results', {
+            'limit': 10,
+            'offset': 0,
+        }),
+        ('POST', f'/query_executions/{UNKNOWN}:cancel', None),
+        ('DELETE', f'/query_executions/{UNKNOWN}', None),
     ]
-    for method, path in endpoints:
-      uk_code, uk_body = http_status_and_body(method, path)
+    for method, path, body in endpoints:
+      uk_code, uk_body = http_status_and_body(method, path, body)
       assert uk_code == 404, (
           f'{method} {path} expected 404, got {uk_code}: {uk_body}')
     print(f'    all {len(endpoints)} endpoints 404 cleanly on unknown uuid')
@@ -1262,9 +1301,13 @@ def main() -> int:
     )
     # Ascending dur.
     _, asc = http(
-        'GET',
-        f'/query_executions/{ob_uuid}:fetch_results'
-        f'?limit=50&offset=0&order_by=dur%20asc',
+        'POST',
+        f'/query_executions/{ob_uuid}:fetch_results',
+        body={
+            'limit': 50,
+            'offset': 0,
+            'order_by': 'dur asc'
+        },
     )
     # Row values come over as strings (always-strings contract);
     # convert to ints for numeric ordering.
@@ -1277,9 +1320,13 @@ def main() -> int:
         f'order_by=dur asc rows not ascending: {asc_durs[:10]}…')
     # Descending dur.
     _, desc_resp = http(
-        'GET',
-        f'/query_executions/{ob_uuid}:fetch_results'
-        f'?limit=50&offset=0&order_by=dur%20desc',
+        'POST',
+        f'/query_executions/{ob_uuid}:fetch_results',
+        body={
+            'limit': 50,
+            'offset': 0,
+            'order_by': 'dur desc'
+        },
     )
     desc_durs = [
         int(r['values'][2])
@@ -1291,25 +1338,29 @@ def main() -> int:
             f'order_by=dur desc rows not descending: {desc_durs[:10]}…')
     # Multi-field ordering.
     _, multi = http(
-        'GET',
-        f'/query_executions/{ob_uuid}:fetch_results'
-        f'?limit=50&offset=0&order_by=name%20asc%2C%20dur%20desc',
+        'POST',
+        f'/query_executions/{ob_uuid}:fetch_results',
+        body={
+            'limit': 50,
+            'offset': 0,
+            'order_by': 'name asc, dur desc'
+        },
     )
     assert multi.get('rows'), (
         'multi-field order_by returned no rows; smoke is broken')
     # Bad direction → 400.
     bad_dir_code, bad_dir_body = http_status_and_body(
-        'GET',
-        f'/query_executions/{ob_uuid}:fetch_results'
-        f'?order_by=dur%20sideways',
+        'POST',
+        f'/query_executions/{ob_uuid}:fetch_results',
+        body={'order_by': 'dur sideways'},
     )
     assert bad_dir_code == 400, (
         f'bad direction expected 400, got {bad_dir_code}: {bad_dir_body}')
     # Unknown column → 400.
     bad_col_code, bad_col_body = http_status_and_body(
-        'GET',
-        f'/query_executions/{ob_uuid}:fetch_results'
-        f'?order_by=does_not_exist',
+        'POST',
+        f'/query_executions/{ob_uuid}:fetch_results',
+        body={'order_by': 'does_not_exist'},
     )
     assert bad_col_code == 400, (
         f'unknown column expected 400, got {bad_col_code}: {bad_col_body}')
@@ -1344,8 +1395,12 @@ def main() -> int:
     )
     # Baseline (no filter) so we know the materialized total.
     _, base = http(
-        'GET',
-        f'/query_executions/{f_uuid}:fetch_results?limit=200&offset=0',
+        'POST',
+        f'/query_executions/{f_uuid}:fetch_results',
+        body={
+            'limit': 200,
+            'offset': 0
+        },
     )
     assert 'totalFilteredRows' in base, (
         f'totalFilteredRows missing from no-filter response: {base}')
@@ -1370,11 +1425,15 @@ def main() -> int:
     threshold = durs[len(durs) // 2]
     # Numeric `>` filter; verify totalFilteredRows is consistent and
     # every returned row matches the predicate.
-    f_gt = json.dumps([{'field': 'dur', 'op': '>', 'value': threshold}])
+    f_gt = [{'field': 'dur', 'op': '>', 'value': threshold}]
     _, gt = http(
-        'GET',
-        f'/query_executions/{f_uuid}:fetch_results'
-        f'?limit=200&offset=0&filter={urllib.parse.quote(f_gt)}',
+        'POST',
+        f'/query_executions/{f_uuid}:fetch_results',
+        body={
+            'limit': 200,
+            'offset': 0,
+            'filter': f_gt
+        },
     )
     gt_rows = gt.get('rows', [])
     gt_total = int(gt['totalFilteredRows'])
@@ -1389,22 +1448,22 @@ def main() -> int:
                        None)
     assert sample_name, 'no non-null name in baseline; cannot test glob'
     prefix = sample_name[:1]  # first character
-    f_glob = json.dumps([{
-        'field': 'name',
-        'op': 'glob',
-        'value': f'{prefix}*'
-    }])
+    f_glob = [{'field': 'name', 'op': 'glob', 'value': f'{prefix}*'}]
     _, glob_resp = http(
-        'GET',
-        f'/query_executions/{f_uuid}:fetch_results'
-        f'?limit=200&offset=0&filter={urllib.parse.quote(f_glob)}',
+        'POST',
+        f'/query_executions/{f_uuid}:fetch_results',
+        body={
+            'limit': 200,
+            'offset': 0,
+            'filter': f_glob
+        },
     )
     glob_rows = glob_resp.get('rows', [])
     assert glob_rows, f'glob {prefix}* returned 0 rows; smoke is broken'
     assert all(r['values'][1] is not None and r['values'][1].startswith(prefix)
                for r in glob_rows), f'glob match violated: {glob_rows[:3]}'
     # Multi-filter AND: glob on name AND dur > threshold.
-    f_and = json.dumps([
+    f_and = [
         {
             'field': 'name',
             'op': 'glob',
@@ -1415,28 +1474,33 @@ def main() -> int:
             'op': '>',
             'value': threshold
         },
-    ])
+    ]
     _, and_resp = http(
-        'GET',
-        f'/query_executions/{f_uuid}:fetch_results'
-        f'?limit=200&offset=0&filter={urllib.parse.quote(f_and)}',
+        'POST',
+        f'/query_executions/{f_uuid}:fetch_results',
+        body={
+            'limit': 200,
+            'offset': 0,
+            'filter': f_and
+        },
     )
     and_total = int(and_resp['totalFilteredRows'])
     assert and_total <= gt_total, (
         f'AND ({and_total}) widened beyond > alone ({gt_total})')
-    # Bad JSON → 400.
-    bad_json_code, bad_json_body = http_status_and_body(
-        'GET',
-        f'/query_executions/{f_uuid}:fetch_results?filter=not-json',
+    # JSON-encoded string filter → 400 (strict-native body contract).
+    bad_str_code, bad_str_body = http_status_and_body(
+        'POST',
+        f'/query_executions/{f_uuid}:fetch_results',
+        body={'filter': '[{"field":"name","op":"=","value":"x"}]'},
     )
-    assert bad_json_code == 400, (
-        f'malformed filter expected 400, got {bad_json_code}: {bad_json_body}')
+    assert bad_str_code == 400, (
+        f'string filter expected 400, got {bad_str_code}: {bad_str_body}')
     # Unknown column → 400.
-    f_unknown = json.dumps([{'field': 'does_not_exist', 'op': '=', 'value': 1}])
+    f_unknown = [{'field': 'does_not_exist', 'op': '=', 'value': 1}]
     bad_col_code, bad_col_body = http_status_and_body(
-        'GET',
-        f'/query_executions/{f_uuid}:fetch_results'
-        f'?filter={urllib.parse.quote(f_unknown)}',
+        'POST',
+        f'/query_executions/{f_uuid}:fetch_results',
+        body={'filter': f_unknown},
     )
     assert bad_col_code == 400, (
         f'unknown filter column expected 400, got {bad_col_code}: '
@@ -1446,11 +1510,11 @@ def main() -> int:
         f'{bad_col_body}')
     # Empty `in` list → 400 (the widget shouldn't generate this; a
     # clear error catches client bugs).
-    f_empty_in = json.dumps([{'field': 'name', 'op': 'in', 'value': []}])
+    f_empty_in = [{'field': 'name', 'op': 'in', 'value': []}]
     empty_code, empty_body = http_status_and_body(
-        'GET',
-        f'/query_executions/{f_uuid}:fetch_results'
-        f'?filter={urllib.parse.quote(f_empty_in)}',
+        'POST',
+        f'/query_executions/{f_uuid}:fetch_results',
+        body={'filter': f_empty_in},
     )
     assert empty_code == 400, (
         f'empty in[] expected 400, got {empty_code}: {empty_body}')
@@ -1496,12 +1560,15 @@ def main() -> int:
             'op': 'is not null'
         }]),
     ]
-    for label, body in op_variants:
-      payload = urllib.parse.quote(json.dumps(body))
+    for label, filter_list in op_variants:
       _, resp = http(
-          'GET',
-          f'/query_executions/{f_uuid}:fetch_results'
-          f'?limit=200&offset=0&filter={payload}',
+          'POST',
+          f'/query_executions/{f_uuid}:fetch_results',
+          body={
+              'limit': 200,
+              'offset': 0,
+              'filter': filter_list
+          },
       )
       total = int(resp['totalFilteredRows'])
       assert 0 <= total <= base_total, (
@@ -1889,7 +1956,7 @@ def main() -> int:
     # sidecar cols); a JOIN is emitted only when the projection (or
     # filter/order_by) actually references a sidecar column.
     print(
-        '[25] async trace_metadata_columns -> sidecar + :fetch_results?columns='
+        '[25] async trace_metadata_columns -> sidecar + :fetch_results body.columns'
     )
     _, tmc_sub = http(
         'POST',
@@ -1912,11 +1979,15 @@ def main() -> int:
     assert tmc_det['status'] == 'SUCCESS', (
         f'trace_metadata_columns query failed: {tmc_det!r}')
 
-    # 25a. Default :fetch_results (no `columns=`) returns ONLY the
+    # 25a. Default :fetch_results (no `columns`) returns ONLY the
     # main-table columns — no metadata is stapled to result rows.
     _, tmc_page = http(
-        'GET',
-        f'/query_executions/{tmc_uuid}:fetch_results?limit=50&offset=0',
+        'POST',
+        f'/query_executions/{tmc_uuid}:fetch_results',
+        body={
+            'limit': 50,
+            'offset': 0
+        },
     )
     tmc_cols = tmc_page['columnNames']
     assert tmc_cols == [
@@ -1934,9 +2005,13 @@ def main() -> int:
     # 25b. Project a subset that mixes result + sidecar columns —
     # JOIN happens transparently, response carries the metadata.
     _, tmc_proj = http(
-        'GET',
-        (f'/query_executions/{tmc_uuid}:fetch_results'
-         f'?limit=50&offset=0&columns=trace_id,name,file_name,size_bytes'),
+        'POST',
+        f'/query_executions/{tmc_uuid}:fetch_results',
+        body={
+            'limit': 50,
+            'offset': 0,
+            'columns': ['trace_id', 'name', 'file_name', 'size_bytes'],
+        },
     )
     proj_cols = tmc_proj['columnNames']
     assert proj_cols == ['trace_id', 'name', 'file_name',
@@ -1953,11 +2028,18 @@ def main() -> int:
     # 25c. Filter on a sidecar column — JOIN must be emitted even
     # though the projection asks only for main-table columns.
     _, tmc_filt = http(
-        'GET',
-        (f'/query_executions/{tmc_uuid}:fetch_results'
-         f'?limit=50&offset=0&columns=name'
-         f'&filter={urllib.parse.quote(json.dumps([{"field":"size_bytes","op":">=","value":"0"}]))}'
-        ),
+        'POST',
+        f'/query_executions/{tmc_uuid}:fetch_results',
+        body={
+            'limit': 50,
+            'offset': 0,
+            'columns': ['name'],
+            'filter': [{
+                'field': 'size_bytes',
+                'op': '>=',
+                'value': '0'
+            }],
+        },
     )
     assert tmc_filt['columnNames'] == ['name'], tmc_filt['columnNames']
     print(f'    fetch filter on sidecar col: '
@@ -1965,9 +2047,13 @@ def main() -> int:
 
     # 25d. Unknown projected column → 400 INVALID_ARGUMENT.
     code_proj, body_proj = http_status_and_body(
-        'GET',
-        (f'/query_executions/{tmc_uuid}:fetch_results'
-         '?limit=10&offset=0&columns=no_such_col'),
+        'POST',
+        f'/query_executions/{tmc_uuid}:fetch_results',
+        body={
+            'limit': 10,
+            'offset': 0,
+            'columns': ['no_such_col']
+        },
     )
     assert code_proj == 400, (
         f'unknown projected column should 400, got {code_proj}: {body_proj}')
@@ -2015,10 +2101,10 @@ def main() -> int:
     # :status. Powers the per-tab Bigtrace Settings sub-tab on the
     # query page so each historical query is reproducible.
     print('[26] submit-time snapshot round-trip')
-    # Strict-native-array wire (WIRE_SPEC §10.1, §12.1, §15.1): the
-    # snapshot echoes the submit-time native array verbatim, not a
-    # JSON-encoded string. (`:fetch_results?filter=` still ships the
-    # encoded string in its URL — body sites are native.)
+    # Strict-native-array wire (WIRE_SPEC §10.1, §12.1, §15.1): all
+    # three filter sites — /execute_* trace_filter, /traces filter,
+    # and :fetch_results filter — ship native arrays in the body, and
+    # the snapshot echoes the submit-time native array verbatim.
     snap_filter = [{'field': 'file_name', 'op': 'glob', 'value': '*'}]
     snap_meta_cols = ['file_name']
     _, snap_sub = http(
@@ -2196,8 +2282,14 @@ def main() -> int:
           label=f'trace_order_by={trace_order_by!r} query terminal',
       )
       _, results = http(
-          'GET', f'/query_executions/{uuid_}:fetch_results?'
-          f'limit=10&offset=0&columns=trace_id,one,file_name')
+          'POST',
+          f'/query_executions/{uuid_}:fetch_results',
+          body={
+              'limit': 10,
+              'offset': 0,
+              'columns': ['trace_id', 'one', 'file_name'],
+          },
+      )
       assert len(results['rows']) == 1, (
           f'trace_limit=1 should pick exactly 1 row; got '
           f'{len(results["rows"])}')

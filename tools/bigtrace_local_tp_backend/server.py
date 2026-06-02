@@ -453,7 +453,7 @@ def _resolve_traces_for(
 
     `trace_filter` is whatever came off the wire — expected to be a
     JSON list-of-dicts; missing / None is treated as "no filter".
-    Same shape and parser as `:fetch_results?filter=` so the wire
+    Same shape and parser as `:fetch_results` `filter` so the wire
     contract is unified across read paths.
 
     Raises HTTPException(400) on a malformed filter / order_by or
@@ -564,12 +564,11 @@ def _parse_trace_filter_or_400(raw: Any,
                                field_name: str = 'trace_filter') -> list:
   """Parse a JSON-body filter field to `list[ParsedFilter]`.
 
-    Shared by `/execute_*` (`trace_filter`) and `/traces` (`filter`).
-    Strict-native-array contract ([§10.1, §12.1] of WIRE_SPEC.md):
-    the body field MUST be a native JSON `Filter[]` array. The URL
-    form `:fetch_results?filter=` still ships a JSON-encoded string
-    (URLs can't carry structured data), but the body sites are
-    native-only.
+    Shared by all three filter sites — `/execute_*` `trace_filter`,
+    `/traces` `filter`, and `:fetch_results` `filter` — every one of
+    them takes a native JSON `Filter[]` array under the strict-native
+    body contract ([§10.1, §12.1] of WIRE_SPEC.md). One parser, one
+    composer, one wire shape.
 
     Accepts: None / missing / empty list → no filter. Native list →
     parsed via `parse_filter`. Strings (including the empty string)
@@ -645,7 +644,7 @@ async def _run_async_query(
     paths = [e['file_path'] for e in entries]
     # Async path: do NOT stitch metadata into result rows. Instead,
     # write it once to a sidecar table keyed by trace_id. The
-    # `:fetch_results?columns=` projection picks columns from
+    # `:fetch_results` `columns` projection picks columns from
     # (result_table ∪ sidecar_table) and the page SQL JOINs the
     # sidecar when needed. This keeps the result table from
     # inflating with per-row metadata duplication — critical when
@@ -724,7 +723,7 @@ async def _parse_query_body(
     didn't sort the trace grid.
 
     `trace_filter` is a top-level structured field (Filter[] JSON,
-    same shape as `:fetch_results?filter=`). Absence here means
+    same shape as `:fetch_results` `filter`). Absence here means
     "process every trace in the directory" subject to `trace_limit`.
 
     `trace_metadata_columns` is a top-level array of column names
@@ -979,16 +978,23 @@ async def get_status(uuid: str) -> dict[str, Any]:
   return _qe_to_status(snap)
 
 
-@app.get('/query_executions/{uuid}:fetch_results')
-async def fetch_results(
-    uuid: str,
-    limit: int = 50,
-    offset: int = 0,
-    order_by: str = '',
-    filter: str = '',  # noqa: A002  (shadows builtin; FastAPI query name)
-    columns: str = '',
-) -> dict[str, Any]:
+@app.post('/query_executions/{uuid}:fetch_results')
+async def fetch_results(uuid: str, request: Request) -> dict[str, Any]:
   """Paginated read over the per-query materialized table.
+
+    POST + body (not GET + query string) so `filter` can ride as a
+    native JSON array under the strict-native body contract shared
+    by all three filter sites (this endpoint, `/execute_*`
+    `trace_filter`, and `/traces` `filter`). Migrated 2026-06-03.
+
+    Request body:
+        {
+          "limit": <int>,                  // page size; default 50
+          "offset": <int>,                  // page offset; default 0
+          "order_by": "<aip-132 string>",  // optional; default ""
+          "filter": [Filter, ...],          // optional; default []
+          "columns": ["<col>", ...]         // optional field-mask
+        }
 
     Status code mapping follows gRPC/AIP semantics so clients can
     branch on the kind of failure rather than parsing detail strings:
@@ -1008,9 +1014,9 @@ async def fetch_results(
     `order_by` follows AIP-132 §Ordering: a comma-separated list of
     field names, each optionally followed by ` desc` (default `asc`).
 
-    `filter` is a JSON-encoded `Filter[]` (URL-encoded). Empty /
-    absent → no `WHERE`. Multi-entry arrays are AND'd. The wire
-    shape mirrors the DataGrid's `model.ts:Filter`:
+    `filter` is a native JSON `Filter[]` array. Empty / absent → no
+    `WHERE`. Multi-entry arrays are AND'd. The wire shape mirrors
+    the DataGrid's `model.ts:Filter`:
         [{"field": <col>, "op": <op>, "value": <string|list>}, ...]
     Recognized ops: `=`, `!=`, `<`, `<=`, `>`, `>=`, `glob`,
     `not glob`, `in`, `not in`, `is null`, `is not null`. Values
@@ -1049,13 +1055,37 @@ async def fetch_results(
                 '(failed, cancelled with no rows, or TTL-expired)'),
     )
 
-  # `columns=` query param: comma-separated field-mask over the
-  # union of (result table cols ∪ sidecar metadata cols). Empty /
-  # absent means "every result column, no sidecar" — the
-  # back-compatible default. Set to project a subset; the page SQL
-  # then LEFT JOINs the sidecar iff any chosen column lives there.
-  projected = ([c.strip() for c in columns.split(',') if c.strip()]
-               if columns else None)
+  body = await request.json()
+  limit = int(body.get('limit', 50))
+  offset = int(body.get('offset', 0))
+  order_by = body.get('order_by', '') or ''
+  raw_filter = body.get('filter')
+  raw_columns = body.get('columns')
+
+  # Validate the filter shape up front (rejects strings with 400
+  # under the strict-native body contract). The parsed result is
+  # ignored here — `fetch_paginated` re-parses from a JSON string
+  # so the SQL-composition layer stays endpoint-agnostic.
+  _parse_trace_filter_or_400(raw_filter, field_name='filter')
+  filter_str = json.dumps(raw_filter) if raw_filter else ''
+
+  # `columns` body field: native JSON list of column names — a
+  # field-mask over the union of (result table cols ∪ sidecar
+  # metadata cols). Empty / absent means "every result column, no
+  # sidecar" — the back-compatible default.
+  if raw_columns is None:
+    projected = None
+  elif isinstance(raw_columns, list):
+    projected = [str(c) for c in raw_columns if c]
+    if not projected:
+      projected = None
+  else:
+    raise HTTPException(
+        status_code=400,
+        detail=(f'columns must be a JSON array of column names; '
+                f'got {type(raw_columns).__name__}'),
+    )
+
   try:
     # fetch_paginated returns (cols, rows, total_filtered,
     # available_column_names) under a single lock acquisition so all four
@@ -1065,7 +1095,7 @@ async def fetch_results(
         limit,
         offset,
         order_by,
-        filter_str=filter,
+        filter_str=filter_str,
         projected_columns=projected,
     )
   except ValueError as e:
@@ -1186,7 +1216,7 @@ async def traces(request: Request) -> dict[str, Any]:
     Request body:
       {
         "settings": [{"setting_id":"trace_directory","values":["..."],...}],
-        "filter":   [/* Filter[] — same JSON as :fetch_results?filter= */],
+        "filter":   [/* native Filter[] — same shape as :fetch_results filter */],
         "order_by": "<aip-132 string>",
         "limit":    N,
         "offset":   M,

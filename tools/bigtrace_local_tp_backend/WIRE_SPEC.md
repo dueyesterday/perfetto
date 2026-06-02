@@ -26,7 +26,7 @@
     - [9.2 POST /execute_bigtrace_query](#92-post-execute_bigtrace_query)
     - [9.3 GET /query_executions/{uuid}:status](#93-get-query_executionsuuidstatus)
     - [9.4 POST /query_executions/{uuid}:cancel](#94-post-query_executionsuuidcancel)
-    - [9.5 GET /query_executions/{uuid}:fetch_results](#95-get-query_executionsuuidfetch_results)
+    - [9.5 POST /query_executions/{uuid}:fetch_results](#95-post-query_executionsuuidfetch_results)
     - [9.6 GET /query_executions/{uuid}](#96-get-query_executionsuuid)
     - [9.7 GET /query_executions](#97-get-query_executions)
     - [9.8 DELETE /query_executions/{uuid}](#98-delete-query_executionsuuid)
@@ -75,9 +75,9 @@ The wire-level features below are NEW in `bt_ui_ref_backend_exp_bigtrace_setting
 | 4 | Top-level `trace_metadata_columns` on `/execute_*` | MUST | [§10.2](#102-trace_metadata_columns) |
 | 5 | Top-level `trace_order_by` on `/execute_*` | MUST | [§10.3](#103-trace_order_by) |
 | 6 | Per-query metadata sidecar (or equivalent) | MUST | [§11](#11-per-query-metadata-sidecar) |
-| 7 | `:fetch_results?columns=` field-mask | MUST | [§14](#14-columns-field-mask) |
+| 7 | `:fetch_results` `columns` body field-mask | MUST | [§14](#14-columns-field-mask) |
 | 8 | `availableColumnNames` in `:fetch_results` response | MUST | [§9.5](#95-get-query_executionsuuidfetch_results) |
-| 9 | `:fetch_results?filter=` JSON `Filter[]` | MUST | [§12](#12-filter-grammar) |
+| 9 | `:fetch_results` `filter` native JSON `Filter[]` body field | MUST | [§12](#12-filter-grammar) |
 | 10 | Per-query snapshot on full GET (4 fields) | MUST | [§15](#15-per-query-snapshot) |
 | 11 | Strict-4-field `:status` (no UUID echo, no snapshot) | MUST | [§9.3](#93-get-query_executionsuuidstatus) |
 | 12 | Snapshot omitted from list endpoint | MUST | [§9.7](#97-get-query_executions) |
@@ -611,19 +611,21 @@ GET /query_executions/7720667b-1646-4527-a055-f5feace8881e:status HTTP/1.1
 
 (No 409 or 400 for "already terminal" — that case is a silent 200.)
 
-### 9.5 GET /query_executions/{uuid}:fetch_results
+### 9.5 POST /query_executions/{uuid}:fetch_results
 
 **Purpose:** Paginated read of the materialized result table. The UI hits this once per terminal-state transition, then again on every page / sort / filter / column-projection change.
 
-**Query parameters:**
+**Request body (JSON):**
 
-| Param | Type | Required? | Default | Notes |
+| Field | Type | Required? | Default | Notes |
 |---|---|---|---|---|
-| `limit` | number | MUST | — | Page size |
+| `limit` | number | MUST | `50` | Page size |
 | `offset` | number | MUST | `0` | Page offset |
-| `order_by` | string (URL-encoded) | MAY | `""` | AIP-132 grammar, see [§13](#13-order_by-grammar-aip-132-§ordering-subset) |
-| `filter` | string (URL-encoded JSON) | MAY | `[]` | `Filter[]`, see [§12](#12-filter-grammar) |
-| `columns` | string (URL-encoded) | MAY | (all result-table columns) | Comma-separated field-mask, see [§14](#14-columns-field-mask) |
+| `order_by` | string | MAY | `""` | AIP-132 grammar, see [§13](#13-order_by-grammar-aip-132-§ordering-subset) |
+| `filter` | `Filter[]` (native JSON array) | MAY | `[]` | **Strict-native-only.** See [§12](#12-filter-grammar). JSON-encoded strings MUST be rejected with `400`. |
+| `columns` | `string[]` | MAY | (all result-table columns) | Native JSON array of column names; see [§14](#14-columns-field-mask). |
+
+**Why POST + body (not GET + query string):** so `filter` can ride as a native JSON array — same wire shape as `/execute_*` `trace_filter` and `/traces` `filter`. All three filter sites share one parser, one composer, one contract. Migrated 2026-06-03 (along with the body-native flip on the other two endpoints).
 
 **Response (200):**
 
@@ -664,11 +666,21 @@ GET /query_executions/7720667b-1646-4527-a055-f5feace8881e:status HTTP/1.1
 - `offset` MUST be a non-negative integer.
 - Pages past the end return zero rows and `totalFilteredRows` reflecting the full count.
 
-**Example:**
+**Example request:**
 
 ```http
-GET /query_executions/7720667b-...:fetch_results?limit=10&offset=0&order_by=dur%20desc&columns=trace_id%2Cname%2Cdur%2Cfile_name HTTP/1.1
+POST /query_executions/7720667b-...:fetch_results HTTP/1.1
+Content-Type: application/json
+
+{
+  "limit": 10,
+  "offset": 0,
+  "order_by": "dur desc",
+  "columns": ["trace_id", "name", "dur", "file_name"]
+}
 ```
+
+**Example response:**
 
 ```json
 {
@@ -785,8 +797,8 @@ Soft-deleted rows MUST be filtered out.
 | Field | Type | Required? | Default | Notes |
 |---|---|---|---|---|
 | `settings` | array | MUST | `[]` | Trace source config (e.g. `trace_directory`). Same shape as on `/execute_*`. |
-| `filter` | `Filter[]` (native JSON array) | MAY | `[]` | **Strict-native-only.** Same inner grammar as `:fetch_results?filter=` (see [§12](#12-filter-grammar)) but shipped as a native array in the body. JSON-encoded strings MUST be rejected with `400`. |
-| `order_by` | string | MAY | `""` | Same grammar as `:fetch_results?order_by=`. See [§13](#13-order_by-grammar-aip-132-§ordering-subset). |
+| `filter` | `Filter[]` (native JSON array) | MAY | `[]` | **Strict-native-only.** Same inner grammar as `:fetch_results` `filter` (see [§12](#12-filter-grammar)) but shipped as a native array in the body. JSON-encoded strings MUST be rejected with `400`. |
+| `order_by` | string | MAY | `""` | Same grammar as `:fetch_results` `order_by`. See [§13](#13-order_by-grammar-aip-132-§ordering-subset). |
 | `limit` | number | MUST | — | Page size. |
 | `offset` | number | MUST | `0` | Page offset. |
 | `columns` | string[] | MAY | (every `defaultVisible:true` column from `/traces_schema`) | Field-mask projection. See [§14](#14-columns-field-mask). |
@@ -992,7 +1004,7 @@ These three fields are NEW in this branch. Together with `trace_limit` (still a 
 
 A `Filter[]` the user composed on the trace-selection grid, **shipped as a native JSON array** in the request body. The backend MUST apply it to its `/traces` result set to decide which traces a query runs over.
 
-**Wire shape (strict-native-only):** The JSON-body field is a native JSON `Filter[]` array — NOT a JSON-encoded string. This was tightened from "either form accepted" so the wire stays structured end-to-end (no double-encoding) and matches `/traces` body `filter`. The URL form `:fetch_results?filter=` still ships the JSON-encoded string because URLs can't carry structured data. See [§12](#12-filter-grammar) for the inner grammar.
+**Wire shape (strict-native-only):** The JSON-body field is a native JSON `Filter[]` array — NOT a JSON-encoded string. All three filter sites share this contract after the 2026-06-03 migration: `/execute_*` `trace_filter`, `/traces` `filter`, and `:fetch_results` `filter`. The wire stays structured end-to-end (no double-encoding, one composer, one parser). See [§12](#12-filter-grammar) for the inner grammar.
 
 **Default behavior:** Absent / `null` / `[]` → "process every trace in the directory" subject to `trace_limit`.
 
@@ -1046,14 +1058,14 @@ Array of column names from `/traces_schema` the client wants attached to every q
 
 **Sync path:** Backend MUST stitch the metadata values inline into each result row (between `trace_id` and the SQL columns) — there's no materialized table to JOIN against.
 
-**Field-mask reachability:** Whatever the client opted into via `trace_metadata_columns` MUST be reachable via `:fetch_results?columns=`. The page SQL projects from the union (result-table cols ∪ sidecar cols); JOIN is emitted iff the projection / filter / order_by references a sidecar column.
+**Field-mask reachability:** Whatever the client opted into via `trace_metadata_columns` MUST be reachable via `:fetch_results` `columns`. The page SQL projects from the union (result-table cols ∪ sidecar cols); JOIN is emitted iff the projection / filter / order_by references a sidecar column.
 
 `availableColumnNames` in the response MUST advertise BOTH result-table and sidecar columns so the UI can offer a column-picker after the query has already run.
 
 **Examples:**
 
 ```json
-// Attach file_name to every result row, accessible via :fetch_results?columns=trace_id,name,dur,file_name
+// Attach file_name to every result row, accessible via :fetch_results body { columns: ["trace_id", "name", "dur", "file_name"] }
 "trace_metadata_columns": ["file_name"]
 
 // Attach multiple
@@ -1134,7 +1146,7 @@ Backend pipeline:
 4. Truncate to `trace_limit=3` — top 3 largest traces.
 5. Fan out across those 3 traces.
 
-`trace_metadata_columns=["file_name", "size_bytes"]` creates a sidecar table with 3 rows (one per processed trace). The user's SQL output rows can be paired with those metadata values at fetch time via `:fetch_results?columns=trace_id,...,file_name,size_bytes`.
+`trace_metadata_columns=["file_name", "size_bytes"]` creates a sidecar table with 3 rows (one per processed trace). The user's SQL output rows can be paired with those metadata values at fetch time via `:fetch_results` body `{columns: ["trace_id", ..., "file_name", "size_bytes"]}`.
 
 ---
 
@@ -1148,7 +1160,7 @@ Inlining metadata into every result row would scale storage with `N_rows × M_me
 
 Storing in a sidecar table keyed by the per-row identifier (one row per trace) scales with `N_traces × M_metadata_cols`. Bounded, small.
 
-The wire only REQUIRES that whatever was opted into via `trace_metadata_columns` is reachable via `:fetch_results?columns=`. Implementations are free to inline (sync path) or JOIN (async sidecar) as needed.
+The wire only REQUIRES that whatever was opted into via `trace_metadata_columns` is reachable via `:fetch_results` `columns`. Implementations are free to inline (sync path) or JOIN (async sidecar) as needed.
 
 ### 11.2 Sidecar lifecycle
 
@@ -1194,7 +1206,7 @@ Bulk insert paths (Arrow-based for DuckDB, prepared INSERT for SQLite, etc.) are
 
 ### 11.5 Fetch-time JOIN
 
-`:fetch_results?columns=...` emits SQL of this shape, conceptually:
+`:fetch_results` `columns` body field emits SQL of this shape, conceptually:
 
 ```sql
 SELECT <chosen cols>
@@ -1226,32 +1238,32 @@ For a real BigTrace backend: SHOULD be a stable permalink or hash of the trace c
 
 ## 12. Filter[] grammar
 
-Shared by:
-- `/execute_*` top-level `trace_filter` field — **strict-native-array** (body field)
-- `:fetch_results?filter=` query param — string (URL-encoded JSON)
-- `/traces` body field `filter` — **strict-native-array** (body field)
+Shared by all three filter sites — **all carry the same wire shape** as of 2026-06-03:
+- `/execute_*` top-level `trace_filter` field — strict-native body field
+- `:fetch_results` `filter` body field — strict-native body field (POST + JSON body since the migration)
+- `/traces` body field `filter` — strict-native body field
 
 ### 12.1 Wire format
 
-The **inner grammar** is the same across endpoints — a JSON array of `Filter` entries. The **outer envelope** differs by endpoint: body sites carry the array natively, the URL site carries the JSON-encoded string (URLs can't ship structured data):
+The wire shape is uniform: a native JSON array of `Filter` entries in the request body. No outer envelope variation — every filter site uses the same composer and the same parser:
 
-| Endpoint | Outer envelope | Notes |
+| Endpoint | Wire shape | Notes |
 |---|---|---|
-| `:fetch_results?filter=` | URL-encoded JSON string (query param) | Standard URL encoding. |
-| `/execute_*` `trace_filter` | Native JSON array (body field) | **Strings MUST be rejected with 400.** [§10.1](#101-trace_filter). |
-| `/traces` `filter` | Native JSON array (body field) | **Strings MUST be rejected with 400.** [§9.9](#99-post-traces). |
+| `:fetch_results` `filter` (body) | Native JSON array | **Strings MUST be rejected with 400.** [§9.5](#95-post-query_executionsuuidfetch_results). |
+| `/execute_*` `trace_filter` (body) | Native JSON array | **Strings MUST be rejected with 400.** [§10.1](#101-trace_filter). |
+| `/traces` `filter` (body) | Native JSON array | **Strings MUST be rejected with 400.** [§9.9](#99-post-traces). |
 
 Empty / absent / `null` / empty list → no `WHERE` clause emitted. Entries within the inner array are AND-joined.
 
 ```json
-// Inner grammar (the array, which is the body-field value verbatim)
+// Wire shape — the array is the body-field value verbatim.
 [
   {"field": "<col>", "op": "=",       "value": "<string>"},
   {"field": "<col>", "op": "in",      "value": ["<string>", ...]},
   {"field": "<col>", "op": "is null"}
 ]
 
-// Shipped to /execute_* as trace_filter (native body field)
+// Shipped to /execute_* as trace_filter (or `:fetch_results` / `/traces` as filter)
 "trace_filter": [{"field": "<col>", "op": "=", "value": "<string>"}]
 ```
 
@@ -1393,7 +1405,7 @@ The `detail` string SHOULD name the offending entry / field for client display.
 
 Shared by:
 - `/execute_*` top-level `trace_order_by` field
-- `:fetch_results?order_by=` query param
+- `:fetch_results` `order_by` query param
 - `/traces?order_by=` body field
 
 ### 13.1 Grammar
@@ -1444,7 +1456,7 @@ Backends MAY rely on the underlying engine's default stability behavior — the 
 ## 14. `columns` field-mask
 
 Shared by:
-- `:fetch_results?columns=` query param
+- `:fetch_results` `columns` query param
 - `/traces` body field `columns`
 
 ### 14.1 Wire format
@@ -1618,10 +1630,10 @@ The smoke covers 26 blocks (1, 2, …, 11, 11a, 12, …, 26). The full list is i
 | Block | Tests |
 |---|---|
 | [16] | Top-level `trace_filter` narrows the trace set (`totalTraces` reflects the filter). |
-| [22] | `:fetch_results?order_by=` ASC/DESC/multi-field; bad direction + unknown column → 400. |
-| [23] | `:fetch_results?filter=` end-to-end; every op variant; 3 bad-input paths. |
+| [22] | `:fetch_results` `order_by` ASC/DESC/multi-field; bad direction + unknown column → 400. |
+| [23] | `:fetch_results` `filter` end-to-end; every op variant; 3 bad-input paths. |
 | [24] | `/traces` + `/traces_schema` end-to-end; happy path, filter, order_by, columns, 9 bad-request cases; schema invariants. |
-| [25] | Async `trace_metadata_columns` → sidecar + `:fetch_results?columns=` JOIN transparency; sync inline-stitch; unknown columns 400. |
+| [25] | Async `trace_metadata_columns` → sidecar + `:fetch_results` `columns` JOIN transparency; sync inline-stitch; unknown columns 400. |
 | [26] | Submit-time snapshot round-trip; lean `:status` + lean list. |
 | [27] | Top-level `trace_order_by` re-orders the fan-out; snapshot echoes verbatim; malformed → 400. |
 

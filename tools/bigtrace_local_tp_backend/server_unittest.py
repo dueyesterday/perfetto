@@ -399,9 +399,9 @@ class QeToRawSnapshotTest(unittest.TestCase):
         'category': 'TRACE_ADDRESS',
     }])
     # traceFilter is emitted as the native `Filter[]` array — same
-    # shape clients submit on /execute_* / /traces body. The URL
-    # form `:fetch_results?filter=` still ships the JSON-encoded
-    # string in its query parameter (only body sites are native).
+    # shape clients submit on every filter site (/execute_*
+    # trace_filter, /traces filter, :fetch_results filter) under the
+    # strict-native body contract.
     self.assertEqual(out['traceFilter'], [{
         'field': 'file_name',
         'op': 'glob',
@@ -631,7 +631,7 @@ class ResolveTracesForTest(unittest.TestCase):
 
   def test_malformed_trace_filter_raises_400(self):
     # Anything that isn't a list (or None) is 400, matching the
-    # `:fetch_results?filter=` contract on the read path.
+    # shared filter-body contract on every site.
     with self.assertRaises(HTTPException) as ctx:
       _resolve_traces_for(_settings_with(self._tmp), {'not': 'an array'})
     self.assertEqual(ctx.exception.status_code, 400)
@@ -701,7 +701,7 @@ class ResolveTracesForTest(unittest.TestCase):
     self.assertEqual(out_default, out_empty)
 
   def test_trace_order_by_malformed_raises_400(self):
-    # Same error contract as `:fetch_results?order_by=` — a
+    # Same error contract as `:fetch_results` `order_by` — a
     # malformed AIP-132 string yields 400 INVALID_ARGUMENT with the
     # offending token surfaced in `detail`.
     with self.assertRaises(HTTPException) as ctx:
