@@ -15,7 +15,7 @@
 import type {Row as DataGridRow} from '../../trace_processor/query_result';
 import type {Filter} from '../../components/widgets/datagrid/model';
 import type {SettingFilter} from '../settings/settings_types';
-import {encodeFilters} from './filter_encoding';
+import {coerceFiltersForWire} from './filter_encoding';
 import type {RawQueryExecution} from './query_history_storage';
 
 // Tabular wire shape. Values are always strings, 'null' denotes SQL NULL.
@@ -159,10 +159,10 @@ export class BigtraceQueryClient {
       body.order_by = orderBy;
     }
     if (filter && filter.length > 0) {
-      // Structured array, not an encoded string — the server JSON-
-      // decodes the body directly. `encodeFilters` only matters for
-      // the URL-encoded `:fetch_results?filter=` path.
-      body.filter = filter;
+      // Strict-native body contract: ship the array directly with
+      // always-strings value coercion (bigints / numbers / booleans
+      // → String()) so the wire stays uniform across body sites.
+      body.filter = coerceFiltersForWire(filter);
     }
     if (columns && columns.length > 0) {
       body.columns = [...columns];
@@ -220,11 +220,15 @@ export class BigtraceQueryClient {
   }
 
   // Page the materialized table; `limit`/`offset` apply after orderBy/filter.
-  // `orderBy` is AIP-132; `filter` is the DataGrid `Filter[]` shape encoded
-  // via `encodeFilters`. Mid-flight calls return whatever rows have merged.
-  // `columns` is an optional field-mask over the union of
+  // `orderBy` is AIP-132; `filter` is the DataGrid `Filter[]` shape shipped
+  // natively in the POST body. Mid-flight calls return whatever rows have
+  // merged. `columns` is an optional field-mask over the union of
   // (result-table cols ∪ sidecar metadata cols) — set to project a
   // subset; omitted means "every result-table column, no sidecar JOIN".
+  //
+  // POST + body (not GET + query string) because the strict-native body
+  // contract requires `filter` to be a native JSON array — same contract as
+  // `/execute_*` `trace_filter` and `/traces` `filter`. Migrated 2026-06-03.
   async fetchResults(
     uuid: string,
     limit: number,
@@ -234,20 +238,25 @@ export class BigtraceQueryClient {
     filter?: ReadonlyArray<Filter>,
     columns?: ReadonlyArray<string>,
   ): Promise<QueryResultPage> {
-    let path = `/query_executions/${uuid}:fetch_results?limit=${limit}&offset=${offset}`;
+    const body: Record<string, unknown> = {limit, offset};
     if (orderBy && orderBy.length > 0) {
-      path += `&order_by=${encodeURIComponent(orderBy)}`;
+      body.order_by = orderBy;
     }
     if (filter && filter.length > 0) {
-      path += `&filter=${encodeURIComponent(encodeFilters(filter))}`;
+      body.filter = coerceFiltersForWire(filter);
     }
     if (columns && columns.length > 0) {
-      // Comma-separated bare names — every entry is a column
-      // identifier (validated server-side). URL-encode in case a
-      // quoted identifier contains a comma.
-      path += `&columns=${encodeURIComponent(columns.join(','))}`;
+      body.columns = [...columns];
     }
-    const result = await this.requestJson<QueryResponsePayload>(path, {signal});
+    const result = await this.requestJson<QueryResponsePayload>(
+      `/query_executions/${uuid}:fetch_results`,
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+        signal,
+      },
+    );
     // `availableColumnNames` is `:fetch_results`-only by spec (WIRE_SPEC §9.9
     // / §14.6): `/traces` mustn't echo a column catalog because
     // `/traces_schema` is the source of truth, so the parser stays
@@ -308,12 +317,11 @@ export class BigtraceQueryClient {
       })),
     };
     // Top-level structured field — native `Filter[]` JSON array
-    // under the strict-native body contract. The backend rejects
-    // JSON-encoded strings with 400. (`:fetch_results?filter=` still
-    // ships the encoded string in its URL — only body sites switched
-    // to native on the 2026-06-03 migration.)
+    // under the strict-native body contract (all three filter sites
+    // now share this wire shape after the 2026-06-03 migration).
+    // The backend rejects JSON-encoded strings with 400.
     if (traceFilter && traceFilter.length > 0) {
-      body.trace_filter = [...traceFilter];
+      body.trace_filter = coerceFiltersForWire(traceFilter);
     }
     // Trace-metadata columns to staple onto each result row. Omitted
     // when empty so the legacy `[trace_id, *sql_cols]` shape is

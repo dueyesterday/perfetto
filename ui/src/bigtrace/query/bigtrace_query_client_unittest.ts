@@ -169,8 +169,11 @@ describe('encodeFilters', () => {
   });
 });
 
-describe('BigtraceQueryClient.fetchResults URL construction', () => {
-  // Asserts the URL only; response handling is in parseQueryResponse tests.
+describe('BigtraceQueryClient.fetchResults body construction', () => {
+  // :fetch_results is POST + body since the strict-native filter migration
+  // (2026-06-03). The URL is plain (no query string); the body carries
+  // limit/offset/order_by?/filter?/columns?. Filter ships as a native
+  // array (matches /execute_* trace_filter + /traces filter contracts).
   const originalFetch = global.fetch;
   afterEach(() => {
     global.fetch = originalFetch;
@@ -188,53 +191,72 @@ describe('BigtraceQueryClient.fetchResults URL construction', () => {
     return fn;
   }
 
-  test('omits filter param when none / empty array passed', async () => {
+  function bodyFrom(
+    fetchMock: ReturnType<typeof vi.fn>,
+  ): Record<string, unknown> {
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    return JSON.parse(init.body as string);
+  }
+
+  test('hits :fetch_results with POST and a plain URL', async () => {
     const fetchMock = captureFetch();
     const client = new BigtraceQueryClient('http://example/');
     await client.fetchResults('uid', 50, 0);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
     const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
-    expect(url).not.toContain('filter=');
-
-    fetchMock.mockClear();
-    await client.fetchResults('uid', 50, 0, undefined, undefined, []);
-    const url2 = (fetchMock.mock.calls[0] as unknown[])[0] as string;
-    expect(url2).not.toContain('filter=');
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect(url).toBe('http://example//query_executions/uid:fetch_results');
+    expect(init.method).toBe('POST');
+    // limit / offset always ride in the body, never the URL.
+    expect(url).not.toContain('?');
+    expect(bodyFrom(fetchMock).limit).toBe(50);
+    expect(bodyFrom(fetchMock).offset).toBe(0);
   });
 
-  test('URL-encodes the JSON-encoded filter payload', async () => {
+  test('omits filter from body when none / empty array passed', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.fetchResults('uid', 50, 0);
+    expect(bodyFrom(fetchMock).filter).toBeUndefined();
+
+    const fetchMock2 = captureFetch();
+    await client.fetchResults('uid', 50, 0, undefined, undefined, []);
+    expect(bodyFrom(fetchMock2).filter).toBeUndefined();
+  });
+
+  test('ships filter as a native array in the body with always-strings coercion', async () => {
     const fetchMock = captureFetch();
     const client = new BigtraceQueryClient('http://example/');
     await client.fetchResults('uid', 50, 0, undefined, undefined, [
       {field: 'name', op: 'glob', value: 'ui::*'},
+      {field: 'dur', op: '>', value: 9223372036854775807n},
     ]);
-    const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
-    expect(url).toContain('filter=');
-    // '*' / ':' / '"' percent-encoded via encodeURIComponent.
-    const want = encodeURIComponent(
-      JSON.stringify([{field: 'name', op: 'glob', value: 'ui::*'}]),
-    );
-    expect(url).toContain(`filter=${want}`);
+    const body = bodyFrom(fetchMock);
+    // Native array, NOT a JSON-encoded string.
+    expect(Array.isArray(body.filter)).toBe(true);
+    // bigint → string for lossless int64 round-trip across JS Number.
+    expect(body.filter).toEqual([
+      {field: 'name', op: 'glob', value: 'ui::*'},
+      {field: 'dur', op: '>', value: '9223372036854775807'},
+    ]);
   });
 
-  test('order_by and filter both appear in the URL when set', async () => {
+  test('order_by and filter both appear in the body when set', async () => {
     const fetchMock = captureFetch();
     const client = new BigtraceQueryClient('http://example/');
     await client.fetchResults('uid', 50, 0, undefined, 'name desc', [
       {field: 'kind', op: '=', value: 'sched'},
     ]);
-    const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
-    expect(url).toContain('order_by=name%20desc');
-    expect(url).toContain('filter=');
+    const body = bodyFrom(fetchMock);
+    expect(body.order_by).toBe('name desc');
+    expect(body.filter).toEqual([{field: 'kind', op: '=', value: 'sched'}]);
   });
 
-  test('columns is omitted when empty, included as comma list when set', async () => {
+  test('columns is omitted from body when empty, included as array when set', async () => {
     const client = new BigtraceQueryClient('http://example/');
     let fetchMock = captureFetch();
     await client.fetchResults('uid', 50, 0);
-    expect((fetchMock.mock.calls[0] as unknown[])[0] as string).not.toContain(
-      'columns=',
-    );
+    expect(bodyFrom(fetchMock).columns).toBeUndefined();
+
     fetchMock = captureFetch();
     await client.fetchResults(
       'uid',
@@ -245,23 +267,20 @@ describe('BigtraceQueryClient.fetchResults URL construction', () => {
       undefined,
       [],
     );
-    expect((fetchMock.mock.calls[0] as unknown[])[0] as string).not.toContain(
-      'columns=',
-    );
+    expect(bodyFrom(fetchMock).columns).toBeUndefined();
+
     fetchMock = captureFetch();
     await client.fetchResults('uid', 50, 0, undefined, undefined, undefined, [
       'trace_id',
       'name',
       'file_name',
     ]);
-    const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
-    // Comma-separated bare names; comma itself stays literal because
-    // URL-encoding leaves it untouched (it's not reserved in query
-    // strings) but the surrounding URL-encoding of the value is still
-    // applied.
-    expect(url).toContain(
-      `columns=${encodeURIComponent('trace_id,name,file_name')}`,
-    );
+    // Native array in the body — no comma-joining, no URL encoding.
+    expect(bodyFrom(fetchMock).columns).toEqual([
+      'trace_id',
+      'name',
+      'file_name',
+    ]);
   });
 
   test('fetchResults surfaces availableColumnNames from the wire', async () => {
