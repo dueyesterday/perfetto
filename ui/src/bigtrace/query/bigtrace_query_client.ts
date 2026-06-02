@@ -29,7 +29,7 @@ interface QueryResponsePayload {
   // surfaced on :fetch_results so the UI's column picker can offer
   // sidecar columns even when the current projection doesn't
   // include them. Undefined on every other endpoint.
-  availableColumns?: string[];
+  availableColumnNames?: string[];
 }
 
 export interface QueryResultPage {
@@ -39,7 +39,7 @@ export interface QueryResultPage {
   // Post-filter count from `:fetch_results`; undefined elsewhere.
   readonly totalFilteredRows?: number;
   // Full schema returned by `:fetch_results`; see the wire field.
-  readonly availableColumns?: ReadonlyArray<string>;
+  readonly availableColumnNames?: ReadonlyArray<string>;
 }
 
 // One row of the `/traces_schema` response. Mirrors the wire shape:
@@ -248,13 +248,13 @@ export class BigtraceQueryClient {
       path += `&columns=${encodeURIComponent(columns.join(','))}`;
     }
     const result = await this.requestJson<QueryResponsePayload>(path, {signal});
-    // `availableColumns` is `:fetch_results`-only by spec (WIRE_SPEC §9.9
+    // `availableColumnNames` is `:fetch_results`-only by spec (WIRE_SPEC §9.9
     // / §14.6): `/traces` mustn't echo a column catalog because
     // `/traces_schema` is the source of truth, so the parser stays
     // endpoint-agnostic and only this call site exposes the field.
     return {
       ...parseQueryResponse(result),
-      availableColumns: result.availableColumns,
+      availableColumnNames: result.availableColumnNames,
     };
   }
 

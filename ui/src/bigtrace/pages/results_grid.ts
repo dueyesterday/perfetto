@@ -137,14 +137,14 @@ function renderDataGrid(
   // The DataGrid's "+ Add column" menu populates from the
   // SchemaRegistry. For async queries the backend declares the full
   // union (result table cols ∪ sidecar metadata cols) via
-  // availableColumns on every :fetch_results response — that's the
+  // availableColumnNames on every :fetch_results response — that's the
   // set the user can pick from. For sync queries (and async pre-
   // first-fetch) we fall back to `columns` (the result columns the
   // first row carried) since there's no sidecar / no schema endpoint
   // for sync results.
   let allColumns: ReadonlyArray<string> = columns;
   if (dataSource instanceof BigtraceAsyncDataSource) {
-    const available = dataSource.availableColumns;
+    const available = dataSource.availableColumnNames;
     if (available !== undefined && available.length > 0) {
       allColumns = available;
     }

@@ -99,17 +99,17 @@ describe('parseQueryResponse', () => {
     expect(result.totalFilteredRows).toBeUndefined();
   });
 
-  test('does not plumb availableColumns (fetchResults attaches it)', () => {
-    // WIRE_SPEC §9.9 / §14.6: `availableColumns` is `:fetch_results`-
+  test('does not plumb availableColumnNames (fetchResults attaches it)', () => {
+    // WIRE_SPEC §9.9 / §14.6: `availableColumnNames` is `:fetch_results`-
     // only. Keeping the parser endpoint-agnostic means the field can't
     // accidentally leak from `/traces` (whose column catalog lives on
     // `/traces_schema`, not echoed in the page response).
     const result = parseQueryResponse({
       columnNames: ['n'],
       rows: [{values: ['1']}],
-      availableColumns: ['n', 'extra_col'],
+      availableColumnNames: ['n', 'extra_col'],
     });
-    expect(result.availableColumns).toBeUndefined();
+    expect(result.availableColumnNames).toBeUndefined();
   });
 });
 
@@ -264,7 +264,7 @@ describe('BigtraceQueryClient.fetchResults URL construction', () => {
     );
   });
 
-  test('fetchResults surfaces availableColumns from the wire', async () => {
+  test('fetchResults surfaces availableColumnNames from the wire', async () => {
     // WIRE_SPEC §9.5: `:fetch_results` ships the union of result +
     // sidecar columns so the UI's column-picker knows what's
     // selectable. The parser stays endpoint-agnostic; only fetchResults
@@ -278,7 +278,12 @@ describe('BigtraceQueryClient.fetchResults URL construction', () => {
             columnNames: ['trace_id', 'name'],
             rows: [{values: ['a', 'evt']}],
             totalFilteredRows: 1,
-            availableColumns: ['trace_id', 'name', 'file_name', 'size_bytes'],
+            availableColumnNames: [
+              'trace_id',
+              'name',
+              'file_name',
+              'size_bytes',
+            ],
           }),
         ),
       json: () =>
@@ -286,12 +291,12 @@ describe('BigtraceQueryClient.fetchResults URL construction', () => {
           columnNames: ['trace_id', 'name'],
           rows: [{values: ['a', 'evt']}],
           totalFilteredRows: 1,
-          availableColumns: ['trace_id', 'name', 'file_name', 'size_bytes'],
+          availableColumnNames: ['trace_id', 'name', 'file_name', 'size_bytes'],
         }),
     }) as unknown as typeof fetch;
     const client = new BigtraceQueryClient('http://example/');
     const page = await client.fetchResults('uid', 50, 0);
-    expect(page.availableColumns).toEqual([
+    expect(page.availableColumnNames).toEqual([
       'trace_id',
       'name',
       'file_name',
@@ -415,10 +420,10 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
     expect(bodyFrom(fetchMock).columns).toEqual(['file_name', 'size_bytes']);
   });
 
-  test('does not surface availableColumns even if the wire ships one', async () => {
+  test('does not surface availableColumnNames even if the wire ships one', async () => {
     // WIRE_SPEC §9.9: `/traces` MUST NOT echo a column catalog —
     // `/traces_schema` is the source of truth. Even if a non-compliant
-    // backend ships `availableColumns`, the client drops it so no
+    // backend ships `availableColumnNames`, the client drops it so no
     // consumer can grow a dependency on it.
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -429,7 +434,7 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
             columnNames: ['file_name'],
             rows: [{values: ['a.pftrace']}],
             totalFilteredRows: 1,
-            availableColumns: ['file_path', 'file_name', 'size_bytes'],
+            availableColumnNames: ['file_path', 'file_name', 'size_bytes'],
           }),
         ),
       json: () =>
@@ -437,12 +442,12 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
           columnNames: ['file_name'],
           rows: [{values: ['a.pftrace']}],
           totalFilteredRows: 1,
-          availableColumns: ['file_path', 'file_name', 'size_bytes'],
+          availableColumnNames: ['file_path', 'file_name', 'size_bytes'],
         }),
     }) as unknown as typeof fetch;
     const client = new BigtraceQueryClient('http://example/');
     const page = await client.listTraces([], 100, 0);
-    expect(page.availableColumns).toBeUndefined();
+    expect(page.availableColumnNames).toBeUndefined();
   });
 });
 

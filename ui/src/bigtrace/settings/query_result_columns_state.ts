@@ -19,7 +19,7 @@ import {LocalStorage} from '../../core/local_storage';
 // preference survives reload + applies across tabs.
 //
 // `null` (initial / cleared) means "show every column the backend
-// surfaces in availableColumns". An explicit list means "show exactly
+// surfaces in availableColumnNames". An explicit list means "show exactly
 // these, in this order, intersected with what's actually available".
 // We intersect rather than literally project so a stale entry from a
 // previous query schema doesn't break a brand-new query whose schema
@@ -49,7 +49,7 @@ class QueryResultColumnsState {
   }
 
   // Reconcile the persisted selection against the live
-  // `availableColumns` from the backend. When nothing is persisted
+  // `availableColumnNames` from the backend. When nothing is persisted
   // we return every available column in declaration order (the
   // "show all" default). When a selection is persisted, we
   // intersect with the live set so stale entries are silently

@@ -57,7 +57,7 @@ export class BigtraceAsyncDataSource implements DataSource {
   private currentColumnsKey = '';
   // Full union surface returned by the backend on every fetch — the
   // results-page column picker reads this to know what's selectable.
-  private _availableColumns: ReadonlyArray<string> | undefined;
+  private _availableColumnNames: ReadonlyArray<string> | undefined;
 
   get filteredTotalRows(): number | undefined {
     return this._filteredTotalRows;
@@ -66,8 +66,8 @@ export class BigtraceAsyncDataSource implements DataSource {
   // Result-table columns + sidecar metadata columns, as the backend
   // declared on the last successful fetch. Used by the results page
   // to populate its column picker.
-  get availableColumns(): ReadonlyArray<string> | undefined {
-    return this._availableColumns;
+  get availableColumnNames(): ReadonlyArray<string> | undefined {
+    return this._availableColumnNames;
   }
 
   // `signal`: owner aborts on close. `getTotalRows`: scrollbar sizing.
@@ -196,7 +196,7 @@ export class BigtraceAsyncDataSource implements DataSource {
       this.loadedLimit = limit;
       this.hasInitialFetchCompleted = true;
       this._filteredTotalRows = result.totalFilteredRows;
-      this._availableColumns = result.availableColumns;
+      this._availableColumnNames = result.availableColumnNames;
 
       if (this.columns.length === 0 && result.columns.length > 0) {
         this.columns = [...result.columns];
