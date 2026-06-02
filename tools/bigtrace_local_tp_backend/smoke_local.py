@@ -963,13 +963,12 @@ def main() -> int:
                 'SELECT name FROM slice LIMIT 1',
             'settings':
                 with_traces(),
-            # Strict-string-only wire (WIRE_SPEC §10.1, §12.1).
-            'trace_filter':
-                json.dumps([{
-                    'field': 'file_name',
-                    'op': '=',
-                    'value': target_name,
-                }]),
+            # Strict-native-array wire (WIRE_SPEC §10.1, §12.1).
+            'trace_filter': [{
+                'field': 'file_name',
+                'op': '=',
+                'value': target_name,
+            }],
         },
     )
     tf_uuid = tfsub['queryUuid']
@@ -1064,12 +1063,11 @@ def main() -> int:
                 'SELECT 1',
             'settings':
                 with_traces(),
-            'trace_filter':
-                json.dumps([{
-                    'field': 'file_name',
-                    'op': '=',
-                    'value': 'definitely-no-match-anywhere.pftrace',
-                }]),
+            'trace_filter': [{
+                'field': 'file_name',
+                'op': '=',
+                'value': 'definitely-no-match-anywhere.pftrace',
+            }],
         },
     )
     nm_uuid = nmsub['queryUuid']
@@ -1860,12 +1858,11 @@ def main() -> int:
                 'SELECT 1',
             'settings':
                 with_traces(),
-            'trace_filter':
-                json.dumps([{
-                    'field': 'file_name',
-                    'op': '=',
-                    'value': target_name_for_lt,
-                }]),
+            'trace_filter': [{
+                'field': 'file_name',
+                'op': '=',
+                'value': target_name_for_lt,
+            }],
         },
     )
     tf_one_uuid = tf_one['queryUuid']
@@ -2018,15 +2015,11 @@ def main() -> int:
     # :status. Powers the per-tab Bigtrace Settings sub-tab on the
     # query page so each historical query is reproducible.
     print('[26] submit-time snapshot round-trip')
-    # Strict-string-only wire (WIRE_SPEC §10.1, §12.1, §15.1): the
-    # snapshot echoes the wire STRING byte-for-byte, not a parsed
-    # list. The same string is what `:fetch_results?filter=` ships
-    # (modulo URL encoding).
-    snap_filter = json.dumps([{
-        'field': 'file_name',
-        'op': 'glob',
-        'value': '*'
-    }])
+    # Strict-native-array wire (WIRE_SPEC §10.1, §12.1, §15.1): the
+    # snapshot echoes the submit-time native array verbatim, not a
+    # JSON-encoded string. (`:fetch_results?filter=` still ships the
+    # encoded string in its URL — body sites are native.)
+    snap_filter = [{'field': 'file_name', 'op': 'glob', 'value': '*'}]
     snap_meta_cols = ['file_name']
     _, snap_sub = http(
         'POST',
@@ -2094,8 +2087,8 @@ def main() -> int:
     # defaults. A legacy or minimal client that submits without
     # trace_filter / trace_metadata_columns gets empty values back
     # from the full GET — no `null` ambiguity at the UI layer.
-    # trace_filter defaults to "" (the empty wire string);
-    # trace_metadata_columns defaults to `[]`.
+    # trace_filter and trace_metadata_columns both default to `[]`
+    # (list-typed wire fields).
     _, plain_sub = http(
         'POST',
         '/execute_bigtrace_query_async',
@@ -2113,35 +2106,40 @@ def main() -> int:
         label='plain snapshot query terminal',
     )
     _, plain_full = http('GET', f'/query_executions/{plain_uuid}')
-    assert plain_full.get('traceFilter') == '', (
-        f'traceFilter should default to "" '
-        f'(empty wire string): {plain_full.get("traceFilter")!r}')
+    assert plain_full.get('traceFilter') == [], (
+        f'traceFilter should default to [] '
+        f'(empty native array): {plain_full.get("traceFilter")!r}')
     assert plain_full.get('traceMetadataColumns') == [], (
         f'traceMetadataColumns should default to []: '
         f'{plain_full.get("traceMetadataColumns")}')
-    print('    omitted trace_filter -> "" / trace_metadata_columns -> []')
+    print('    omitted trace_filter -> [] / trace_metadata_columns -> []')
 
-    # 26e. Strict-string-only contract: a native JSON array submitted
-    # as trace_filter MUST 400 at submit. The historical "accept both"
-    # behavior was removed when filter was tightened.
+    # 26e. Strict-native-only contract: a JSON-encoded string
+    # submitted as trace_filter MUST 400 at submit. The historical
+    # "accept either form" was removed on the strict-native body
+    # migration (2026-06-03).
     bad_status, _ = http_status_and_body(
         'POST',
         '/execute_bigtrace_query_async',
         body={
-            'limit': 1,
-            'perfetto_sql': 'SELECT 1',
-            'settings': with_traces(),
-            'trace_filter': [{
-                'field': 'file_name',
-                'op': '=',
-                'value': 'x'
-            }],
+            'limit':
+                1,
+            'perfetto_sql':
+                'SELECT 1',
+            'settings':
+                with_traces(),
+            'trace_filter':
+                json.dumps([{
+                    'field': 'file_name',
+                    'op': '=',
+                    'value': 'x'
+                }]),
         },
     )
     assert bad_status == 400, (
-        f'native-array trace_filter must yield 400 under strict-string-only '
-        f'contract; got {bad_status}')
-    print('    native-array trace_filter -> 400 (strict-string-only)')
+        f'JSON-encoded-string trace_filter must yield 400 under '
+        f'strict-native-only contract; got {bad_status}')
+    print('    string trace_filter -> 400 (strict-native-only)')
 
     print('[27] top-level trace_order_by re-orders the trace fan-out')
     # The trace fixture dir holds 2 files. With trace_limit=1 we

@@ -431,7 +431,7 @@ Each endpoint section follows the same structure: purpose · request · response
 | `perfetto_sql` | string | MUST | `""` | The user SQL to execute. Empty string is a no-op (returns success with 0 rows). |
 | `limit` | number | MUST | `100` | **Global row cap** on the materialized result (NOT a trace count). With `limit=1000` over 14 traces, the result has ≤1000 rows total. |
 | `settings` | array of `{setting_id, values, category}` | MUST | `[]` | Per-backend configuration. The catalog comes from [`/bigtrace_execution_config`](#911-post-bigtrace_execution_config). Required entries depend on the backend; the reference requires `trace_directory`. |
-| `trace_filter` | string (JSON-encoded `Filter[]`) | MAY | `""` | **Strict-string-only.** Byte-identical wire form to `:fetch_results?filter=`. See [§10.1](#101-trace_filter) and [§12](#12-filter-grammar). Native arrays MUST be rejected with `400`. |
+| `trace_filter` | `Filter[]` (native JSON array) | MAY | `[]` | **Strict-native-only.** See [§10.1](#101-trace_filter) and [§12](#12-filter-grammar). JSON-encoded strings MUST be rejected with `400`. |
 | `trace_metadata_columns` | `string[]` | MAY | `[]` | See [§10.2](#102-trace_metadata_columns). |
 | `trace_order_by` | string | MAY | `""` | See [§10.3](#103-trace_order_by) and [§13](#13-order_by-grammar-aip-132-§ordering-subset). |
 
@@ -469,7 +469,7 @@ Content-Type: application/json
     {"setting_id": "trace_directory", "values": ["/home/user/traces"], "category": "TRACE_ADDRESS"},
     {"setting_id": "trace_limit", "values": ["20"], "category": "TRACE_ADDRESS"}
   ],
-  "trace_filter": "[{\"field\":\"file_name\",\"op\":\"glob\",\"value\":\"*.pftrace\"}]",
+  "trace_filter": [{"field": "file_name", "op": "glob", "value": "*.pftrace"}],
   "trace_metadata_columns": ["file_name", "size_bytes"],
   "trace_order_by": "size_bytes desc"
 }
@@ -721,7 +721,7 @@ The JOIN with the sidecar is emitted because `file_name` is in the projection.
 | `tableName` | ONLY when set (see [`tableName` lifecycle](#56-tablename-lifecycle-table)) |
 | `tableLink` | ONLY when the backend exposes an inspector URL |
 | `errorMessage` | ONLY on FAILED (MAY be present on CANCELLED with a partial-cancel note) |
-| `settings`, `traceFilter`, `traceMetadataColumns`, `traceOrderBy` | ALWAYS — snapshot fields. `settings` / `traceMetadataColumns` default to `[]`; `traceFilter` / `traceOrderBy` default to `""` (the wire string for "no filter" / "no order"). The full GET echoes the submit-time bytes verbatim — `traceFilter` is a JSON-encoded `Filter[]` string, not a native array. |
+| `settings`, `traceFilter`, `traceMetadataColumns`, `traceOrderBy` | ALWAYS — snapshot fields. `settings` / `traceMetadataColumns` / `traceFilter` default to `[]`; `traceOrderBy` defaults to `""` (the wire string for "no order"). The full GET echoes the submit-time value verbatim — `traceFilter` is a native `Filter[]` JSON array (strict-native body contract, see [§10.1](#101-trace_filter)). |
 
 **Errors:**
 
@@ -785,7 +785,7 @@ Soft-deleted rows MUST be filtered out.
 | Field | Type | Required? | Default | Notes |
 |---|---|---|---|---|
 | `settings` | array | MUST | `[]` | Trace source config (e.g. `trace_directory`). Same shape as on `/execute_*`. |
-| `filter` | `Filter[]` OR string (JSON-encoded `Filter[]`) | MAY | `[]` | Same shape and parser as `:fetch_results?filter=`. See [§12](#12-filter-grammar). Both wire forms are accepted (native array predates the `/execute_*` strict-string migration); the JSON-string form lets a single composer serve both endpoints. |
+| `filter` | `Filter[]` (native JSON array) | MAY | `[]` | **Strict-native-only.** Same inner grammar as `:fetch_results?filter=` (see [§12](#12-filter-grammar)) but shipped as a native array in the body. JSON-encoded strings MUST be rejected with `400`. |
 | `order_by` | string | MAY | `""` | Same grammar as `:fetch_results?order_by=`. See [§13](#13-order_by-grammar-aip-132-§ordering-subset). |
 | `limit` | number | MUST | — | Page size. |
 | `offset` | number | MUST | `0` | Page offset. |
@@ -990,38 +990,41 @@ These three fields are NEW in this branch. Together with `trace_limit` (still a 
 
 ### 10.1 `trace_filter`
 
-A `Filter[]` the user composed on the trace-selection grid, **shipped as a JSON-encoded STRING** byte-identical to the form `:fetch_results?filter=` ships in its query parameter. The backend MUST apply it to its `/traces` result set to decide which traces a query runs over.
+A `Filter[]` the user composed on the trace-selection grid, **shipped as a native JSON array** in the request body. The backend MUST apply it to its `/traces` result set to decide which traces a query runs over.
 
-**Wire shape (strict-string-only):** The JSON-body field is a STRING containing the JSON encoding of a `Filter[]` array — NOT a native JSON array. This was tightened from "either form accepted" so the wire is byte-for-byte symmetric with `:fetch_results?filter=` and a single composer can serve both endpoints without conditional logic. See [§12](#12-filter-grammar) for the inner grammar.
+**Wire shape (strict-native-only):** The JSON-body field is a native JSON `Filter[]` array — NOT a JSON-encoded string. This was tightened from "either form accepted" so the wire stays structured end-to-end (no double-encoding) and matches `/traces` body `filter`. The URL form `:fetch_results?filter=` still ships the JSON-encoded string because URLs can't carry structured data. See [§12](#12-filter-grammar) for the inner grammar.
 
-**Default behavior:** Absent / `null` / `""` → "process every trace in the directory" subject to `trace_limit`.
+**Default behavior:** Absent / `null` / `[]` → "process every trace in the directory" subject to `trace_limit`.
 
 **Validation:**
 
-- A native JSON array (or any non-string, non-null, non-absent value) MUST be rejected with 400 INVALID_ARGUMENT. The error MUST mention that the field expects the JSON-encoded string form and SHOULD point to `:fetch_results?filter=` as the canonical wire shape.
+- A JSON-encoded string (or any non-list, non-null, non-absent value) MUST be rejected with 400 INVALID_ARGUMENT. The error MUST mention that the field expects a native JSON array and SHOULD note the strict-native migration date (2026-06-03).
 - Backends MUST validate `field` names against the live `/traces_schema` (resolved with the current `settings`) and return 400 INVALID_ARGUMENT on unknown columns.
-- Malformed inner JSON MUST surface as 400 INVALID_ARGUMENT.
+- Malformed entries MUST surface as 400 INVALID_ARGUMENT.
 
-**Snapshot semantics:** The full GET (`/query_executions/{uuid}`) echoes the submit-time STRING verbatim under `traceFilter`. An omitted submit-time value reads back as `""` (never `null`, never the literal string `"null"`).
+**Snapshot semantics:** The full GET (`/query_executions/{uuid}`) echoes the submit-time array verbatim under `traceFilter`. An omitted submit-time value reads back as `[]` (never `null`, never `""`).
 
 **Examples:**
 
 ```json
-// Process only .pftrace files (note the outer quotes — value is a STRING)
-"trace_filter": "[{\"field\":\"file_name\",\"op\":\"glob\",\"value\":\"*.pftrace\"}]"
+// Process only .pftrace files
+"trace_filter": [{"field": "file_name", "op": "glob", "value": "*.pftrace"}]
 
 // Process only large traces from specific devices
-"trace_filter": "[{\"field\":\"size_bytes\",\"op\":\">\",\"value\":\"10485760\"},{\"field\":\"device_name\",\"op\":\"in\",\"value\":[\"pixel9\",\"pixel10\"]}]"
+"trace_filter": [
+  {"field": "size_bytes", "op": ">", "value": "10485760"},
+  {"field": "device_name", "op": "in", "value": ["pixel9", "pixel10"]}
+]
 
 // Process EVERY trace
-"trace_filter": ""
+"trace_filter": []
 // equivalent:
 "trace_filter": null
 // equivalent:
 // (field absent from request body)
 
-// REJECTED — native arrays must yield 400 INVALID_ARGUMENT
-"trace_filter": [{"field": "file_name", "op": "glob", "value": "*.pftrace"}]
+// REJECTED — JSON-encoded strings must yield 400 INVALID_ARGUMENT
+"trace_filter": "[{\"field\":\"file_name\",\"op\":\"glob\",\"value\":\"*.pftrace\"}]"
 ```
 
 ### 10.2 `trace_metadata_columns`
@@ -1114,7 +1117,7 @@ The `trace_metadata_columns` field doesn't affect WHICH traces are selected — 
 Source directory has 14 traces. Client ships:
 ```json
 {
-  "trace_filter": "[{\"field\":\"file_name\",\"op\":\"glob\",\"value\":\"*.pftrace\"}]",
+  "trace_filter": [{"field": "file_name", "op": "glob", "value": "*.pftrace"}],
   "trace_order_by": "size_bytes desc",
   "trace_metadata_columns": ["file_name", "size_bytes"],
   "settings": [
@@ -1224,32 +1227,32 @@ For a real BigTrace backend: SHOULD be a stable permalink or hash of the trace c
 ## 12. Filter[] grammar
 
 Shared by:
-- `/execute_*` top-level `trace_filter` field — **strict-string-only** (JSON-encoded string)
+- `/execute_*` top-level `trace_filter` field — **strict-native-array** (body field)
 - `:fetch_results?filter=` query param — string (URL-encoded JSON)
-- `/traces` body field `filter` — native JSON array OR JSON-encoded string
+- `/traces` body field `filter` — **strict-native-array** (body field)
 
 ### 12.1 Wire format
 
-The **inner grammar** is the same across endpoints — a JSON array of `Filter` entries. The **outer envelope** differs by endpoint, but with the strict-string migration, all three sites are now compatible with a single composer that produces the JSON-encoded string form (`JSON.stringify(filter)`):
+The **inner grammar** is the same across endpoints — a JSON array of `Filter` entries. The **outer envelope** differs by endpoint: body sites carry the array natively, the URL site carries the JSON-encoded string (URLs can't ship structured data):
 
 | Endpoint | Outer envelope | Notes |
 |---|---|---|
 | `:fetch_results?filter=` | URL-encoded JSON string (query param) | Standard URL encoding. |
-| `/execute_*` `trace_filter` | JSON-encoded string (body field) | **Native arrays MUST be rejected with 400.** [§10.1](#101-trace_filter). |
-| `/traces` `filter` | JSON array OR JSON-encoded string (body field) | Predates the strict-string migration; both forms accepted. [§9.9](#99-post-traces). |
+| `/execute_*` `trace_filter` | Native JSON array (body field) | **Strings MUST be rejected with 400.** [§10.1](#101-trace_filter). |
+| `/traces` `filter` | Native JSON array (body field) | **Strings MUST be rejected with 400.** [§9.9](#99-post-traces). |
 
-Empty / absent / `null` / empty string → no `WHERE` clause emitted. Entries within the inner array are AND-joined.
+Empty / absent / `null` / empty list → no `WHERE` clause emitted. Entries within the inner array are AND-joined.
 
 ```json
-// Inner grammar (the array, before any envelope wrapping)
+// Inner grammar (the array, which is the body-field value verbatim)
 [
   {"field": "<col>", "op": "=",       "value": "<string>"},
   {"field": "<col>", "op": "in",      "value": ["<string>", ...]},
   {"field": "<col>", "op": "is null"}
 ]
 
-// Shipped to /execute_* as trace_filter (the array is JSON-encoded into a string)
-"trace_filter": "[{\"field\":\"<col>\",\"op\":\"=\",\"value\":\"<string>\"}]"
+// Shipped to /execute_* as trace_filter (native body field)
+"trace_filter": [{"field": "<col>", "op": "=", "value": "<string>"}]
 ```
 
 ### 12.2 Op categories
@@ -1498,7 +1501,7 @@ The four submit-time fields below MUST be persisted per execution and surfaced o
 | Submit-time field | Full-GET field (camelCase) | Default (omitted / null / `""` / `[]` on submit) | Persisted type |
 |---|---|---|---|
 | `settings` | `settings` | `[]` | JSON-encoded array (`VARCHAR`) |
-| `trace_filter` | `traceFilter` | `""` | Wire string verbatim (`VARCHAR`) — already a JSON-encoded `Filter[]` string ([§10.1](#101-trace_filter)) |
+| `trace_filter` | `traceFilter` | `[]` | JSON-encoded array (`VARCHAR`) — internal storage form; wire ships native array round-tripped via `json.loads` on read ([§10.1](#101-trace_filter)) |
 | `trace_metadata_columns` | `traceMetadataColumns` | `[]` | JSON-encoded array (`VARCHAR`) |
 | `trace_order_by` | `traceOrderBy` | `""` | Wire string verbatim (`VARCHAR`) |
 
@@ -1506,7 +1509,7 @@ The four submit-time fields below MUST be persisted per execution and surfaced o
 
 1. **Frozen at submit.** Backends MUST store the snapshot BEFORE any field-level validation runs. Even a query that 400s at submit time records what was attempted (so the user can inspect "what did I try?" from the history sidebar). State transitions (`mark_success` / `mark_failed` / `mark_cancelled`) MUST NOT modify the snapshot.
 
-2. **Default semantics.** For list-typed fields (`settings`, `trace_metadata_columns`), absent / `null` / `[]` on the wire MUST persist identically and read back as `[]`. For string-typed fields (`trace_filter`, `trace_order_by`), absent / `null` / `""` MUST read back as `""`. Backends MUST NOT return `null` for any of these fields — UIs would have to null-check every render path.
+2. **Default semantics.** For list-typed fields (`settings`, `trace_metadata_columns`, `trace_filter`), absent / `null` / `[]` on the wire MUST persist identically and read back as `[]`. For string-typed fields (`trace_order_by`), absent / `null` / `""` MUST read back as `""`. Backends MUST NOT return `null` for any of these fields — UIs would have to null-check every render path.
 
    Note that `trace_filter` is a STRING from end to end now (no list defaults, no JSON re-wrap on either persist or response). The full GET echoes whatever bytes the client submitted, verbatim.
 

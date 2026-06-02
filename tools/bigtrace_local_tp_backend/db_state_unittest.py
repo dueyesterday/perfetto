@@ -185,9 +185,11 @@ class SnapshotRoundTripTest(_DbCase):
     on /query — the UI rehydrates from `/query_executions/{uuid}` to
     show what each historical query ran with.
 
-    `trace_filter` is the JSON-encoded wire string (strict-string-only
-    contract per WIRE_SPEC.md §10.1, §12.1) — round-trips
-    byte-for-byte; empty / NULL reads back as `""`. `settings` and
+    `trace_filter` is stored as a JSON-encoded string (the DB layer
+    only sees this storage form — `server.py` converts to/from the
+    wire's native `Filter[]` array per the strict-native body
+    contract, WIRE_SPEC.md §10.1, §12.1). Round-trips byte-for-byte
+    through storage; empty / NULL reads back as `""`. `settings` and
     `trace_metadata_columns` are JSON-encoded lists; empty / NULL
     reads back as `[]`. `trace_order_by` is a raw wire string; empty
     / NULL reads back as `""`."""

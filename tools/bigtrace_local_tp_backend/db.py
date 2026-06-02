@@ -80,11 +80,11 @@ class QESnapshot:
     did this query run with?" Default values: `[]` for the list-typed
     fields, `""` for the string-typed fields.
 
-    NOTE: `trace_filter` is the JSON-encoded wire STRING (matches
-    `:fetch_results?filter=` byte-for-byte modulo URL encoding), not
-    a parsed list. Round-trips verbatim through DB storage and the
-    full GET response. Internal SQL composition re-parses it via
-    `parse_filter` when needed.
+    NOTE: `trace_filter` is the JSON-encoded STRING form used for
+    DB storage. The wire shape (both submit and full-GET echo) is a
+    native `Filter[]` array — `server.py` `json.dumps`/`json.loads`
+    converts at the API boundary. Internal SQL composition re-parses
+    via `parse_filter` when needed.
     """
   query_uuid: str
   status: str
@@ -649,10 +649,10 @@ class Database:
         validation runs, so even a query that's about to fail at
         submit time records what it was attempting:
          - `settings`: JSON-encoded list (this layer dumps).
-         - `trace_filter`: the JSON-encoded wire STRING — passed
-           through verbatim, no encode/decode at this layer. Matches
-           the `:fetch_results?filter=` form so the snapshot
-           round-trips byte-for-byte.
+         - `trace_filter`: a JSON-encoded STRING form (produced by
+           `_normalize_trace_filter_for_storage` in server.py from
+           the wire's native array). Passed through verbatim at this
+           layer.
          - `trace_metadata_columns`: JSON-encoded list.
          - `trace_order_by`: raw wire string.
         None / empty → SQL NULL, which reads back as `[]` / `""` in
@@ -662,8 +662,9 @@ class Database:
       start_time = utcnow()
     table_name = safe_table_id(query_uuid) if materialized else None
     settings_json = json.dumps(settings) if settings else None
-    # trace_filter is already the wire string — store as-is. Empty
-    # string is treated as "no filter" and persisted as SQL NULL.
+    # trace_filter arrives as a JSON-encoded string (from
+    # _normalize_trace_filter_for_storage) — store as-is. Empty /
+    # None → SQL NULL.
     trace_filter_str = trace_filter if trace_filter else None
     trace_metadata_columns_json = (
         json.dumps(trace_metadata_columns) if trace_metadata_columns else None)
@@ -1012,8 +1013,9 @@ class Database:
         processed_rows=row[10],
         error_message=row[11],
         settings=cls._decode_json_list(row[12]),
-        # trace_filter is stored as the wire string; round-trip
-        # verbatim. NULL → ''.
+        # trace_filter stored as JSON-encoded string; server.py's
+        # response builder `json.loads`-es it back to a native array
+        # for the wire. NULL → '' (no filter).
         trace_filter=row[13] or '',
         trace_metadata_columns=cls._decode_json_list(row[14]),
         trace_order_by=row[15] or '',
