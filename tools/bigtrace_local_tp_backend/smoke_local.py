@@ -1925,14 +1925,14 @@ def main() -> int:
     assert tmc_cols == [
         'trace_id', 'name'
     ], (f'default projection should be result-only, got {tmc_cols}')
-    # availableColumns surfaces the full union so the UI's picker
+    # availableColumnNames surfaces the full union so the UI's picker
     # can offer the sidecar cols.
-    available = tmc_page.get('availableColumns') or []
+    available = tmc_page.get('availableColumnNames') or []
     assert set(available) == {
         'trace_id', 'name', 'file_name', 'size_bytes'
-    }, (f'availableColumns should list result ∪ sidecar; got {available}')
+    }, (f'availableColumnNames should list result ∪ sidecar; got {available}')
     print(f'    default fetch: columns={tmc_cols}, '
-          f'availableColumns={sorted(available)}')
+          f'availableColumnNames={sorted(available)}')
 
     # 25b. Project a subset that mixes result + sidecar columns —
     # JOIN happens transparently, response carries the metadata.

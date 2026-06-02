@@ -76,7 +76,7 @@ The wire-level features below are NEW in `bt_ui_ref_backend_exp_bigtrace_setting
 | 5 | Top-level `trace_order_by` on `/execute_*` | MUST | [§10.3](#103-trace_order_by) |
 | 6 | Per-query metadata sidecar (or equivalent) | MUST | [§11](#11-per-query-metadata-sidecar) |
 | 7 | `:fetch_results?columns=` field-mask | MUST | [§14](#14-columns-field-mask) |
-| 8 | `availableColumns` in `:fetch_results` response | MUST | [§9.5](#95-get-query_executionsuuidfetch_results) |
+| 8 | `availableColumnNames` in `:fetch_results` response | MUST | [§9.5](#95-get-query_executionsuuidfetch_results) |
 | 9 | `:fetch_results?filter=` JSON `Filter[]` | MUST | [§12](#12-filter-grammar) |
 | 10 | Per-query snapshot on full GET (4 fields) | MUST | [§15](#15-per-query-snapshot) |
 | 11 | Strict-4-field `:status` (no UUID echo, no snapshot) | MUST | [§9.3](#93-get-query_executionsuuidstatus) |
@@ -632,7 +632,7 @@ GET /query_executions/7720667b-1646-4527-a055-f5feace8881e:status HTTP/1.1
   "columnNames": ["<col>", ...],
   "rows": [{"values": ["<str>" | null, ...]}, ...],
   "totalFilteredRows": <number>,
-  "availableColumns": ["<col>", ...]
+  "availableColumnNames": ["<col>", ...]
 }
 ```
 
@@ -641,7 +641,7 @@ GET /query_executions/7720667b-1646-4527-a055-f5feace8881e:status HTTP/1.1
 | `columnNames` | string[] | The columns in this page's projection, in order. |
 | `rows` | `{values: (string | null)[]}[]` | Always-strings cells; one entry per row in the page. |
 | `totalFilteredRows` | number | ALWAYS PRESENT. Total rows AFTER `filter` is applied (no `filter` → equals the materialized total). Used by the UI to size the virtual scrollbar. |
-| `availableColumns` | string[] | FULL union of (result-table cols ∪ sidecar cols) — independent of the current `columns` argument. Used by the UI's column picker on the results page. |
+| `availableColumnNames` | string[] | FULL union of (result-table cols ∪ sidecar cols) — independent of the current `columns` argument. Used by the UI's column picker on the results page. |
 
 **Field-mask semantics:**
 
@@ -678,7 +678,7 @@ GET /query_executions/7720667b-...:fetch_results?limit=10&offset=0&order_by=dur%
     {"values": ["android_boot", "ActivityManager", "8765432", "android_boot.pftrace"]}
   ],
   "totalFilteredRows": 247,
-  "availableColumns": ["trace_id", "name", "dur", "file_name", "size_bytes"]
+  "availableColumnNames": ["trace_id", "name", "dur", "file_name", "size_bytes"]
 }
 ```
 
@@ -801,7 +801,7 @@ Soft-deleted rows MUST be filtered out.
 }
 ```
 
-Same always-strings wire as `:fetch_results`, but **without** `availableColumns`: the column catalog for `/traces` lives on `/traces_schema` ([§9.10](#910-post-traces_schema)), so echoing it here would create two sources of truth that could drift. Backends MUST NOT include `availableColumns` in this response; clients MUST NOT read it.
+Same always-strings wire as `:fetch_results`, but **without** `availableColumnNames`: the column catalog for `/traces` lives on `/traces_schema` ([§9.10](#910-post-traces_schema)), so echoing it here would create two sources of truth that could drift. Backends MUST NOT include `availableColumnNames` in this response; clients MUST NOT read it.
 
 **Errors:**
 
@@ -1045,7 +1045,7 @@ Array of column names from `/traces_schema` the client wants attached to every q
 
 **Field-mask reachability:** Whatever the client opted into via `trace_metadata_columns` MUST be reachable via `:fetch_results?columns=`. The page SQL projects from the union (result-table cols ∪ sidecar cols); JOIN is emitted iff the projection / filter / order_by references a sidecar column.
 
-`availableColumns` in the response MUST advertise BOTH result-table and sidecar columns so the UI can offer a column-picker after the query has already run.
+`availableColumnNames` in the response MUST advertise BOTH result-table and sidecar columns so the UI can offer a column-picker after the query has already run.
 
 **Examples:**
 
@@ -1481,11 +1481,11 @@ Backends MUST validate every column name and return 400 INVALID_ARGUMENT:
 | `columns=,trace_id` | Leading empty entry |
 | `columns=trace_id,trace_id` | Duplicate — backends MAY accept and dedupe, or reject (the reference rejects) |
 
-### 14.6 availableColumns invariant (`:fetch_results` only)
+### 14.6 availableColumnNames invariant (`:fetch_results` only)
 
-On `:fetch_results`, the `availableColumns` field in the response MUST be IDENTICAL across all `columns` projections for the same query — it advertises the FULL union of (result-table cols ∪ sidecar cols), independent of the current projection. This is so the UI's column picker can offer columns not currently shown.
+On `:fetch_results`, the `availableColumnNames` field in the response MUST be IDENTICAL across all `columns` projections for the same query — it advertises the FULL union of (result-table cols ∪ sidecar cols), independent of the current projection. This is so the UI's column picker can offer columns not currently shown.
 
-`/traces` MUST NOT echo `availableColumns` — its column catalog lives on `/traces_schema` ([§9.10](#910-post-traces_schema)). See [§9.9](#99-post-traces).
+`/traces` MUST NOT echo `availableColumnNames` — its column catalog lives on `/traces_schema` ([§9.10](#910-post-traces_schema)). See [§9.9](#99-post-traces).
 
 ---
 

@@ -1185,7 +1185,7 @@ class Database:
       projected_columns: Optional[list[str]] = None,
   ) -> tuple[list[str], list[list[Any]], int, list[str]]:
     """Return (column_names, rows[offset:offset+limit], total_filtered,
-        available_columns).
+        available_column_names).
 
         Caller is responsible for the precondition checks (entry
         exists, materialized=true, etc.) — this method only reads

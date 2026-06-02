@@ -747,7 +747,7 @@ class MetadataSidecarTest(unittest.TestCase):
     self.assertEqual(cols, ['trace_id', 'name', 'dur'])
     self.assertEqual(total, 3)
     self.assertEqual(len(rows), 3)
-    # availableColumns lists the union — result + sidecar — so the
+    # availableColumnNames lists the union — result + sidecar — so the
     # UI can offer sidecar cols even when the current projection
     # doesn't include them.
     self.assertEqual(

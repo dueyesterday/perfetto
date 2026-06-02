@@ -1086,7 +1086,7 @@ async def fetch_results(
                if columns else None)
   try:
     # fetch_paginated returns (cols, rows, total_filtered,
-    # available_columns) under a single lock acquisition so all four
+    # available_column_names) under a single lock acquisition so all four
     # numbers reflect the same snapshot even if a TTL sweep races us.
     cols, rows, total_filtered, available = _get_db().fetch_paginated(
         uuid,
@@ -1116,11 +1116,11 @@ async def fetch_results(
                 '(may have been swept between metadata read and fetch)'),
     )
   resp = _rows_response(cols, rows, total_filtered)
-  # availableColumns lets the UI's column picker offer every column
+  # availableColumnNames lets the UI's column picker offer every column
   # the user could project — including sidecar metadata that isn't in
   # the current `columns` projection. Plain JSON array (string list)
   # — every name is a quoted identifier in DuckDB.
-  resp['availableColumns'] = available
+  resp['availableColumnNames'] = available
   return resp
 
 
