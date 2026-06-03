@@ -197,7 +197,7 @@ class SnapshotRoundTripTest(_DbCase):
   def test_full_snapshot_round_trips(self):
     settings = [{
         'setting_id': 'trace_directory',
-        'values': ['/tmp/traces'],
+        'values': ['/tmp/trace_metadata'],
         'category': 'TRACE_ADDRESS',
     }]
     trace_filter = ('[{"field":"file_name","op":"glob","value":"*.pftrace"}]')

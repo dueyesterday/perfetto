@@ -427,7 +427,7 @@ def query_trace_list(
     wire-level filter/order_by semantics are identical to
     `Database.fetch_paginated` (which paginates over the materialized
     table for a query result). Reusing `parse_filter` / `compile_where`
-    / `parse_order_by` means the `/traces` endpoint and the top-level
+    / `parse_order_by` means the `/trace_metadata` endpoint and the top-level
     `trace_filters` on `/execute_*` see one parser implementation —
     no second copy to drift.
 
@@ -449,7 +449,7 @@ def query_trace_list(
         of trace files to fan out to).
       - `projected_columns`: optional subset of the schema's column
         names. When set, the response contains only these columns in
-        this order — used by the /traces endpoint to honour the
+        this order — used by the /trace_metadata endpoint to honour the
         client's `columns` field-mask. Unknown / duplicate names raise
         `ValueError`. Empty list raises (the client wanted *some*
         column; an empty mask is almost certainly a bug). `None` means
@@ -899,7 +899,7 @@ class Database:
         `trace_metadata_columns` on /execute_*. `column_types` is
         `[("trace_id", "VARCHAR"), ("file_name", "VARCHAR"), ...]`
         in projection order (trace_id is always first; the rest are
-        the columns from /traces_schema the client picked). `rows`
+        the columns from /trace_metadata_schema the client picked). `rows`
         is one tuple per trace.
 
         The table is created with NO PRIMARY KEY constraint — a
@@ -1244,7 +1244,7 @@ class Database:
         raise duckdb.CatalogException(
             f'materialized table {tbl} does not exist')
       result_cols = [r[0] for r in cols_res]
-      # Sidecar columns (per /traces_schema, excluding trace_id) —
+      # Sidecar columns (per /trace_metadata_schema, excluding trace_id) —
       # empty when the client didn't opt into trace_metadata_columns.
       sidecar_cols = self._sidecar_columns_locked(query_uuid)
       # Available = union of both tables' columns. trace_id appears
@@ -1266,7 +1266,7 @@ class Database:
       # SELECT list. None / [] keeps the legacy "everything" shape
       # (every result column, no sidecar). Explicit list projects
       # exactly the named columns in the given order — same
-      # semantics as /traces?columns=.
+      # semantics as /trace_metadata?columns=.
       sidecar_referenced = False
       if projected_columns is None:
         out_cols = list(result_cols)

@@ -61,7 +61,7 @@ from settings import (  # noqa: E402
 )
 from trace_pool import TracePool  # noqa: E402
 
-# Trace-list schema. The endpoint surfaces this through /traces_schema
+# Trace-list schema. The endpoint surfaces this through /trace_metadata_schema
 # so the UI can render the column-selection menu without baking in any
 # names. Order is the default projection order (used when the client
 # doesn't supply a `columns` field-mask); `defaultVisible` flags the
@@ -94,7 +94,7 @@ _TRACE_LIST_SCHEMA: list[dict[str, Any]] = [
     },
 ]
 
-# DuckDB column types derived from _TRACE_LIST_SCHEMA. The /traces and
+# DuckDB column types derived from _TRACE_LIST_SCHEMA. The /trace_metadata and
 # execute_* (trace_filter) paths build an in-memory DuckDB table from
 # these; query_trace_list uses them both as the table schema and the
 # default projection. Pinning the equality to TRACE_LIST_COLUMNS so a
@@ -439,7 +439,7 @@ def _resolve_traces_for(
     `trace_limit` if > 0.
 
     `trace_order_by` is the AIP-132 wire string the client picked on
-    the trace grid (same parser as `/traces?order_by=`). When the
+    the trace grid (same parser as `/trace_metadata?order_by=`). When the
     client doesn't ship one the order falls back to `file_path ASC`
     so the cap is deterministic across runs (same files end up
     selected if the grid wasn't sorted explicitly).
@@ -504,7 +504,7 @@ def _validate_trace_metadata_columns_or_400(
     columns are appended to every result row (right after trace_id).
 
     400 on: non-list / non-string entries / unknown column names /
-    duplicates. Same error contract as the `/traces?columns=` path
+    duplicates. Same error contract as the `/trace_metadata?columns=` path
     so clients can surface the detail uniformly.
     """
   if trace_metadata_columns is None:
@@ -565,7 +565,7 @@ def _parse_trace_filter_or_400(raw: Any,
   """Parse a JSON-body filter field to `list[ParsedFilter]`.
 
     Shared by all three filter sites — `/execute_*` `trace_filters`,
-    `/traces` `filters`, and `:fetch_results` `filters` — every one of
+    `/trace_metadata` `filters`, and `:fetch_results` `filters` — every one of
     them takes a native JSON `Filter[]` array under the strict-native
     body contract ([§10.1, §12.1] of WIRE_SPEC.md). One parser, one
     composer, one wire shape.
@@ -727,13 +727,13 @@ async def _parse_query_body(
     "process every trace in the directory" subject to `trace_limit`.
 
     `trace_metadata_columns` is a top-level array of column names
-    from `/traces_schema`. When set, those values are prepended to
+    from `/trace_metadata_schema`. When set, those values are prepended to
     every result row (right after `trace_id`) so query results carry
     per-trace context without the user having to join it in SQL.
     Absence / [] means "no extra columns".
 
     `trace_order_by` is the AIP-132 wire string (same grammar as
-    `/traces?order_by=`). When set, controls the order in which
+    `/trace_metadata?order_by=`). When set, controls the order in which
     traces are processed (and therefore which N are kept when
     `trace_limit` truncates). Absence falls back to `file_path ASC`.
     """
@@ -985,7 +985,7 @@ async def fetch_results(uuid: str, request: Request) -> dict[str, Any]:
     POST + body (not GET + query string) so `filters` can ride as a
     native JSON array under the strict-native body contract shared
     by all three filter sites (this endpoint, `/execute_*`
-    `trace_filters`, and `/traces` `filters`). Migrated 2026-06-03.
+    `trace_filters`, and `/trace_metadata` `filters`). Migrated 2026-06-03.
 
     Request body:
         {
@@ -1202,7 +1202,7 @@ async def delete_execution(uuid: str) -> Response:
 # ---------------------------------------------------------------------------
 
 
-@app.post('/traces')
+@app.post('/trace_metadata')
 async def traces(request: Request) -> dict[str, Any]:
   """Paginated metadata for trace files in `trace_directory`.
 
@@ -1226,7 +1226,7 @@ async def traces(request: Request) -> dict[str, Any]:
     Response: `{columnNames, rows, totalFilteredRows}` — same wire
     shape and always-strings contract as `:fetch_results`. Default
     column set (when `columns` is absent): all entries from
-    /traces_schema flagged `defaultVisible: true`. Otherwise the
+    /trace_metadata_schema flagged `defaultVisible: true`. Otherwise the
     response projects exactly the named columns in the given order.
 
     `filters` / `order_by` may reference columns that aren't in the
@@ -1275,9 +1275,9 @@ async def traces(request: Request) -> dict[str, Any]:
   return _rows_response(cols, page, total)
 
 
-@app.post('/traces_schema')
+@app.post('/trace_metadata_schema')
 async def traces_schema(request: Request) -> dict[str, Any]:
-  """Describe the columns the `/traces` endpoint can return.
+  """Describe the columns the `/trace_metadata` endpoint can return.
 
     The UI calls this once when the Settings page mounts (or when
     `trace_directory` changes — a backend with a metadata index may

@@ -218,11 +218,11 @@ def main() -> int:
     ids = sorted(s['id'] for s in cfg['setting'])
     print(f'    settings: {ids}')
     # trace_filter is NOT a setting anymore — it was promoted to a
-    # top-level structured field on /execute_* + a /traces body
+    # top-level structured field on /execute_* + a /trace_metadata body
     # field. Pin its removal so a future revert breaks here loudly.
     assert 'trace_filters' not in ids, (
         f'trace_filter must not be a setting; live wire field instead '
-        f'(see /traces block below). Got: {ids}')
+        f'(see /trace_metadata block below). Got: {ids}')
     assert 'trace_directory' in ids, (
         f'trace_directory setting missing from /bigtrace_execution_config: {ids}'
     )
@@ -1582,15 +1582,15 @@ def main() -> int:
           f'totalFilteredRows={base_total}/{gt_total}/{and_total}; '
           f'{len(op_variants)} other op variants survive the wire')
 
-    # 24. /traces — the trace-selection grid's backing endpoint.
+    # 24. /trace_metadata — the trace-selection grid's backing endpoint.
     # Powers the BigTrace UI's Settings page DataGrid. Same response
     # shape and always-strings contract as :fetch_results.
-    print('[24] /traces end-to-end')
+    print('[24] /trace_metadata end-to-end')
     # (a) Happy path: enumerate every recognized trace; columns are
     # the Phase-1 schema (file_path, file_name, size_bytes, mtime).
     _, lt_full = http(
         'POST',
-        '/traces',
+        '/trace_metadata',
         body={
             'settings': [{
                 'setting_id': 'trace_directory',
@@ -1603,30 +1603,30 @@ def main() -> int:
     )
     lt_cols = lt_full.get('columnNames') or []
     lt_rows = lt_full.get('rows') or []
-    assert lt_cols == ['file_path', 'file_name', 'size_bytes',
-                       'mtime'], (f'unexpected /traces columns: {lt_cols}')
-    assert lt_rows, f'/traces returned no rows: {lt_full}'
+    assert lt_cols == ['file_path', 'file_name', 'size_bytes', 'mtime'
+                      ], (f'unexpected /trace_metadata columns: {lt_cols}')
+    assert lt_rows, f'/trace_metadata returned no rows: {lt_full}'
     base_count = int(lt_full['totalFilteredRows'])
     assert base_count >= 1, base_count
     # Always-strings: every cell is a string or null on the wire.
     for r in lt_rows:
       for v in r['values']:
         assert v is None or isinstance(
-            v, str), (f'/traces row carries non-string value: {r}')
+            v, str), (f'/trace_metadata row carries non-string value: {r}')
     # The seeded trace from block [16] must be present in this set.
     target_name_for_lt = sorted(
         n for n in os.listdir(traces_dir) if n.endswith(_TRACE_EXTS) and
         os.path.isfile(os.path.join(traces_dir, n)))[0]
     seen_names = {r['values'][1] for r in lt_rows}
     assert target_name_for_lt in seen_names, (
-        f'expected {target_name_for_lt!r} in /traces names, '
+        f'expected {target_name_for_lt!r} in /trace_metadata names, '
         f'got {seen_names}')
     print(f'    happy path: {base_count} rows, schema={lt_cols}')
 
     # (b) Filter narrows the result and totalFilteredRows reflects it.
     _, lt_one = http(
         'POST',
-        '/traces',
+        '/trace_metadata',
         body={
             'settings': [{
                 'setting_id': 'trace_directory',
@@ -1650,7 +1650,7 @@ def main() -> int:
     # (c) order_by + pagination compose correctly.
     _, lt_asc = http(
         'POST',
-        '/traces',
+        '/trace_metadata',
         body={
             'settings': [{
                 'setting_id': 'trace_directory',
@@ -1664,7 +1664,7 @@ def main() -> int:
     )
     _, lt_desc = http(
         'POST',
-        '/traces',
+        '/trace_metadata',
         body={
             'settings': [{
                 'setting_id': 'trace_directory',
@@ -1684,7 +1684,7 @@ def main() -> int:
     # Page through with limit=1.
     _, lt_page2 = http(
         'POST',
-        '/traces',
+        '/trace_metadata',
         body={
             'settings': [{
                 'setting_id': 'trace_directory',
@@ -1707,7 +1707,7 @@ def main() -> int:
     # wire) — DuckDB binds it to size_bytes' BIGINT and coerces.
     _, lt_big = http(
         'POST',
-        '/traces',
+        '/trace_metadata',
         body={
             'settings': [{
                 'setting_id': 'trace_directory',
@@ -1837,8 +1837,9 @@ def main() -> int:
         ),
     ])
     for body_case, label in bad_cases:
-      code, body_text = http_status_and_body('POST', '/traces', body=body_case)
-      assert code == 400, (f'/traces case {label!r} expected 400, got '
+      code, body_text = http_status_and_body(
+          'POST', '/trace_metadata', body=body_case)
+      assert code == 400, (f'/trace_metadata case {label!r} expected 400, got '
                            f'{code}: {body_text}')
     print(f'    {len(bad_cases)} bad-request cases all return 400')
 
@@ -1847,7 +1848,7 @@ def main() -> int:
     # columns (because the underlying table sees the full schema).
     _, lt_proj = http(
         'POST',
-        '/traces',
+        '/trace_metadata',
         body={
             'settings': [{
                 'setting_id': 'trace_directory',
@@ -1873,13 +1874,13 @@ def main() -> int:
     print('    columns projection: rows narrowed to '
           f'{lt_proj["columnNames"]}, filter+order on unprojected cols ok')
 
-    # (h) /traces_schema returns the declared schema. Body is unused
+    # (h) /trace_metadata_schema returns the declared schema. Body is unused
     # by the local backend but pinned on the wire for forward-compat.
-    print('    /traces_schema')
-    _, sch = http('POST', '/traces_schema', body={'settings': []})
+    print('    /trace_metadata_schema')
+    _, sch = http('POST', '/trace_metadata_schema', body={'settings': []})
     schema_cols = sch.get('columns') or []
     assert isinstance(schema_cols, list) and len(schema_cols) >= 1, (
-        f'/traces_schema returned no columns: {sch!r}')
+        f'/trace_metadata_schema returned no columns: {sch!r}')
     schema_names = {c['name'] for c in schema_cols}
     assert schema_names == {'file_path', 'file_name', 'size_bytes', 'mtime'
                            }, (f'unexpected schema columns: {schema_names}')
@@ -2102,7 +2103,7 @@ def main() -> int:
     # query page so each historical query is reproducible.
     print('[26] submit-time snapshot round-trip')
     # Strict-native-array wire (WIRE_SPEC §10.1, §12.1, §15.1): all
-    # three filter sites — /execute_* trace_filter, /traces filter,
+    # three filter sites — /execute_* trace_filter, /trace_metadata filter,
     # and :fetch_results filter — ship native arrays in the body, and
     # the snapshot echoes the submit-time native array verbatim.
     snap_filter = [{'field': 'file_name', 'op': 'glob', 'value': '*'}]
@@ -2234,7 +2235,7 @@ def main() -> int:
     # must pick the OTHER file. The submit-time snapshot must echo
     # the wire string verbatim.
     _, two_traces = http(
-        'POST', '/traces', {
+        'POST', '/trace_metadata', {
             'settings': [{
                 'setting_id': 'trace_directory',
                 'values': [traces_dir],

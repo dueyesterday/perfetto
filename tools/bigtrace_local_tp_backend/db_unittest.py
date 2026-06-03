@@ -436,13 +436,13 @@ class SafeTableIdTest(unittest.TestCase):
 
 # ---------------------------------------------------------------------------
 # query_trace_list — the in-memory filter/order/page helper used by
-# /list_traces and by execute_*'s top-level trace_filter.
+# /trace_metadata and by execute_*'s top-level trace_filter.
 # ---------------------------------------------------------------------------
 
 
 class QueryTraceListTest(unittest.TestCase):
   """Drives the in-memory DuckDB pivot. The columns mirror what the
-    /list_traces endpoint surfaces in Phase 1 (file_path, file_name,
+    /trace_metadata endpoint surfaces in Phase 1 (file_path, file_name,
     size_bytes, mtime). The Filter[] semantics are pinned by
     parse_filter+compile_where tests above; here we verify that
     query_trace_list wires them up correctly over an in-memory list
@@ -587,7 +587,7 @@ class QueryTraceListTest(unittest.TestCase):
   def test_projection_can_filter_on_unprojected_column(self):
     # Filter references a column that isn't in the projection — the
     # underlying table still has every column, so the filter applies.
-    # This is the property the /traces endpoint relies on: the UI
+    # This is the property the /trace_metadata endpoint relies on: the UI
     # can collapse the visible columns without losing query power.
     from db import query_trace_list
     pf = parse_filter('[{"field":"size_bytes","op":">","value":"1000"}]')

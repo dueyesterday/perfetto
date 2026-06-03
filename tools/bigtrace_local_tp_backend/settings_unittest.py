@@ -15,7 +15,7 @@ delegate to `_first_setting_value`. These tests pin:
   - type coercion edge cases for `trace_limit`.
 
 (`trace_filters` is no longer a setting — it lives as a top-level
-structured field on `/execute_*` and `/list_traces`. See
+structured field on `/execute_*` and `/trace_metadata`. See
 server.py:_parse_trace_filter_or_400 + db.parse_filter.)
 
 Run:
@@ -218,7 +218,7 @@ class ExecutionSettingsSchemaTest(unittest.TestCase):
 
   def test_includes_two_known_settings(self):
     # `trace_filters` is deliberately absent — it was promoted to a
-    # top-level structured field on /execute_* + /list_traces, not
+    # top-level structured field on /execute_* + /trace_metadata, not
     # a setting. The smoke + ResolveTracesForTest pin that path.
     ids = {s['id'] for s in EXECUTION_SETTINGS}
     self.assertEqual(ids, {'trace_directory', 'trace_limit'})

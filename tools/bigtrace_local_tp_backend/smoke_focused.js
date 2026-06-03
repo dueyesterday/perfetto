@@ -168,7 +168,7 @@ async function waitFor(cond, {timeout = 15000, label = ''} = {}) {
       const stats = Array.from(
         document.querySelectorAll('.pf-query-page__status-bar-stat'),
       );
-      const m = stats.find((s) => /traces/i.test(s.textContent || ''));
+      const m = stats.find((s) => /trace_metadata/i.test(s.textContent || ''));
       const v = m
         ? m.querySelector('.pf-query-page__status-bar-stat-value')
         : null;

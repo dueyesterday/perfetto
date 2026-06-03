@@ -30,8 +30,8 @@
     - [9.6 GET /query_executions/{uuid}](#96-get-query_executionsuuid)
     - [9.7 GET /query_executions](#97-get-query_executions)
     - [9.8 DELETE /query_executions/{uuid}](#98-delete-query_executionsuuid)
-    - [9.9 POST /traces](#99-post-traces)
-    - [9.10 POST /traces_schema](#910-post-traces_schema)
+    - [9.9 POST /trace_metadata](#99-post-traces)
+    - [9.10 POST /trace_metadata_schema](#910-post-traces_schema)
     - [9.11 POST /bigtrace_execution_config](#911-post-bigtrace_execution_config)
     - [9.12 POST /trace_metadata_settings](#912-post-trace_metadata_settings)
 10. [Top-level trace-selection fields](#10-top-level-trace-selection-fields)
@@ -69,8 +69,8 @@ The wire-level features below are NEW in `bt_ui_ref_backend_exp_bigtrace_setting
 
 | # | Feature | Required? | Section |
 |---|---|---|---|
-| 1 | `POST /traces` endpoint | MUST | [§9.9](#99-post-traces) |
-| 2 | `POST /traces_schema` endpoint | MUST | [§9.10](#910-post-traces_schema) |
+| 1 | `POST /trace_metadata` endpoint | MUST | [§9.9](#99-post-traces) |
+| 2 | `POST /trace_metadata_schema` endpoint | MUST | [§9.10](#910-post-traces_schema) |
 | 3 | Top-level `trace_filters` on `/execute_*` | MUST | [§10.1](#101-trace_filters) |
 | 4 | Top-level `trace_metadata_columns` on `/execute_*` | MUST | [§10.2](#102-trace_metadata_columns) |
 | 5 | Top-level `trace_order_by` on `/execute_*` | MUST | [§10.3](#103-trace_order_by) |
@@ -309,7 +309,7 @@ Backends SHOULD perform CHEAP validation up front (parseability, shape, presence
 Reference behavior:
 - `trace_directory` presence + existence: SUBMIT-time (cheap).
 - `trace_filters` JSON shape + Filter[] parse: SUBMIT-time (cheap).
-- `trace_metadata_columns` names against `/traces_schema`: SUBMIT-time (catalog already in memory).
+- `trace_metadata_columns` names against `/trace_metadata_schema`: SUBMIT-time (catalog already in memory).
 - `trace_order_by` grammar: SUBMIT-time (lexical parse).
 - `trace_order_by` column-name validation: EXECUTE-time (needs the column-types map).
 - `trace_filters[i].field` column-name validation: EXECUTE-time.
@@ -466,7 +466,7 @@ Content-Type: application/json
   "perfetto_sql": "SELECT name, dur FROM slice WHERE name IS NOT NULL LIMIT 50",
   "limit": 100,
   "settings": [
-    {"setting_id": "trace_directory", "values": ["/home/user/traces"], "category": "TRACE_ADDRESS"},
+    {"setting_id": "trace_directory", "values": ["/home/user/trace_metadata"], "category": "TRACE_ADDRESS"},
     {"setting_id": "trace_limit", "values": ["20"], "category": "TRACE_ADDRESS"}
   ],
   "trace_filters": [{"field": "file_name", "op": "glob", "value": "*.pftrace"}],
@@ -625,7 +625,7 @@ GET /query_executions/7720667b-1646-4527-a055-f5feace8881e:status HTTP/1.1
 | `filters` | `Filter[]` (native JSON array) | MAY | `[]` | **Strict-native-only.** See [§12](#12-filter-grammar). JSON-encoded strings MUST be rejected with `400`. |
 | `columns` | `string[]` | MAY | (all result-table columns) | Native JSON array of column names; see [§14](#14-columns-field-mask). |
 
-**Why POST + body (not GET + query string):** so `filters` can ride as a native JSON array — same wire shape as `/execute_*` `trace_filters` and `/traces` `filters`. All three filter sites share one parser, one composer, one contract. Migrated 2026-06-03 (along with the body-native flip on the other two endpoints).
+**Why POST + body (not GET + query string):** so `filters` can ride as a native JSON array — same wire shape as `/execute_*` `trace_filters` and `/trace_metadata` `filters`. All three filter sites share one parser, one composer, one contract. Migrated 2026-06-03 (along with the body-native flip on the other two endpoints).
 
 **Response (200):**
 
@@ -788,7 +788,7 @@ Soft-deleted rows MUST be filtered out.
 - MUST drop the associated metadata sidecar table.
 - The metadata row (with all snapshot fields) MAY be kept for an audit trail; the UI never sees it again because the list endpoint filters deleted rows.
 
-### 9.9 POST /traces
+### 9.9 POST /trace_metadata
 
 **Purpose:** Paginated trace metadata for the active trace source. Powers the BigTrace UI's trace-selection grid on the Settings page.
 
@@ -801,7 +801,7 @@ Soft-deleted rows MUST be filtered out.
 | `order_by` | string | MAY | `""` | Same grammar as `:fetch_results` `order_by`. See [§13](#13-order_by-grammar-aip-132-§ordering-subset). |
 | `limit` | number | MUST | — | Page size. |
 | `offset` | number | MUST | `0` | Page offset. |
-| `columns` | string[] | MAY | (every `defaultVisible:true` column from `/traces_schema`) | Field-mask projection. See [§14](#14-columns-field-mask). |
+| `columns` | string[] | MAY | (every `defaultVisible:true` column from `/trace_metadata_schema`) | Field-mask projection. See [§14](#14-columns-field-mask). |
 
 **Response (200):**
 
@@ -813,7 +813,7 @@ Soft-deleted rows MUST be filtered out.
 }
 ```
 
-Same always-strings wire as `:fetch_results`, but **without** `availableColumnNames`: the column catalog for `/traces` lives on `/traces_schema` ([§9.10](#910-post-traces_schema)), so echoing it here would create two sources of truth that could drift. Backends MUST NOT include `availableColumnNames` in this response; clients MUST NOT read it.
+Same always-strings wire as `:fetch_results`, but **without** `availableColumnNames`: the column catalog for `/trace_metadata` lives on `/trace_metadata_schema` ([§9.10](#910-post-traces_schema)), so echoing it here would create two sources of truth that could drift. Backends MUST NOT include `availableColumnNames` in this response; clients MUST NOT read it.
 
 **Errors:**
 
@@ -824,18 +824,18 @@ Same always-strings wire as `:fetch_results`, but **without** `availableColumnNa
 
 **Schema compatibility:**
 
-Backends without a metadata indexer MUST at minimum surface the 4 filesystem columns: `file_path`, `file_name`, `size_bytes`, `mtime`. The UI doesn't hardcode names — every column comes from `/traces_schema` — but having a usable baseline schema makes the grid functional.
+Backends without a metadata indexer MUST at minimum surface the 4 filesystem columns: `file_path`, `file_name`, `size_bytes`, `mtime`. The UI doesn't hardcode names — every column comes from `/trace_metadata_schema` — but having a usable baseline schema makes the grid functional.
 
-Backends with an indexer add `device_name`, `android_id`, `app_version`, etc. — same wire shape, more columns. The schema returned from `/traces_schema` MUST be the source of truth.
+Backends with an indexer add `device_name`, `android_id`, `app_version`, etc. — same wire shape, more columns. The schema returned from `/trace_metadata_schema` MUST be the source of truth.
 
 **Example:**
 
 ```http
-POST /traces HTTP/1.1
+POST /trace_metadata HTTP/1.1
 Content-Type: application/json
 
 {
-  "settings": [{"setting_id": "trace_directory", "values": ["/home/user/traces"], "category": "TRACE_ADDRESS"}],
+  "settings": [{"setting_id": "trace_directory", "values": ["/home/user/trace_metadata"], "category": "TRACE_ADDRESS"}],
   "filter": [{"field": "file_name", "op": "glob", "value": "*.pftrace"}],
   "order_by": "size_bytes desc",
   "limit": 10,
@@ -855,9 +855,9 @@ Content-Type: application/json
 }
 ```
 
-### 9.10 POST /traces_schema
+### 9.10 POST /trace_metadata_schema
 
-**Purpose:** Column catalog for `/traces`. The UI calls this once on Settings-page load to build the column-picker menu without baking in any names.
+**Purpose:** Column catalog for `/trace_metadata`. The UI calls this once on Settings-page load to build the column-picker menu without baking in any names.
 
 **Request body:**
 
@@ -884,7 +884,7 @@ The schema MAY depend on the trace source (different `trace_directory` → diffe
 
 | Field | Type | Required? | Notes |
 |---|---|---|---|
-| `name` | string | MUST | The column identifier used in `Filter[].field`, `order_by` field-names, the `columns` field-mask on `/traces`, and `trace_metadata_columns` on `/execute_*`. |
+| `name` | string | MUST | The column identifier used in `Filter[].field`, `order_by` field-names, the `columns` field-mask on `/trace_metadata`, and `trace_metadata_columns` on `/execute_*`. |
 | `type` | string | MUST | Informational — the wire is always-strings. Suggested values: `BIGINT`, `INTEGER`, `DOUBLE`, `VARCHAR`, `TIMESTAMP`, `BOOLEAN`. Used by the UI for cell-renderer hints (`size_bytes` typed as `BIGINT` may be rendered as "4.5 MB"). |
 | `defaultVisible` | bool | MUST | `true` → column appears in the trace-list grid on first render; `false` → addable via the picker. Renamed from `default` to avoid the JS keyword collision (destructuring `default` requires aliasing in strict mode) and to make the field self-describing. |
 | `description` | string | MAY | Tooltip / help text the UI surfaces on the column-picker entry. |
@@ -894,10 +894,10 @@ The schema MAY depend on the trace source (different `trace_directory` → diffe
 **Example:**
 
 ```http
-POST /traces_schema HTTP/1.1
+POST /trace_metadata_schema HTTP/1.1
 Content-Type: application/json
 
-{"settings": [{"setting_id": "trace_directory", "values": ["/home/user/traces"], "category": "TRACE_ADDRESS"}]}
+{"settings": [{"setting_id": "trace_directory", "values": ["/home/user/trace_metadata"], "category": "TRACE_ADDRESS"}]}
 ```
 
 ```json
@@ -1002,16 +1002,16 @@ These three fields are NEW in this branch. Together with `trace_limit` (still a 
 
 ### 10.1 `trace_filters`
 
-A `Filter[]` the user composed on the trace-selection grid, **shipped as a native JSON array** in the request body. The backend MUST apply it to its `/traces` result set to decide which traces a query runs over.
+A `Filter[]` the user composed on the trace-selection grid, **shipped as a native JSON array** in the request body. The backend MUST apply it to its `/trace_metadata` result set to decide which traces a query runs over.
 
-**Wire shape (strict-native-only):** The JSON-body field is a native JSON `Filter[]` array — NOT a JSON-encoded string. All three filter sites share this contract after the 2026-06-03 migration: `/execute_*` `trace_filters`, `/traces` `filters`, and `:fetch_results` `filters`. The wire stays structured end-to-end (no double-encoding, one composer, one parser). See [§12](#12-filter-grammar) for the inner grammar.
+**Wire shape (strict-native-only):** The JSON-body field is a native JSON `Filter[]` array — NOT a JSON-encoded string. All three filter sites share this contract after the 2026-06-03 migration: `/execute_*` `trace_filters`, `/trace_metadata` `filters`, and `:fetch_results` `filters`. The wire stays structured end-to-end (no double-encoding, one composer, one parser). See [§12](#12-filter-grammar) for the inner grammar.
 
 **Default behavior:** Absent / `null` / `[]` → "process every trace in the directory" subject to `trace_limit`.
 
 **Validation:**
 
 - A JSON-encoded string (or any non-list, non-null, non-absent value) MUST be rejected with 400 INVALID_ARGUMENT. The error MUST mention that the field expects a native JSON array and SHOULD note the strict-native migration date (2026-06-03).
-- Backends MUST validate `field` names against the live `/traces_schema` (resolved with the current `settings`) and return 400 INVALID_ARGUMENT on unknown columns.
+- Backends MUST validate `field` names against the live `/trace_metadata_schema` (resolved with the current `settings`) and return 400 INVALID_ARGUMENT on unknown columns.
 - Malformed entries MUST surface as 400 INVALID_ARGUMENT.
 
 **Snapshot semantics:** The full GET (`/query_executions/{uuid}`) echoes the submit-time array verbatim under `traceFilters`. An omitted submit-time value reads back as `[]` (never `null`, never `""`).
@@ -1041,7 +1041,7 @@ A `Filter[]` the user composed on the trace-selection grid, **shipped as a nativ
 
 ### 10.2 `trace_metadata_columns`
 
-Array of column names from `/traces_schema` the client wants attached to every query result row.
+Array of column names from `/trace_metadata_schema` the client wants attached to every query result row.
 
 **Wire shape:** `string[]`.
 
@@ -1049,7 +1049,7 @@ Array of column names from `/traces_schema` the client wants attached to every q
 
 **Validation:**
 
-- Backends MUST validate against the live `/traces_schema` and return 400 INVALID_ARGUMENT on:
+- Backends MUST validate against the live `/trace_metadata_schema` and return 400 INVALID_ARGUMENT on:
   - Unknown column names.
   - Non-string entries.
   - Duplicate entries.
@@ -1088,7 +1088,7 @@ AIP-132 wire string controlling the order in which traces are processed during f
 **Validation:**
 
 - Lexical parse failures MUST yield 400 INVALID_ARGUMENT at SUBMIT time.
-- Column-name validation against the live `/traces_schema` MAY be deferred to EXECUTE time (still 400 INVALID_ARGUMENT, but surfaced as a FAILED status).
+- Column-name validation against the live `/trace_metadata_schema` MAY be deferred to EXECUTE time (still 400 INVALID_ARGUMENT, but surfaced as a FAILED status).
 
 **Examples:**
 
@@ -1133,7 +1133,7 @@ Source directory has 14 traces. Client ships:
   "trace_order_by": "size_bytes desc",
   "trace_metadata_columns": ["file_name", "size_bytes"],
   "settings": [
-    {"setting_id": "trace_directory", "values": ["/traces"], "category": "TRACE_ADDRESS"},
+    {"setting_id": "trace_directory", "values": ["/trace_metadata"], "category": "TRACE_ADDRESS"},
     {"setting_id": "trace_limit", "values": ["3"], "category": "TRACE_ADDRESS"}
   ]
 }
@@ -1185,7 +1185,7 @@ The sidecar carries (in this order):
 1. The per-row identifier the backend prepends to result rows (typically `trace_id`). MUST be the PRIMARY KEY.
 2. One column per name in `trace_metadata_columns`, in the order the client shipped them on `/execute_*`.
 
-Types MAY come from `/traces_schema`; the wire is always-strings either way ([§3](#3-always-strings-response-contract)).
+Types MAY come from `/trace_metadata_schema`; the wire is always-strings either way ([§3](#3-always-strings-response-contract)).
 
 **Example (3 metadata columns):**
 
@@ -1230,7 +1230,7 @@ The per-row identifier ("`trace_id`" in the reference) is the JOIN key. The wire
 - The PRIMARY KEY of the sidecar.
 - Stable across runs (same trace → same identifier).
 
-For the local-TP backend: `trace_id` = basename of the trace file with the extension stripped (e.g. `/traces/android_boot.pftrace` → `"android_boot"`).
+For the local-TP backend: `trace_id` = basename of the trace file with the extension stripped (e.g. `/trace_metadata/android_boot.pftrace` → `"android_boot"`).
 
 For a real BigTrace backend: SHOULD be a stable permalink or hash of the trace contents, NOT a filesystem path.
 
@@ -1241,7 +1241,7 @@ For a real BigTrace backend: SHOULD be a stable permalink or hash of the trace c
 Shared by all three filter sites — **all carry the same wire shape** as of 2026-06-03:
 - `/execute_*` top-level `trace_filters` field — strict-native body field
 - `:fetch_results` `filters` body field — strict-native body field (POST + JSON body since the migration)
-- `/traces` body field `filters` — strict-native body field
+- `/trace_metadata` body field `filters` — strict-native body field
 
 ### 12.1 Wire format
 
@@ -1251,7 +1251,7 @@ The wire shape is uniform: a native JSON array of `Filter` entries in the reques
 |---|---|---|
 | `:fetch_results` `filters` (body) | Native JSON array | **Strings MUST be rejected with 400.** [§9.5](#95-post-query_executionsuuidfetch_results). |
 | `/execute_*` `trace_filters` (body) | Native JSON array | **Strings MUST be rejected with 400.** [§10.1](#101-trace_filters). |
-| `/traces` `filters` (body) | Native JSON array | **Strings MUST be rejected with 400.** [§9.9](#99-post-traces). |
+| `/trace_metadata` `filters` (body) | Native JSON array | **Strings MUST be rejected with 400.** [§9.9](#99-post-traces). |
 
 Empty / absent / `null` / empty list → no `WHERE` clause emitted. Entries within the inner array are AND-joined.
 
@@ -1263,7 +1263,7 @@ Empty / absent / `null` / empty list → no `WHERE` clause emitted. Entries with
   {"field": "<col>", "op": "is null"}
 ]
 
-// Shipped to /execute_* as trace_filters (or `:fetch_results` / `/traces` as filters)
+// Shipped to /execute_* as trace_filters (or `:fetch_results` / `/trace_metadata` as filters)
 "trace_filters": [{"field": "<col>", "op": "=", "value": "<string>"}]
 ```
 
@@ -1318,7 +1318,7 @@ Backends MUST reject with 400 INVALID_ARGUMENT for each of:
 5. Comparison or pattern op with an array `value`.
 6. `in` / `not in` with non-array or empty-array `value`.
 7. Null op carrying any `value` key.
-8. `field` not in the column list for this scan (against `:fetch_results` materialized table OR `/traces` schema OR `/execute_*` trace-grid schema — different for each endpoint).
+8. `field` not in the column list for this scan (against `:fetch_results` materialized table OR `/trace_metadata` schema OR `/execute_*` trace-grid schema — different for each endpoint).
 9. Bind-time conversion failure (the engine's coercion rejects the string).
 
 The `detail` string SHOULD name the offending entry / field for client display.
@@ -1406,7 +1406,7 @@ The `detail` string SHOULD name the offending entry / field for client display.
 Shared by:
 - `/execute_*` top-level `trace_order_by` field
 - `:fetch_results` `order_by` query param
-- `/traces?order_by=` body field
+- `/trace_metadata?order_by=` body field
 
 ### 13.1 Grammar
 
@@ -1457,7 +1457,7 @@ Backends MAY rely on the underlying engine's default stability behavior — the 
 
 Shared by:
 - `:fetch_results` `columns` query param
-- `/traces` body field `columns`
+- `/trace_metadata` body field `columns`
 
 ### 14.1 Wire format
 
@@ -1469,16 +1469,16 @@ columns=col1,col2,col3
 
 ### 14.2 Semantics
 
-| `columns` value | Behavior on `:fetch_results` | Behavior on `/traces` |
+| `columns` value | Behavior on `:fetch_results` | Behavior on `/trace_metadata` |
 |---|---|---|
-| Absent / `null` | Return ALL result-table columns, NO sidecar columns. | Return every `/traces_schema` column flagged `default: true`. |
+| Absent / `null` | Return ALL result-table columns, NO sidecar columns. | Return every `/trace_metadata_schema` column flagged `default: true`. |
 | `""` (empty string) | Same as absent | Same as absent |
 | `"a,b,c"` | Return exactly those columns in that order | Return exactly those columns in that order |
 
 ### 14.3 Column resolution scope
 
 - `:fetch_results`: resolution scope = union (result-table cols ∪ sidecar cols). The sidecar is included even if no sidecar column is in the projection — `filters` / `order_by` MAY still reference sidecar columns.
-- `/traces`: resolution scope = every column in `/traces_schema` (regardless of `default` flag).
+- `/trace_metadata`: resolution scope = every column in `/trace_metadata_schema` (regardless of `default` flag).
 
 ### 14.4 Filter / order_by independence
 
@@ -1500,7 +1500,7 @@ Backends MUST validate every column name and return 400 INVALID_ARGUMENT:
 
 On `:fetch_results`, the `availableColumnNames` field in the response MUST be IDENTICAL across all `columns` projections for the same query — it advertises the FULL union of (result-table cols ∪ sidecar cols), independent of the current projection. This is so the UI's column picker can offer columns not currently shown.
 
-`/traces` MUST NOT echo `availableColumnNames` — its column catalog lives on `/traces_schema` ([§9.10](#910-post-traces_schema)). See [§9.9](#99-post-traces).
+`/trace_metadata` MUST NOT echo `availableColumnNames` — its column catalog lives on `/trace_metadata_schema` ([§9.10](#910-post-traces_schema)). See [§9.9](#99-post-traces).
 
 ---
 
@@ -1551,7 +1551,7 @@ POST /execute_bigtrace_query_async
 {
   "perfetto_sql": "SELECT name FROM slice LIMIT 5",
   "limit": 100,
-  "settings": [{"setting_id": "trace_directory", "values": ["/traces"], "category": "TRACE_ADDRESS"}],
+  "settings": [{"setting_id": "trace_directory", "values": ["/trace_metadata"], "category": "TRACE_ADDRESS"}],
   "trace_filters": "[{\"field\":\"file_name\",\"op\":\"glob\",\"value\":\"*.pftrace\"}]",
   "trace_metadata_columns": ["file_name"],
   "trace_order_by": "size_bytes desc"
@@ -1582,7 +1582,7 @@ GET /query_executions/7720667b-...
   "materialized": true,
   "tableName": "bigtrace_7720667b_1646_4527_a055_f5feace8881e",
 
-  "settings":              [{"setting_id": "trace_directory", "values": ["/traces"], "category": "TRACE_ADDRESS"}],
+  "settings":              [{"setting_id": "trace_directory", "values": ["/trace_metadata"], "category": "TRACE_ADDRESS"}],
   "traceFilters":           "[{\"field\":\"file_name\",\"op\":\"glob\",\"value\":\"*.pftrace\"}]",
   "traceMetadataColumns":  ["file_name"],
   "traceOrderBy":          "size_bytes desc"
@@ -1632,7 +1632,7 @@ The smoke covers 26 blocks (1, 2, …, 11, 11a, 12, …, 26). The full list is i
 | [16] | Top-level `trace_filters` narrows the trace set (`totalTraces` reflects the filter). |
 | [22] | `:fetch_results` `order_by` ASC/DESC/multi-field; bad direction + unknown column → 400. |
 | [23] | `:fetch_results` `filters` end-to-end; every op variant; 3 bad-input paths. |
-| [24] | `/traces` + `/traces_schema` end-to-end; happy path, filter, order_by, columns, 9 bad-request cases; schema invariants. |
+| [24] | `/trace_metadata` + `/trace_metadata_schema` end-to-end; happy path, filter, order_by, columns, 9 bad-request cases; schema invariants. |
 | [25] | Async `trace_metadata_columns` → sidecar + `:fetch_results` `columns` JOIN transparency; sync inline-stitch; unknown columns 400. |
 | [26] | Submit-time snapshot round-trip; lean `:status` + lean list. |
 | [27] | Top-level `trace_order_by` re-orders the fan-out; snapshot echoes verbatim; malformed → 400. |
@@ -1640,7 +1640,7 @@ The smoke covers 26 blocks (1, 2, …, 11, 11a, 12, …, 26). The full list is i
 To run against a re-implementation, point the smoke's backend URL at the new backend and execute:
 
 ```sh
-.venv/bin/python smoke_local.py --traces-dir /path/to/traces
+.venv/bin/python smoke_local.py --traces-dir /path/to/trace_metadata
 ```
 
 A compliant backend SHOULD pass every block. Block [20] (server restart recovery) requires the backend to support SIGINT-induced exit and clean restart — backends MAY skip this if their stack doesn't support it.

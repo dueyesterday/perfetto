@@ -267,7 +267,7 @@ function stopBackend() {
       console.log(`  set Trace Directory -> ${path.resolve(TRACES_DIR)}`);
       // Settings cards re-trigger their callbacks on blur — explicit
       // blur ensures the trace-list grid (below) sees the new value
-      // before our /traces network assertion fires.
+      // before our /trace_metadata network assertion fires.
       await tdInput.blur();
     }
   }
@@ -278,21 +278,21 @@ function stopBackend() {
   );
   // The grid lives in a card titled "Traces" rendered below the
   // trace_directory + trace_limit cards. Verify (a) the card is
-  // there, (b) /traces was issued and got a non-empty result,
+  // there, (b) /trace_metadata was issued and got a non-empty result,
   // (c) at least one row in the grid contains a recognized seeded
   // file name.
   const listTracesCallsBefore = calls.filter((c) =>
-    c.includes('/traces'),
+    c.includes('/trace_metadata'),
   ).length;
   // Give the data source a moment to fetch after the directory
   // input was filled.
   await page.waitForTimeout(2000);
   const listTracesCallsAfter = calls.filter((c) =>
-    c.includes('/traces'),
+    c.includes('/trace_metadata'),
   ).length;
   if (listTracesCallsAfter <= listTracesCallsBefore) {
     note(
-      `No /traces request fired after setting trace_directory ` +
+      `No /trace_metadata request fired after setting trace_directory ` +
         `(before=${listTracesCallsBefore} after=${listTracesCallsAfter})`,
     );
   }

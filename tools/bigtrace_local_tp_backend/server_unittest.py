@@ -400,7 +400,7 @@ class QeToRawSnapshotTest(unittest.TestCase):
     }])
     # traceFilter is emitted as the native `Filter[]` array — same
     # shape clients submit on every filter site (/execute_*
-    # trace_filter, /traces filter, :fetch_results filter) under the
+    # trace_filter, /trace_metadata filter, :fetch_results filter) under the
     # strict-native body contract.
     self.assertEqual(out['traceFilters'], [{
         'field': 'file_name',
@@ -718,7 +718,7 @@ class ResolveTracesForTest(unittest.TestCase):
 class ValidateTraceMetadataColumnsTest(unittest.TestCase):
   """`_validate_trace_metadata_columns_or_400` is the executor-side
     field-mask for the top-level `trace_metadata_columns` request
-    body field. Mirrors the /traces?columns= validation contract so
+    body field. Mirrors the /trace_metadata?columns= validation contract so
     clients see one shape across both endpoints."""
 
   def test_none_returns_empty_list(self):
