@@ -155,7 +155,7 @@ const TRACE_ADDRESS_DISPLAY = 'Trace Address';
 
 const SCHEMA_ROOT = 'trace_list';
 
-// Build a SchemaRegistry from the backend's /traces_schema response.
+// Build a SchemaRegistry from the backend's /trace_metadata_schema response.
 // One entry per declared column; cellRenderer stays undefined so the
 // DataGrid uses its default string renderer (every cell is a string
 // on the wire per the always-strings contract).
@@ -218,7 +218,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   // Trace-list grid state. The DataSource is rebuilt whenever the
   // backend endpoint changes (its BigtraceQueryClient binds to one
   // endpoint at construction). With bindings set, the data source's
-  // `getSettings` callback also routes through bindings so /traces
+  // `getSettings` callback also routes through bindings so /trace_metadata
   // sees the per-tab snapshot, not the global defaults.
   private traceListDataSource: BigtraceTraceListDataSource | undefined;
   private traceListEndpoint: string | undefined;
@@ -234,7 +234,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   // chosen order under the user.
   private traceListSortField: string | undefined;
   private traceListSortDirection: SortDirection | undefined;
-  // /traces_schema response, refetched whenever the endpoint changes
+  // /trace_metadata_schema response, refetched whenever the endpoint changes
   // (or trace_directory changes — a backend with a metadata index
   // could vary the schema per source). `undefined` = not yet
   // requested; 'loading' = in flight; SchemaError = the request
@@ -285,7 +285,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     else traceQueryColumnsState.set(cols);
   }
 
-  // Effective settings for outgoing requests (/traces, /traces_schema).
+  // Effective settings for outgoing requests (/trace_metadata, /trace_metadata_schema).
   // With bindings set, the per-tab snapshot wins so the trace grid
   // reflects the same `trace_directory` / `trace_limit` the next Run
   // will use, not the user's /settings defaults.
@@ -355,7 +355,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     return s;
   }
 
-  // Kick off /traces_schema once per endpoint. Idempotent — repeated
+  // Kick off /trace_metadata_schema once per endpoint. Idempotent — repeated
   // calls with the same endpoint are no-ops while a fetch is in
   // flight or after one has resolved.
   private ensureSchemaFetched(endpoint: string): void {
@@ -371,7 +371,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     this.schemaState = 'loading';
     const client = new BigtraceQueryClient(endpoint);
     client
-      .listTracesSchema(this.effectiveSettings())
+      .listTraceMetadataSchema(this.effectiveSettings())
       .then((resp) => {
         // Stale-response guard: only commit if the endpoint hasn't
         // changed under us mid-fetch.
@@ -454,14 +454,14 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     const header: m.Children = [
       m('.pf-bt-trace-card__title-row', [
         m('.pf-settings-card__title', 'Traces'),
-        // Inline refresh action — forces a /traces refetch with the
+        // Inline refresh action — forces a /trace_metadata refetch with the
         // current filter / sort / columns / settings. Lives next to
         // the section title so it's obvious which list it refreshes.
         m(Button, {
           icon: 'refresh',
           className: 'pf-bt-trace-card__refresh',
           title:
-            'Refresh trace list — re-fetch /traces with the current ' +
+            'Refresh trace list — re-fetch /trace_metadata with the current ' +
             'filter and settings.',
           onclick: () => {
             void ds.refresh();
@@ -708,7 +708,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   // 2 introduces more metadata — no row-wrapping noise — and reuses
   // the multiselect widget's built-in search + select-all.
   //
-  // `description` from /traces_schema becomes the per-option
+  // `description` from /trace_metadata_schema becomes the per-option
   // tooltip (the multiselect widget surfaces `details` as the
   // hover title), so users can still discover what each column
   // means without leaving the popup.

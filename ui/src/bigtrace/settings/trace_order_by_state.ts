@@ -16,7 +16,7 @@ import {LocalStorage} from '../../core/local_storage';
 
 // Persisted state for the trace-selection grid's sort.
 //
-// The grid lets the user sort `/traces` by clicking a column header
+// The grid lets the user sort `/trace_metadata` by clicking a column header
 // (`file_name asc`, `size_bytes desc`, etc.). That sort matters
 // functionally — under `trace_limit > 0`, the backend keeps the FIRST
 // N traces in this order, so changing the sort changes which traces a

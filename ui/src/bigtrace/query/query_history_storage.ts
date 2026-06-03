@@ -54,7 +54,7 @@ export interface RawQueryExecution {
   // (strict-native body contract; only the `:fetch_results?filter=`
   // URL form still ships a JSON-encoded string). `traceOrderBy` is
   // the AIP-132 wire string controlling trace fan-out order — same
-  // grammar as `/traces?order_by=`. Empty string means the backend
+  // grammar as `/trace_metadata?order_by=`. Empty string means the backend
   // used its default.
   readonly settings?: ReadonlyArray<SnapshotSettingEntry>;
   readonly traceFilters?: ReadonlyArray<Filter>;

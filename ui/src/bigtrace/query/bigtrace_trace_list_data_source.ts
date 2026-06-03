@@ -34,7 +34,7 @@ type ModelWithColumns = DataSourceModel & {
   readonly columns?: ReadonlyArray<{readonly field: string}>;
 };
 
-// DataSource adapter paging `/list_traces` into the DataGrid widget.
+// DataSource adapter paging `/trace_metadata` into the DataGrid widget.
 // Sibling of `BigtraceAsyncDataSource`: same fetch / sort / filter /
 // pagination interaction model, but pointed at the trace-metadata
 // endpoint instead of a query's materialized result table. Embedded
@@ -181,7 +181,7 @@ export class BigtraceTraceListDataSource implements DataSource {
     );
     m.redraw();
     try {
-      const result = await this.queryClient.listTraces(
+      const result = await this.queryClient.listTraceMetadata(
         settings,
         limit,
         offset,
@@ -210,7 +210,7 @@ export class BigtraceTraceListDataSource implements DataSource {
       this._filteredTotalRows = 0;
     } finally {
       // Flip the "first shot was taken" flag regardless of
-      // success/failure. Reason: the BigTrace UI's first /list_traces
+      // success/failure. Reason: the BigTrace UI's first /trace_metadata
       // call typically lands while trace_directory is still empty
       // (settings page just loaded), so it 400s. If we only flipped
       // this on success we'd both (a) re-trigger an identical 400

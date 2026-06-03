@@ -300,7 +300,7 @@ function openSettingChipModal(
 }
 
 // Focused modal for the per-tab trace-metadata-columns picker.
-// Fetches /traces_schema with the tab's effective settings on open,
+// Fetches /trace_metadata_schema with the tab's effective settings on open,
 // then renders a flat checkbox list. Toggles commit live through
 // bindings (parity with the setting chip modal); Done closes.
 function openMetadataColumnsModal(bindings: SettingsBindings): void {
@@ -322,7 +322,7 @@ function openMetadataColumnsModal(bindings: SettingsBindings): void {
     };
   } else {
     const client = new BigtraceQueryClient(endpoint);
-    void client.listTracesSchema(bindings.getEffectiveSettings()).then(
+    void client.listTraceMetadataSchema(bindings.getEffectiveSettings()).then(
       (resp) => {
         schemaState = {kind: 'loaded', cols: resp.columns};
         redrawModal();

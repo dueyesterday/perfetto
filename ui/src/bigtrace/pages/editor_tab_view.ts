@@ -90,7 +90,7 @@ export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
 // Each getter returns a live view of the tab's snapshot; each setter
 // mutates the tab in place and flips the tabs-state dirty flag.
 // `getEffectiveSettings` merges global defaults under per-tab overrides
-// so /traces sees a complete settings array even before the user has
+// so /trace_metadata sees a complete settings array even before the user has
 // edited anything from the chip strip.
 // ---------------------------------------------------------------------------
 

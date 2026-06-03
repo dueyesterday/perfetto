@@ -42,7 +42,7 @@ export interface QueryResultPage {
   readonly availableColumnNames?: ReadonlyArray<string>;
 }
 
-// One row of the `/traces_schema` response. Mirrors the wire shape:
+// One row of the `/trace_metadata_schema` response. Mirrors the wire shape:
 // `name` and `type` are required, `defaultVisible` flags the columns
 // the grid shows on first render, `description` is optional tooltip
 // copy. (`defaultVisible` not `default` — `default` is awkward to
@@ -124,7 +124,7 @@ export class BigtraceQueryClient {
     );
   }
 
-  // Trace-selection grid backing `/traces`. Mirrors `fetchResults`:
+  // Trace-selection grid backing `/trace_metadata`. Mirrors `fetchResults`:
   // paged metadata with the same always-strings wire shape. The
   // Settings page embeds a DataGrid driven by
   // `BigtraceTraceListDataSource`, whose filter state then ships back
@@ -134,10 +134,10 @@ export class BigtraceQueryClient {
   // `columns` is an optional field-mask: when set, only those columns
   // appear in the response (in the given order). When omitted, the
   // backend returns every column flagged `defaultVisible: true` in
-  // its schema (see `listTracesSchema`). `filter` / `orderBy` may
+  // its schema (see `listTraceMetadataSchema`). `filter` / `orderBy` may
   // reference columns outside the projection — the underlying scan
   // still sees them so the predicates apply.
-  async listTraces(
+  async listTraceMetadata(
     settings: ReadonlyArray<SettingFilter>,
     limit: number,
     offset: number,
@@ -167,21 +167,24 @@ export class BigtraceQueryClient {
     if (columns && columns.length > 0) {
       body.columns = [...columns];
     }
-    const result = await this.requestJson<QueryResponsePayload>('/traces', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-      signal,
-    });
+    const result = await this.requestJson<QueryResponsePayload>(
+      '/trace_metadata',
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+        signal,
+      },
+    );
     return parseQueryResponse(result);
   }
 
-  // Describes the columns the `/traces` endpoint can return for the
+  // Describes the columns the `/trace_metadata` endpoint can return for the
   // current trace source. Called once on Settings-page load to build
   // the SchemaRegistry that drives the trace-list grid and the
   // column-picker widget. `settings` is passed to forward-compat
   // backends whose schema depends on the trace source.
-  async listTracesSchema(
+  async listTraceMetadataSchema(
     settings: ReadonlyArray<SettingFilter>,
     signal?: AbortSignal,
   ): Promise<TracesSchemaResponse> {
@@ -192,7 +195,7 @@ export class BigtraceQueryClient {
         category: s.category,
       })),
     });
-    return this.requestJson<TracesSchemaResponse>('/traces_schema', {
+    return this.requestJson<TracesSchemaResponse>('/trace_metadata_schema', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body,
@@ -228,7 +231,7 @@ export class BigtraceQueryClient {
   //
   // POST + body (not GET + query string) because the strict-native body
   // contract requires `filter` to be a native JSON array — same contract as
-  // `/execute_*` `trace_filters` and `/traces` `filters`. Migrated 2026-06-03.
+  // `/execute_*` `trace_filters` and `/trace_metadata` `filters`. Migrated 2026-06-03.
   async fetchResults(
     uuid: string,
     limit: number,
@@ -258,8 +261,8 @@ export class BigtraceQueryClient {
       },
     );
     // `availableColumnNames` is `:fetch_results`-only by spec (WIRE_SPEC §9.9
-    // / §14.6): `/traces` mustn't echo a column catalog because
-    // `/traces_schema` is the source of truth, so the parser stays
+    // / §14.6): `/trace_metadata` mustn't echo a column catalog because
+    // `/trace_metadata_schema` is the source of truth, so the parser stays
     // endpoint-agnostic and only this call site exposes the field.
     return {
       ...parseQueryResponse(result),

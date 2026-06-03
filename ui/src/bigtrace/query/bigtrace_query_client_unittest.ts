@@ -102,8 +102,8 @@ describe('parseQueryResponse', () => {
   test('does not plumb availableColumnNames (fetchResults attaches it)', () => {
     // WIRE_SPEC §9.9 / §14.6: `availableColumnNames` is `:fetch_results`-
     // only. Keeping the parser endpoint-agnostic means the field can't
-    // accidentally leak from `/traces` (whose column catalog lives on
-    // `/traces_schema`, not echoed in the page response).
+    // accidentally leak from `/trace_metadata` (whose column catalog lives on
+    // `/trace_metadata_schema`, not echoed in the page response).
     const result = parseQueryResponse({
       columnNames: ['n'],
       rows: [{values: ['1']}],
@@ -173,7 +173,7 @@ describe('BigtraceQueryClient.fetchResults body construction', () => {
   // :fetch_results is POST + body since the strict-native filter migration
   // (2026-06-03). The URL is plain (no query string); the body carries
   // limit/offset/order_by?/filter?/columns?. Filter ships as a native
-  // array (matches /execute_* trace_filters + /traces filter contracts).
+  // array (matches /execute_* trace_filters + /trace_metadata filter contracts).
   const originalFetch = global.fetch;
   afterEach(() => {
     global.fetch = originalFetch;
@@ -324,8 +324,8 @@ describe('BigtraceQueryClient.fetchResults body construction', () => {
   });
 });
 
-describe('BigtraceQueryClient.listTraces body construction', () => {
-  // /traces is POST so the contract lives in the request body, not
+describe('BigtraceQueryClient.listTraceMetadata body construction', () => {
+  // /trace_metadata is POST so the contract lives in the request body, not
   // the URL. Pin (a) the endpoint, (b) settings array snake_case
   // (matches /execute_*), (c) order_by/filter/columns inclusion rules.
   const originalFetch = global.fetch;
@@ -356,20 +356,20 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
     return JSON.parse(init.body as string);
   }
 
-  test('hits /traces with POST', async () => {
+  test('hits /trace_metadata with POST', async () => {
     const fetchMock = captureFetch();
     const client = new BigtraceQueryClient('http://example/');
-    await client.listTraces([], 100, 0);
+    await client.listTraceMetadata([], 100, 0);
     const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
     const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
-    expect(url).toBe('http://example//traces');
+    expect(url).toBe('http://example//trace_metadata');
     expect(init.method).toBe('POST');
   });
 
   test('settings are renamed to snake_case on the wire', async () => {
     const fetchMock = captureFetch();
     const client = new BigtraceQueryClient('http://example/');
-    await client.listTraces(
+    await client.listTraceMetadata(
       [
         {
           settingId: 'trace_directory',
@@ -395,20 +395,20 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
   test('order_by is omitted when empty, included when set', async () => {
     const client = new BigtraceQueryClient('http://example/');
     let fetchMock = captureFetch();
-    await client.listTraces([], 100, 0);
+    await client.listTraceMetadata([], 100, 0);
     expect(bodyFrom(fetchMock).order_by).toBeUndefined();
     fetchMock = captureFetch();
-    await client.listTraces([], 100, 0, undefined, 'file_name desc');
+    await client.listTraceMetadata([], 100, 0, undefined, 'file_name desc');
     expect(bodyFrom(fetchMock).order_by).toBe('file_name desc');
   });
 
   test('filter is omitted when empty, included as structured array when set', async () => {
     const client = new BigtraceQueryClient('http://example/');
     let fetchMock = captureFetch();
-    await client.listTraces([], 100, 0, undefined, undefined, []);
+    await client.listTraceMetadata([], 100, 0, undefined, undefined, []);
     expect(bodyFrom(fetchMock).filter).toBeUndefined();
     fetchMock = captureFetch();
-    await client.listTraces([], 100, 0, undefined, undefined, [
+    await client.listTraceMetadata([], 100, 0, undefined, undefined, [
       {field: 'file_name', op: 'glob', value: 'a*'},
     ]);
     // Body is the JSON-decoded array — NOT a URL-encoded string. The
@@ -423,25 +423,38 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
   test('columns is omitted when undefined or empty, included verbatim when set', async () => {
     const client = new BigtraceQueryClient('http://example/');
     let fetchMock = captureFetch();
-    await client.listTraces([], 100, 0);
+    await client.listTraceMetadata([], 100, 0);
     expect(bodyFrom(fetchMock).columns).toBeUndefined();
     fetchMock = captureFetch();
-    await client.listTraces([], 100, 0, undefined, undefined, undefined, []);
+    await client.listTraceMetadata(
+      [],
+      100,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      [],
+    );
     expect(bodyFrom(fetchMock).columns).toBeUndefined();
     fetchMock = captureFetch();
     // Set: shipped as an array in user-given order. The server projects
     // exactly these columns; the array order also determines the
     // response column order.
-    await client.listTraces([], 100, 0, undefined, undefined, undefined, [
-      'file_name',
-      'size_bytes',
-    ]);
+    await client.listTraceMetadata(
+      [],
+      100,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      ['file_name', 'size_bytes'],
+    );
     expect(bodyFrom(fetchMock).columns).toEqual(['file_name', 'size_bytes']);
   });
 
   test('does not surface availableColumnNames even if the wire ships one', async () => {
-    // WIRE_SPEC §9.9: `/traces` MUST NOT echo a column catalog —
-    // `/traces_schema` is the source of truth. Even if a non-compliant
+    // WIRE_SPEC §9.9: `/trace_metadata` MUST NOT echo a column catalog —
+    // `/trace_metadata_schema` is the source of truth. Even if a non-compliant
     // backend ships `availableColumnNames`, the client drops it so no
     // consumer can grow a dependency on it.
     global.fetch = vi.fn().mockResolvedValue({
@@ -465,12 +478,12 @@ describe('BigtraceQueryClient.listTraces body construction', () => {
         }),
     }) as unknown as typeof fetch;
     const client = new BigtraceQueryClient('http://example/');
-    const page = await client.listTraces([], 100, 0);
+    const page = await client.listTraceMetadata([], 100, 0);
     expect(page.availableColumnNames).toBeUndefined();
   });
 });
 
-describe('BigtraceQueryClient.listTracesSchema body construction', () => {
+describe('BigtraceQueryClient.listTraceMetadataSchema body construction', () => {
   const originalFetch = global.fetch;
   afterEach(() => {
     global.fetch = originalFetch;
@@ -488,10 +501,10 @@ describe('BigtraceQueryClient.listTracesSchema body construction', () => {
     return fn;
   }
 
-  test('hits /traces_schema with POST and snake_case settings', async () => {
+  test('hits /trace_metadata_schema with POST and snake_case settings', async () => {
     const fetchMock = captureFetch();
     const client = new BigtraceQueryClient('http://example/');
-    await client.listTracesSchema([
+    await client.listTraceMetadataSchema([
       {
         settingId: 'trace_directory',
         values: ['/tmp/x'],
@@ -500,7 +513,7 @@ describe('BigtraceQueryClient.listTracesSchema body construction', () => {
     ]);
     const url = (fetchMock.mock.calls[0] as unknown[])[0] as string;
     const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
-    expect(url).toBe('http://example//traces_schema');
+    expect(url).toBe('http://example//trace_metadata_schema');
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body as string);
     expect(body.settings).toEqual([
@@ -534,7 +547,7 @@ describe('BigtraceQueryClient.listTracesSchema body construction', () => {
         }),
     }) as unknown as typeof fetch;
     const client = new BigtraceQueryClient('http://example/');
-    const resp = await client.listTracesSchema([]);
+    const resp = await client.listTraceMetadataSchema([]);
     expect(resp.columns).toHaveLength(2);
     expect(resp.columns[0].name).toBe('file_name');
     expect(resp.columns[0].defaultVisible).toBe(true);
