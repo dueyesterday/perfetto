@@ -530,16 +530,27 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         m(
           '.pf-bt-trace-list-grid',
           {
-            // Small floor so the grid still has presence on
-            // single-row results, but no large fixed minHeight that
-            // would leave a visible void below sparsely-populated
-            // directories.
-            style: {minHeight: '120px', marginTop: '16px'},
+            // Fixed height so the inner virtualized Grid has a
+            // bounded viewport — without it, the DataGrid's
+            // `height: 100%` resolves against an auto-height parent
+            // and the Grid expands to render every row. For a
+            // 7M-row trace directory that's catastrophic; the
+            // results-page grid avoids it via its flex-bounded
+            // parent layout, but the Settings page is a scrolling
+            // card layout so the trace-list wrapper has to set its
+            // own height. 500px is generous enough for typical
+            // settings UX, capped so virtualization always engages.
+            style: {height: '500px', marginTop: '16px'},
           },
           m(DataGrid, {
             schema: schemaRegistry,
             rootSchema: SCHEMA_ROOT,
             data: ds,
+            // Engages the `pf-data-grid--fill-height` CSS class so
+            // the inner virtualized Grid can use the wrapper's 500px
+            // as its viewport (without this the grid renders every
+            // row regardless of how big the result set is).
+            fillHeight: true,
             // Controlled-mode columns: the grid renders exactly what
             // the user picked, in their preferred order. Its built-in
             // header menus ("Add column", "Remove column") emit
