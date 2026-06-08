@@ -29,6 +29,7 @@ import {Stack, StackAuto} from '../../widgets/stack';
 
 import {BigTraceSettingsCard, renderBigTraceSettingCard} from './settings_card';
 import {renderEndpointControl} from './endpoint_input';
+import {TraceSelectionGrid} from './trace_selection_grid';
 
 export class SettingsPage implements m.ClassComponent {
   private searchQuery = '';
@@ -197,6 +198,17 @@ export class SettingsPage implements m.ClassComponent {
             categoryContent,
           );
         }),
+        // The trace-selection grid: filter / sort / pick which traces a query
+        // runs over. It self-manages an empty endpoint, so render it whenever
+        // there's an endpoint field to point at; hide it during a settings
+        // search since it isn't a setting card.
+        endpointSetting &&
+          this.searchQuery === '' &&
+          m(
+            '.pf-bt-settings-page__plugin-section',
+            m('h2.pf-bt-settings-page__plugin-title', 'Trace Selection'),
+            m(TraceSelectionGrid),
+          ),
         // After the General card, so the callout's "Set the
         // Endpoint above" copy points at a field above it.
         bigTraceSettingsStorage.execConfigLoadError &&

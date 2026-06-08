@@ -712,3 +712,12 @@ pre.pf-bt-history-item-query--standalone {
     border-radius: 4px;
   }
 }
+
+// Bounds the trace-selection grid so DataGrid fillHeight has a height to fill
+// (the Settings page itself scrolls, so an unbounded fillHeight would collapse).
+.pf-bt-trace-selection-grid {
+  display: flex;
+  flex-direction: column;
+  height: 480px;
+  min-height: 0;
+}
