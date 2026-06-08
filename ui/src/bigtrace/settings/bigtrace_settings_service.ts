@@ -13,11 +13,7 @@
 // limitations under the License.
 
 import {z} from 'zod';
-import type {
-  SettingDescriptor,
-  SettingCategory,
-  SettingFilter,
-} from './settings_types';
+import type {SettingDescriptor, SettingCategory} from './settings_types';
 import {endpointStorage} from './endpoint_storage';
 
 interface BackendSettingOption {
@@ -129,11 +125,9 @@ function getEndpoint(): string {
 
 class BigTraceSettingsService {
   private execConfigAbortController: AbortController | null = null;
-  private metadataAbortController: AbortController | null = null;
 
   abortAll(): void {
     this.execConfigAbortController?.abort();
-    this.metadataAbortController?.abort();
   }
 
   async getExecutionSettings(): Promise<SettingDescriptor<unknown>[]> {
@@ -146,25 +140,6 @@ class BigTraceSettingsService {
       '/bigtrace_execution_config',
       '{}',
       this.execConfigAbortController,
-    );
-    return settings.map(toSettingDescriptor);
-  }
-
-  async getMetadataSettings(
-    filters: SettingFilter[],
-  ): Promise<SettingDescriptor<unknown>[]> {
-    const endpointSetting = endpointStorage.get('bigtraceEndpoint');
-    const endpoint = endpointSetting ? (endpointSetting.get() as string) : '';
-    if (endpoint.trim() === '') return [];
-
-    this.metadataAbortController?.abort();
-    this.metadataAbortController = new AbortController();
-
-    const settings = await this.fetchSettings(
-      endpoint,
-      '/trace_metadata_settings',
-      JSON.stringify({settings: filters}),
-      this.metadataAbortController,
     );
     return settings.map(toSettingDescriptor);
   }

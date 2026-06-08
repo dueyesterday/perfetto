@@ -31,8 +31,6 @@ export interface BigTraceSettingsStore {
   get<T>(id: string): Setting<T> | undefined;
   getAllSettings(): ReadonlyArray<Setting<unknown>>;
   buildSettingFilters(): SettingFilter[];
-  removeByCategory(category: string): void;
-  snapshotMetadataFilters(filters: SettingFilter[]): void;
   clear(): void;
 }
 
@@ -41,7 +39,6 @@ export interface BigTraceSettingsStore {
 class BigTraceSettingsStoreImpl implements BigTraceSettingsStore {
   private settings = new Map<string, Setting<unknown>>();
   private readonly storage: LocalStorage;
-  private lastLoadedMetadataFilters: string | null = null;
 
   // Loading is handled by the companion SettingsLoader instance.
   readonly loader: SettingsLoader;
@@ -55,10 +52,6 @@ class BigTraceSettingsStoreImpl implements BigTraceSettingsStore {
 
   async loadSettings(force?: boolean): Promise<void> {
     return this.loader.loadSettings(force);
-  }
-
-  async reloadMetadataSettings(): Promise<void> {
-    return this.loader.reloadMetadataSettings();
   }
 
   get loadError(): string | undefined {
@@ -75,14 +68,6 @@ class BigTraceSettingsStoreImpl implements BigTraceSettingsStore {
 
   get execConfigLoadError(): string | undefined {
     return this.loader.execConfigLoadError;
-  }
-
-  get isMetadataLoading(): boolean {
-    return this.loader.loadingPhase === 'metadata';
-  }
-
-  get metadataLoadError(): string | undefined {
-    return this.loader.metadataLoadError;
   }
 
   // ----- Store CRUD -----
@@ -147,32 +132,6 @@ class BigTraceSettingsStoreImpl implements BigTraceSettingsStore {
       }
     }
     return filters;
-  }
-
-  // ----- Reload detection -----
-
-  snapshotMetadataFilters(filters: SettingFilter[]): void {
-    this.lastLoadedMetadataFilters = JSON.stringify(
-      filters.filter((f) => f.category === 'TRACE_ADDRESS'),
-    );
-  }
-
-  isReloadRequired(): boolean {
-    if (this.lastLoadedMetadataFilters === null) return false;
-    const currentFilters = this.buildSettingFilters().filter(
-      (f) => f.category === 'TRACE_ADDRESS',
-    );
-    return JSON.stringify(currentFilters) !== this.lastLoadedMetadataFilters;
-  }
-
-  // ----- Bulk operations (used by loader) -----
-
-  removeByCategory(category: string): void {
-    for (const [id, setting] of this.settings) {
-      if (setting.category === category) {
-        this.settings.delete(id);
-      }
-    }
   }
 
   clear(): void {

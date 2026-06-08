@@ -20,7 +20,6 @@ import {SettingsShell} from '../../widgets/settings_shell';
 import {CardStack} from '../../widgets/card';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import type {Setting as BigTraceSetting} from '../settings/settings_types';
-import {Button, ButtonVariant} from '../../widgets/button';
 
 import {endpointStorage} from '../settings/endpoint_storage';
 
@@ -42,7 +41,6 @@ export class SettingsPage implements m.ClassComponent {
     new Map([
       ['General', 'General'],
       ['TRACE_ADDRESS', 'Trace Address'],
-      ['TRACE_METADATA', 'Trace Metadata'],
       ['BIGTRACE_QUERY_OPTIONS', 'Query Options'],
     ]);
 
@@ -85,18 +83,6 @@ export class SettingsPage implements m.ClassComponent {
       !hasOtherMatches &&
       !bigTraceSettingsStorage.execConfigLoadError;
 
-    // Only force-create the Trace Metadata section while loading or on error;
-    // an empty metadata response collapses the section entirely.
-    if (
-      this.searchQuery === '' &&
-      !categories.has('Trace Metadata') &&
-      !bigTraceSettingsStorage.execConfigLoadError &&
-      (bigTraceSettingsStorage.isMetadataLoading ||
-        bigTraceSettingsStorage.metadataLoadError)
-    ) {
-      categories.set('Trace Metadata', []);
-    }
-
     return m(
       SettingsShell,
       {
@@ -126,71 +112,28 @@ export class SettingsPage implements m.ClassComponent {
             fillHeight: true,
           }),
         Array.from(categories.entries()).map(([category, catSettings]) => {
-          let categoryHeader: m.Children = m(
+          const categoryHeader = m(
             'h2.pf-bt-settings-page__plugin-title',
             category,
           );
-          if (category === 'Trace Metadata') {
-            categoryHeader = m(
-              'h2.pf-bt-settings-page__plugin-title.pf-bt-settings-category-header',
-              [
-                m('span', category),
-                bigTraceSettingsStorage.isReloadRequired() &&
-                !bigTraceSettingsStorage.isMetadataLoading
-                  ? m(Button, {
-                      label: 'Reload',
-                      icon: 'refresh',
-                      intent: Intent.Primary,
-                      variant: ButtonVariant.Filled,
-                      onclick: () =>
-                        bigTraceSettingsStorage.reloadMetadataSettings(),
-                    })
-                  : null,
-              ],
-            );
-          }
 
-          let categoryContent;
-          if (
-            category === 'Trace Metadata' &&
-            bigTraceSettingsStorage.isMetadataLoading
-          ) {
-            categoryContent = m(EmptyState, {
-              title: 'Loading metadata...',
-              icon: 'hourglass_empty',
-            });
-          } else if (
-            category === 'Trace Metadata' &&
-            bigTraceSettingsStorage.metadataLoadError
-          ) {
-            categoryContent = m(
-              Callout,
-              {
-                intent: Intent.Danger,
-                icon: 'error',
-                title: 'Failed to Load Trace Metadata',
-              },
-              bigTraceSettingsStorage.metadataLoadError,
+          const cards: m.Children[] = [];
+          // Render the endpoint card inside "General".
+          if (category === 'General' && endpointSetting) {
+            cards.push(
+              m(BigTraceSettingsCard, {
+                id: endpointSetting.id,
+                title: endpointSetting.name,
+                description: endpointSetting.description,
+                disabled: undefined,
+                controls: renderEndpointControl(endpointSetting),
+              }),
             );
-          } else {
-            const cards: m.Children[] = [];
-            // Render the endpoint card inside "General".
-            if (category === 'General' && endpointSetting) {
-              cards.push(
-                m(BigTraceSettingsCard, {
-                  id: endpointSetting.id,
-                  title: endpointSetting.name,
-                  description: endpointSetting.description,
-                  disabled: undefined,
-                  controls: renderEndpointControl(endpointSetting),
-                }),
-              );
-            }
-            for (const setting of catSettings) {
-              cards.push(renderBigTraceSettingCard(setting));
-            }
-            categoryContent = m(CardStack, cards);
           }
+          for (const setting of catSettings) {
+            cards.push(renderBigTraceSettingCard(setting));
+          }
+          const categoryContent = m(CardStack, cards);
 
           return m(
             '.pf-bt-settings-page__plugin-section',
