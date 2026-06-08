@@ -15,7 +15,7 @@
 import type {Row as DataGridRow} from '../../trace_processor/query_result';
 import type {Filter} from '../../components/widgets/datagrid/model';
 import type {SettingFilter} from '../settings/settings_types';
-import {encodeFilters} from './filter_encoding';
+import {coerceFiltersForWire, encodeFilters} from './filter_encoding';
 import type {RawQueryExecution} from './query_history_storage';
 
 // Tabular wire shape. Values are always strings, 'null' denotes SQL NULL.
@@ -33,6 +33,22 @@ export interface QueryResultPage {
   readonly queryUuid?: string;
   // Post-filter count from `:fetch_results`; undefined elsewhere.
   readonly totalFilteredRows?: number;
+}
+
+// One column the `/trace_metadata` endpoint can return for the current trace
+// source. `defaultVisible` flags the columns the grid shows on first render;
+// `type` is informational (the wire is always-strings).
+export interface TraceColumnDescriptor {
+  readonly name: string;
+  readonly type: string;
+  readonly defaultVisible: boolean;
+  readonly description?: string;
+}
+
+// `/trace_metadata_schema` response: the column catalog for the trace-list
+// grid + the column-picker widget.
+export interface TracesSchemaResponse {
+  readonly columns: ReadonlyArray<TraceColumnDescriptor>;
 }
 
 // Request aborted via AbortSignal — treat as cancellation, not an error.
@@ -153,6 +169,70 @@ export class BigtraceQueryClient {
   ): Promise<void> {
     await this.request(`/query_executions/${uuid}`, {
       method: 'DELETE',
+      signal,
+    });
+  }
+
+  // Paginated trace metadata for the current trace source — the data behind
+  // the Settings-page trace-selection grid. `filter` / `order_by` / `columns`
+  // mirror `:fetch_results`; `filter` ships as a native JSON array under the
+  // strict-native body contract (NOT a JSON-encoded string).
+  async listTraceMetadata(
+    settings: ReadonlyArray<SettingFilter>,
+    limit: number,
+    offset: number,
+    signal?: AbortSignal,
+    orderBy?: string,
+    filter?: ReadonlyArray<Filter>,
+    columns?: ReadonlyArray<string>,
+  ): Promise<QueryResultPage> {
+    const body: Record<string, unknown> = {
+      settings: settings.map((s) => ({
+        setting_id: s.settingId,
+        values: s.values,
+        category: s.category,
+      })),
+      limit,
+      offset,
+    };
+    if (orderBy && orderBy.length > 0) {
+      body.order_by = orderBy;
+    }
+    if (filter && filter.length > 0) {
+      body.filters = coerceFiltersForWire(filter);
+    }
+    if (columns && columns.length > 0) {
+      body.columns = [...columns];
+    }
+    const result = await this.requestJson<QueryResponsePayload>(
+      '/trace_metadata',
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+        signal,
+      },
+    );
+    return parseQueryResponse(result);
+  }
+
+  // Column catalog for `/trace_metadata`, fetched once on Settings-page load
+  // to build the grid's schema + the column-picker. `settings` lets a
+  // schema-varies-by-source backend tailor the response.
+  async listTraceMetadataSchema(
+    settings: ReadonlyArray<SettingFilter>,
+    signal?: AbortSignal,
+  ): Promise<TracesSchemaResponse> {
+    return this.requestJson<TracesSchemaResponse>('/trace_metadata_schema', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        settings: settings.map((s) => ({
+          setting_id: s.settingId,
+          values: s.values,
+          category: s.category,
+        })),
+      }),
       signal,
     });
   }

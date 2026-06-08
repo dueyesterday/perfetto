@@ -1,0 +1,235 @@
+// Copyright (C) 2026 The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import {afterEach, describe, expect, test, vi} from 'vitest';
+import {BigtraceQueryClient} from './bigtrace_query_client';
+import {coerceFiltersForWire, encodeFilters} from './filter_encoding';
+import type {Filter} from '../../components/widgets/datagrid/model';
+import type {SettingFilter} from '../settings/settings_types';
+
+// The trace-selection grid ships its filter chips both as a native JSON array
+// (request bodies) and as a stable string (change-detection key). Both go
+// through `coerceFiltersForWire`, so the always-strings coercion is locked in
+// here once and shared.
+describe('coerceFiltersForWire', () => {
+  test('passes strings and JSON null through unchanged', () => {
+    expect(
+      coerceFiltersForWire([
+        {field: 'name', op: 'glob', value: 'ui::*'},
+        {field: 'kind', op: 'in', value: ['a', 'b']},
+        {field: 'parent_id', op: 'is null'},
+      ]),
+    ).toEqual([
+      {field: 'name', op: 'glob', value: 'ui::*'},
+      {field: 'kind', op: 'in', value: ['a', 'b']},
+      {field: 'parent_id', op: 'is null'},
+    ]);
+  });
+
+  test('coerces numbers / bigints / booleans to strings (always-strings wire)', () => {
+    // int64 past Number.MAX_SAFE_INTEGER must survive as a string; the backend
+    // coerces back to the column type at bind time.
+    expect(
+      coerceFiltersForWire([
+        {field: 'count', op: '>=', value: 10},
+        {field: 'dur', op: '>', value: 9223372036854775807n},
+        JSON.parse('{"field":"flag","op":"=","value":true}'),
+      ]),
+    ).toEqual([
+      {field: 'count', op: '>=', value: '10'},
+      {field: 'dur', op: '>', value: '9223372036854775807'},
+      {field: 'flag', op: '=', value: 'true'},
+    ]);
+  });
+
+  test('coerces every element of an in-list', () => {
+    expect(
+      coerceFiltersForWire([{field: 'tid', op: 'in', value: [1n, 2, 3n]}]),
+    ).toEqual([{field: 'tid', op: 'in', value: ['1', '2', '3']}]);
+  });
+
+  test('preserves JSON null distinct from the literal "null" string', () => {
+    // null must NOT collapse to "null" — that would match VARCHAR rows.
+    expect(coerceFiltersForWire([{field: 'a', op: '=', value: null}])).toEqual([
+      {field: 'a', op: '=', value: null},
+    ]);
+  });
+
+  test('returns a fresh array (does not mutate the input)', () => {
+    const input: Filter[] = [{field: 'n', op: '=', value: 1}];
+    const out = coerceFiltersForWire(input);
+    expect(out).not.toBe(input);
+    expect(input[0]).toEqual({field: 'n', op: '=', value: 1});
+  });
+});
+
+// encodeFilters is the string form used as the data-source change-detection
+// key; it must be canonical (key-sorted) so equivalent filters hash equal.
+describe('encodeFilters', () => {
+  test('shares value coercion with coerceFiltersForWire', () => {
+    expect(
+      JSON.parse(
+        encodeFilters([{field: 'dur', op: '>', value: 9007199254740993n}]),
+      ),
+    ).toEqual([{field: 'dur', op: '>', value: '9007199254740993'}]);
+  });
+
+  test('produces canonical (key-sorted) output regardless of construction order', () => {
+    const a = encodeFilters([{field: 'x', op: '=', value: '1'}]);
+    const b = encodeFilters([JSON.parse('{"value":"1","op":"=","field":"x"}')]);
+    expect(a).toBe(b);
+    expect(a).toBe('[{"field":"x","op":"=","value":"1"}]');
+  });
+
+  test('empty array → "[]"', () => {
+    expect(encodeFilters([])).toBe('[]');
+  });
+});
+
+describe('BigtraceQueryClient trace-metadata wire', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function captureFetch(payload: unknown = {}): ReturnType<typeof vi.fn> {
+    const body = JSON.stringify(payload);
+    const fakeResp = {
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(body),
+      json: () => Promise.resolve(payload),
+    };
+    const fn = vi.fn().mockResolvedValue(fakeResp);
+    global.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function urlFrom(fetchMock: ReturnType<typeof vi.fn>): string {
+    return (fetchMock.mock.calls[0] as unknown[])[0] as string;
+  }
+
+  function initFrom(fetchMock: ReturnType<typeof vi.fn>): RequestInit {
+    return (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+  }
+
+  function bodyFrom(
+    fetchMock: ReturnType<typeof vi.fn>,
+  ): Record<string, unknown> {
+    return JSON.parse(initFrom(fetchMock).body as string);
+  }
+
+  const traceDir: SettingFilter = {
+    settingId: 'trace_directory',
+    values: ['/var/traces'],
+    category: 'TRACE_ADDRESS',
+  };
+
+  test('listTraceMetadata POSTs /trace_metadata with mapped settings + paging', async () => {
+    const fetchMock = captureFetch({columnNames: ['file_name'], rows: []});
+    const client = new BigtraceQueryClient('http://example/');
+    await client.listTraceMetadata([traceDir], 50, 10);
+
+    expect(urlFrom(fetchMock)).toBe('http://example//trace_metadata');
+    expect(initFrom(fetchMock).method).toBe('POST');
+    const body = bodyFrom(fetchMock);
+    // Settings are mapped from camelCase to the snake_case wire field.
+    expect(body.settings).toEqual([
+      {
+        setting_id: 'trace_directory',
+        values: ['/var/traces'],
+        category: 'TRACE_ADDRESS',
+      },
+    ]);
+    expect(body.limit).toBe(50);
+    expect(body.offset).toBe(10);
+    // Optional fields stay off the wire when not provided.
+    expect(body.order_by).toBeUndefined();
+    expect(body.filters).toBeUndefined();
+    expect(body.columns).toBeUndefined();
+  });
+
+  test('listTraceMetadata parses the always-strings response into rows', async () => {
+    const fetchMock = captureFetch({
+      columnNames: ['file_name', 'size_bytes'],
+      rows: [{values: ['a.pftrace', '9007199254740993']}],
+    });
+    const client = new BigtraceQueryClient('http://example/');
+    const page = await client.listTraceMetadata([traceDir], 50, 0);
+    expect(page.columns).toEqual(['file_name', 'size_bytes']);
+    // Big values survive as strings (no Number coercion).
+    expect(page.rows).toEqual([
+      {file_name: 'a.pftrace', size_bytes: '9007199254740993'},
+    ]);
+    expect(urlFrom(fetchMock)).toContain('/trace_metadata');
+  });
+
+  test('listTraceMetadata ships order_by, native-array filters, and columns when set', async () => {
+    const fetchMock = captureFetch({columnNames: [], rows: []});
+    const client = new BigtraceQueryClient('http://example/');
+    await client.listTraceMetadata(
+      [],
+      50,
+      0,
+      undefined,
+      'size_bytes desc',
+      [{field: 'size_bytes', op: '>', value: 100}],
+      ['file_name', 'size_bytes'],
+    );
+    const body = bodyFrom(fetchMock);
+    expect(body.order_by).toBe('size_bytes desc');
+    // Native JSON array (strict-native body contract), NOT a stringified blob.
+    expect(Array.isArray(body.filters)).toBe(true);
+    expect(body.filters).toEqual([
+      {field: 'size_bytes', op: '>', value: '100'},
+    ]);
+    expect(body.columns).toEqual(['file_name', 'size_bytes']);
+  });
+
+  test('listTraceMetadata omits empty order_by / filter / columns', async () => {
+    const fetchMock = captureFetch({columnNames: [], rows: []});
+    const client = new BigtraceQueryClient('http://example/');
+    await client.listTraceMetadata([], 50, 0, undefined, '', [], []);
+    const body = bodyFrom(fetchMock);
+    expect(body.order_by).toBeUndefined();
+    expect(body.filters).toBeUndefined();
+    expect(body.columns).toBeUndefined();
+  });
+
+  test('listTraceMetadataSchema POSTs /trace_metadata_schema with settings', async () => {
+    const fetchMock = captureFetch({
+      columns: [
+        {name: 'file_name', type: 'TEXT', defaultVisible: true},
+        {name: 'size_bytes', type: 'BIGINT', defaultVisible: false},
+      ],
+    });
+    const client = new BigtraceQueryClient('http://example/');
+    const schema = await client.listTraceMetadataSchema([traceDir]);
+
+    expect(urlFrom(fetchMock)).toBe('http://example//trace_metadata_schema');
+    expect(initFrom(fetchMock).method).toBe('POST');
+    expect(bodyFrom(fetchMock).settings).toEqual([
+      {
+        setting_id: 'trace_directory',
+        values: ['/var/traces'],
+        category: 'TRACE_ADDRESS',
+      },
+    ]);
+    expect(schema.columns.map((c) => c.name)).toEqual([
+      'file_name',
+      'size_bytes',
+    ]);
+    expect(schema.columns[0].defaultVisible).toBe(true);
+  });
+});
