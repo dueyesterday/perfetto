@@ -721,3 +721,51 @@ pre.pf-bt-history-item-query--standalone {
   height: 480px;
   min-height: 0;
 }
+
+// The per-tab "Bigtrace Settings" sub-tab on the query page.
+.pf-bt-query-settings {
+  overflow: auto;
+  height: 100%;
+  padding: 12px;
+
+  &__section {
+    margin-bottom: 24px;
+  }
+
+  &__title {
+    font-size: var(--pf-font-size-l);
+    font-weight: 600;
+    margin: 0 0 12px 0;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  &__label {
+    font-weight: 600;
+  }
+
+  &__hint {
+    color: var(--pf-color-text-muted, gray);
+    font-size: var(--pf-font-size-s);
+  }
+
+  &__snapshot {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 16px;
+    margin: 0;
+
+    dt {
+      font-weight: 600;
+    }
+
+    dd {
+      margin: 0;
+    }
+  }
+}

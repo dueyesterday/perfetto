@@ -205,4 +205,31 @@ describe('BigtraceTraceListDataSource', () => {
     await flush();
     expect(ds.getError()).toBeNull();
   });
+
+  test('reports sort changes to onOrderByChange, not the initial fetch', async () => {
+    const {client} = fakeClient();
+    const seen: string[] = [];
+    const ds = new BigtraceTraceListDataSource(
+      client,
+      () => SETTINGS,
+      undefined,
+      (o) => seen.push(o),
+    );
+    // Initial fetch carries no sort → no callback.
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    expect(seen).toEqual([]);
+
+    // Sorting reports the AIP-132 order string.
+    ds.useRows(
+      flatModel({limit: 100, sort: {alias: 'size_bytes', direction: 'DESC'}}),
+    );
+    await flush();
+    expect(seen).toEqual(['size_bytes desc']);
+
+    // Clearing the sort reports the empty string (back to backend default).
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    expect(seen).toEqual(['size_bytes desc', '']);
+  });
 });

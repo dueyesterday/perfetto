@@ -33,6 +33,7 @@ import {
 import {BigtraceTraceListDataSource} from '../query/bigtrace_trace_list_data_source';
 import {traceFilterState} from '../settings/trace_filter_state';
 import {traceColumnsState} from '../settings/trace_columns_state';
+import {traceOrderByState} from '../settings/trace_order_by_state';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {endpointStorage} from '../settings/endpoint_storage';
 import type {SettingFilter} from '../settings/settings_types';
@@ -90,6 +91,9 @@ export class TraceSelectionGrid implements m.ClassComponent {
       this.client,
       () => this.settings(),
       this.abort.signal,
+      // Persist the grid's sort as the trace processing order (snapshot's
+      // trace_order_by), so a query runs over traces in the order shown.
+      (orderBy) => traceOrderByState.set(orderBy),
     );
   }
 

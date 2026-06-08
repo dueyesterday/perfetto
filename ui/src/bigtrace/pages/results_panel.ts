@@ -21,6 +21,7 @@ import type {QueryRunner} from '../query/query_runner';
 import type {BigTraceEditorTab, QueryTabsState} from './query_tabs_state';
 import {renderStatusBox, formatDurationS} from './status_box';
 import {renderResultsGrid} from './results_grid';
+import {BigtraceQuerySettingsTab} from './bigtrace_settings_tab';
 
 // Owns its own setInterval since sync queries don't drive periodic redraws.
 class RunningQuerySpinner implements m.ClassComponent<{startMs: number}> {
@@ -59,70 +60,72 @@ export function renderResultsPanel(
 ): m.Children {
   const status = renderStatusBox(tab);
 
-  if (!tab.dataSource || !tab.queryResult) {
-    return m(
-      '.pf-bt-results-panel',
-      status,
-      tab.isLoading
-        ? m(RunningQuerySpinner, {startMs: tab.clientStartTime ?? Date.now()})
-        : m(EmptyState, {
-            title: 'Run a query to see results',
-            icon: 'search',
-            fillHeight: true,
-          }),
-    );
-  }
-
-  const processedRows = tab.execution?.processedRows ?? 0;
-
-  const isSyncReopenNoRerun =
-    !tab.materialize &&
-    Boolean(tab.queryUuid) &&
-    tab.queryResult.rows.length === 0 &&
-    !tab.queryResult.error;
-
-  const isTerminalStatus =
-    tab.execution?.status !== undefined &&
-    TERMINAL_STATUSES.has(tab.execution.status);
-  const isAsyncTableCleared =
-    tab.materialize &&
-    Boolean(tab.queryUuid) &&
-    !tab.execution?.tableName &&
-    !tab.queryResult.error &&
-    isTerminalStatus;
-
-  const hasRowsToShow = tab.materialize
-    ? processedRows > 0
-    : tab.queryResult.rows.length > 0;
-
-  const hasError = tab.queryResult.error !== undefined;
-
   let tableContent: m.Children;
-  if (isSyncReopenNoRerun) {
-    tableContent = m(EmptyState, {
-      title: 'Re-run the query to see results',
-      icon: 'refresh',
-      fillHeight: true,
-    });
-  } else if (isAsyncTableCleared) {
-    tableContent = m(EmptyState, {
-      title:
-        tab.execution?.status === 'CANCELLED'
-          ? 'Query was cancelled'
-          : 'Results no longer available',
-      icon: 'refresh',
-      fillHeight: true,
-    });
-  } else if (hasRowsToShow) {
-    tableContent = renderResultsGrid(tab, tabsState, runner);
-  } else if (tab.isLoading) {
-    tableContent = m('div');
+  let hasRowsToShow = false;
+  let hasError = false;
+
+  if (!tab.dataSource || !tab.queryResult) {
+    // No run yet (or a tab freshly reopened). The Table tab invites a run, but
+    // the sub-tabs — including "Bigtrace Settings" — stay reachable so the user
+    // can configure the first run.
+    tableContent = tab.isLoading
+      ? m(RunningQuerySpinner, {startMs: tab.clientStartTime ?? Date.now()})
+      : m(EmptyState, {
+          title: 'Run a query to see results',
+          icon: 'search',
+          fillHeight: true,
+        });
   } else {
-    tableContent = m(EmptyState, {
-      title: 'Query returned no rows',
-      icon: 'search',
-      fillHeight: true,
-    });
+    const result = tab.queryResult;
+    const processedRows = tab.execution?.processedRows ?? 0;
+
+    const isSyncReopenNoRerun =
+      !tab.materialize &&
+      Boolean(tab.queryUuid) &&
+      result.rows.length === 0 &&
+      !result.error;
+
+    const isTerminalStatus =
+      tab.execution?.status !== undefined &&
+      TERMINAL_STATUSES.has(tab.execution.status);
+    const isAsyncTableCleared =
+      tab.materialize &&
+      Boolean(tab.queryUuid) &&
+      !tab.execution?.tableName &&
+      !result.error &&
+      isTerminalStatus;
+
+    hasRowsToShow = tab.materialize
+      ? processedRows > 0
+      : result.rows.length > 0;
+    hasError = result.error !== undefined;
+
+    if (isSyncReopenNoRerun) {
+      tableContent = m(EmptyState, {
+        title: 'Re-run the query to see results',
+        icon: 'refresh',
+        fillHeight: true,
+      });
+    } else if (isAsyncTableCleared) {
+      tableContent = m(EmptyState, {
+        title:
+          tab.execution?.status === 'CANCELLED'
+            ? 'Query was cancelled'
+            : 'Results no longer available',
+        icon: 'refresh',
+        fillHeight: true,
+      });
+    } else if (hasRowsToShow) {
+      tableContent = renderResultsGrid(tab, tabsState, runner);
+    } else if (tab.isLoading) {
+      tableContent = m('div');
+    } else {
+      tableContent = m(EmptyState, {
+        title: 'Query returned no rows',
+        icon: 'search',
+        fillHeight: true,
+      });
+    }
   }
 
   if (tab.resultsTabKey === 'error' && !hasError) {
@@ -136,7 +139,7 @@ export function renderResultsPanel(
     status,
     m(
       '.pf-bt-results-container',
-      renderResultsTabs(tab, tableContent, activeTab),
+      renderResultsTabs(tab, tabsState, tableContent, activeTab),
     ),
   );
 }
@@ -156,6 +159,7 @@ function renderErrorTab(tab: BigTraceEditorTab): m.Children {
 
 function renderResultsTabs(
   tab: BigTraceEditorTab,
+  tabsState: QueryTabsState,
   tableContent: m.Children,
   activeTab: string,
 ): m.Children {
@@ -178,6 +182,11 @@ function renderResultsTabs(
         title: 'Charts are coming soon',
         icon: 'bar_chart',
       }),
+    },
+    {
+      key: 'settings',
+      title: 'Bigtrace Settings',
+      content: m(BigtraceQuerySettingsTab, {tab, tabsState}),
     },
   ];
 

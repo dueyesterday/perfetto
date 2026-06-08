@@ -70,10 +70,13 @@ export class BigtraceTraceListDataSource implements DataSource {
   // `getSettings` is a thunk (not a value) so the Settings page can pass
   // `() => bigTraceSettingsStorage.buildSettingFilters()` and have us re-read
   // it on every render — mirrors `BigtraceAsyncDataSource.getTotalRows`.
+  // `onOrderByChange` fires when the grid sort changes, letting the owner
+  // persist the processing order (the snapshot's `trace_order_by`).
   constructor(
     private readonly queryClient: BigtraceQueryClient,
     private readonly getSettings: () => ReadonlyArray<SettingFilter>,
     private readonly signal?: AbortSignal,
+    private readonly onOrderByChange?: (orderBy: string) => void,
   ) {}
 
   useRows(model: DataSourceModel): DataSourceRows {
@@ -113,6 +116,11 @@ export class BigtraceTraceListDataSource implements DataSource {
       !this.isFetching
     ) {
       this.currentOrderBy = wantedOrderBy;
+      // Persist the processing order on a real sort change (not the initial
+      // fetch, where wantedOrderBy is still '').
+      if (sortChanged) {
+        this.onOrderByChange?.(wantedOrderBy);
+      }
       if (filterChanged) {
         this.currentFilter = wantedFilter;
         this.currentFilterKey = wantedFilterKey;
