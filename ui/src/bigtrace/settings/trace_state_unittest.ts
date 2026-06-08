@@ -15,6 +15,8 @@
 import {beforeEach, describe, expect, test} from 'vitest';
 import {traceFilterState} from './trace_filter_state';
 import {traceColumnsState} from './trace_columns_state';
+import {traceOrderByState} from './trace_order_by_state';
+import {traceQueryColumnsState} from './trace_query_columns_state';
 import type {Filter} from '../../components/widgets/datagrid/model';
 
 beforeEach(() => {
@@ -88,5 +90,52 @@ describe('traceColumnsState', () => {
       'device_name',
       'file_name',
     ]);
+  });
+});
+
+describe('traceOrderByState', () => {
+  test('defaults to the empty string', () => {
+    expect(traceOrderByState.get()).toBe('');
+  });
+
+  test('round-trips an AIP-132 ordering string', () => {
+    traceOrderByState.set('size_bytes desc');
+    expect(traceOrderByState.get()).toBe('size_bytes desc');
+  });
+
+  test('clear() resets to the empty string', () => {
+    traceOrderByState.set('file_name asc');
+    traceOrderByState.clear();
+    expect(traceOrderByState.get()).toBe('');
+  });
+
+  test('a non-string stored value reads back as empty', () => {
+    localStorage.setItem('bigtraceTraceOrderBy', '{"orderBy":42}');
+    expect(traceOrderByState.get()).toBe('');
+  });
+});
+
+describe('traceQueryColumnsState', () => {
+  test('defaults to an empty list (attach nothing)', () => {
+    expect(traceQueryColumnsState.get()).toEqual([]);
+  });
+
+  test('round-trips a selection', () => {
+    traceQueryColumnsState.set(['device_name', 'android_id']);
+    expect(traceQueryColumnsState.get()).toEqual(['device_name', 'android_id']);
+  });
+
+  test('drops non-string entries from a malformed write', () => {
+    localStorage.setItem(
+      'bigtraceTraceQueryColumns',
+      '{"chosen":["device_name",7,null,"android_id"]}',
+    );
+    expect(traceQueryColumnsState.get()).toEqual(['device_name', 'android_id']);
+  });
+
+  test('clear() empties the list', () => {
+    traceQueryColumnsState.set(['device_name']);
+    traceQueryColumnsState.clear();
+    expect(traceQueryColumnsState.get()).toEqual([]);
   });
 });

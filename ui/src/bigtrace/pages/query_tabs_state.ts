@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import type {DataSource} from '../../components/widgets/datagrid/data_source';
+import type {Filter} from '../../components/widgets/datagrid/model';
 import type {Row as DataGridRow} from '../../trace_processor/query_result';
 import {debounce} from '../../base/rate_limiters';
 import {shortUuid} from '../../base/uuid';
@@ -83,6 +84,12 @@ export interface BigTraceEditorTab {
   isLoading: boolean;
   dataSource?: DataSource;
   querySettings: SettingFilter[];
+  // Submit-time trace-selection snapshot — what the tab's last run used. Set
+  // by QueryRunner at run time and restored from history; powers the
+  // query-page "what did this run with?" view.
+  traceFilters: readonly Filter[];
+  traceMetadataColumns: readonly string[];
+  traceOrderBy: string;
   // Tab-lifetime: every backend request plumbs `signal`; aborts on close.
   readonly lifecycle: AbortController;
   // Per-execute request: Cancel aborts this without tearing down the tab.
@@ -179,6 +186,9 @@ export class QueryTabsState {
       isLoading: false,
       dataSource: undefined,
       querySettings: [],
+      traceFilters: [],
+      traceMetadataColumns: [],
+      traceOrderBy: '',
       lifecycle: new AbortController(),
       activeRequest: undefined,
       // History-reopen → Persistent; new tab → sync; caller overrides.

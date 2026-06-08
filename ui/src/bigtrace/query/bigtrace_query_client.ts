@@ -51,6 +51,21 @@ export interface TracesSchemaResponse {
   readonly columns: ReadonlyArray<TraceColumnDescriptor>;
 }
 
+// The submit-time trace-selection snapshot shipped as top-level fields on
+// /execute_*. Each is omitted from the wire when empty / default, so a query
+// run with no trace selection keeps the legacy request shape.
+export interface ExecuteOptions {
+  // Structured filter picking which traces the query runs over. Shipped as a
+  // native JSON array (strict-native body contract) via coerceFiltersForWire.
+  readonly traceFilters?: ReadonlyArray<Filter>;
+  // Trace-metadata columns to staple onto each result row.
+  readonly traceMetadataColumns?: ReadonlyArray<string>;
+  // AIP-132 ordering controlling the trace processing order.
+  readonly traceOrderBy?: string;
+  // Non-negative cap on traces fanned out; 0 / undefined means no cap.
+  readonly traceLimit?: number;
+}
+
 // Request aborted via AbortSignal — treat as cancellation, not an error.
 export class QueryCancelledError extends Error {
   constructor() {
@@ -79,6 +94,7 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal?: AbortSignal,
+    options?: ExecuteOptions,
   ): Promise<QueryResultPage> {
     return this.executeAt(
       '/execute_bigtrace_query',
@@ -86,6 +102,7 @@ export class BigtraceQueryClient {
       limit,
       settings,
       signal,
+      options,
     );
   }
 
@@ -94,6 +111,7 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal?: AbortSignal,
+    options?: ExecuteOptions,
   ): Promise<QueryResultPage> {
     return this.executeAt(
       '/execute_bigtrace_query_async',
@@ -101,6 +119,7 @@ export class BigtraceQueryClient {
       limit,
       settings,
       signal,
+      options,
     );
   }
 
@@ -245,8 +264,9 @@ export class BigtraceQueryClient {
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
     signal: AbortSignal | undefined,
+    options?: ExecuteOptions,
   ): Promise<QueryResultPage> {
-    const body = JSON.stringify({
+    const body: Record<string, unknown> = {
       limit,
       perfetto_sql: query,
       settings: settings.map((s) => ({
@@ -254,11 +274,28 @@ export class BigtraceQueryClient {
         values: s.values,
         category: s.category,
       })),
-    });
+    };
+    // Each trace-selection field rides only when non-default, so a query with
+    // no selection keeps the legacy request shape.
+    if (options?.traceFilters && options.traceFilters.length > 0) {
+      body.trace_filters = coerceFiltersForWire(options.traceFilters);
+    }
+    if (
+      options?.traceMetadataColumns &&
+      options.traceMetadataColumns.length > 0
+    ) {
+      body.trace_metadata_columns = [...options.traceMetadataColumns];
+    }
+    if (options?.traceOrderBy && options.traceOrderBy.length > 0) {
+      body.trace_order_by = options.traceOrderBy;
+    }
+    if (options?.traceLimit !== undefined && options.traceLimit > 0) {
+      body.trace_limit = options.traceLimit;
+    }
     const result = await this.requestJson<QueryResponsePayload>(path, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body,
+      body: JSON.stringify(body),
       signal,
     });
     return parseQueryResponse(result);

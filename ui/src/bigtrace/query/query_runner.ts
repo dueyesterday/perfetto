@@ -17,9 +17,13 @@ import {InMemoryDataSource} from '../../components/widgets/datagrid/in_memory_da
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {endpointStorage} from '../settings/endpoint_storage';
 import type {SettingFilter} from '../settings/settings_types';
+import {traceFilterState} from '../settings/trace_filter_state';
+import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
+import {traceOrderByState} from '../settings/trace_order_by_state';
 import {BigtraceAsyncDataSource} from './bigtrace_async_data_source';
 import {
   BigtraceQueryClient,
+  type ExecuteOptions,
   QueryCancelledError,
   QueryNotFoundError,
 } from './bigtrace_query_client';
@@ -80,6 +84,21 @@ export class QueryRunner {
     const settings = bigTraceSettingsStorage.buildSettingFilters();
     tab.querySettings = settings;
 
+    // Freeze the trace-selection snapshot at submit time so the tab can answer
+    // "what did this query run with?" and the backend runs over exactly this
+    // set, even if the user edits the grid afterwards.
+    const traceFilters = traceFilterState.get();
+    const traceMetadataColumns = traceQueryColumnsState.get();
+    const traceOrderBy = traceOrderByState.get();
+    tab.traceFilters = traceFilters;
+    tab.traceMetadataColumns = traceMetadataColumns;
+    tab.traceOrderBy = traceOrderBy;
+    const executeOptions: ExecuteOptions = {
+      traceFilters,
+      traceMetadataColumns,
+      traceOrderBy,
+    };
+
     const queryClient = new BigtraceQueryClient(endpoint);
     tab.queryClient = queryClient;
     const requestController = new AbortController();
@@ -94,6 +113,7 @@ export class QueryRunner {
           query,
           queryClient,
           settings,
+          executeOptions,
           requestController.signal,
           wallStartMs,
         );
@@ -103,6 +123,7 @@ export class QueryRunner {
           query,
           queryClient,
           settings,
+          executeOptions,
           requestController.signal,
           wallStartMs,
         );
@@ -206,6 +227,20 @@ export class QueryRunner {
     exec.processedTraces = details.processedTraces ?? 0;
     exec.totalTraces = details.totalTraces ?? 0;
     if (details.limit !== undefined) tab.limit = details.limit;
+    // Restore the submit-time trace-selection snapshot for the "what did this
+    // run with?" view. The full GET echoes these; the list endpoint omits them.
+    if (details.settings !== undefined) {
+      tab.querySettings = [...details.settings];
+    }
+    if (details.traceFilters !== undefined) {
+      tab.traceFilters = details.traceFilters;
+    }
+    if (details.traceMetadataColumns !== undefined) {
+      tab.traceMetadataColumns = details.traceMetadataColumns;
+    }
+    if (details.traceOrderBy !== undefined) {
+      tab.traceOrderBy = details.traceOrderBy;
+    }
     tab.editorText = details.perfettoSql || fallbackQuery;
     const startMs = isoToEpochMs(details.startTime);
     if (startMs !== undefined) exec.startTime = startMs;
@@ -269,10 +304,17 @@ export class QueryRunner {
     query: string,
     client: BigtraceQueryClient,
     settings: ReadonlyArray<SettingFilter>,
+    options: ExecuteOptions,
     signal: AbortSignal,
     wallStartMs: number,
   ): Promise<void> {
-    const data = await client.executeAsync(query, tab.limit, settings, signal);
+    const data = await client.executeAsync(
+      query,
+      tab.limit,
+      settings,
+      signal,
+      options,
+    );
     if (data.queryUuid === undefined || data.queryUuid === '') {
       throw new Error('Backend did not return a queryUuid for async execute');
     }
@@ -311,10 +353,17 @@ export class QueryRunner {
     query: string,
     client: BigtraceQueryClient,
     settings: ReadonlyArray<SettingFilter>,
+    options: ExecuteOptions,
     signal: AbortSignal,
     wallStartMs: number,
   ): Promise<void> {
-    const result = await client.executeSync(query, tab.limit, settings, signal);
+    const result = await client.executeSync(
+      query,
+      tab.limit,
+      settings,
+      signal,
+      options,
+    );
     if (result.queryUuid === undefined || result.queryUuid === '') {
       throw new Error('Backend did not return a queryUuid for sync execute');
     }

@@ -233,3 +233,90 @@ describe('BigtraceQueryClient trace-metadata wire', () => {
     expect(schema.columns[0].defaultVisible).toBe(true);
   });
 });
+
+describe('BigtraceQueryClient execute trace-selection snapshot', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function captureFetch(): ReturnType<typeof vi.fn> {
+    const payload = {queryUuid: 'uid', columnNames: [], rows: []};
+    const fakeResp = {
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify(payload)),
+      json: () => Promise.resolve(payload),
+    };
+    const fn = vi.fn().mockResolvedValue(fakeResp);
+    global.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function bodyFrom(
+    fetchMock: ReturnType<typeof vi.fn>,
+  ): Record<string, unknown> {
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    return JSON.parse(init.body as string);
+  }
+
+  test('omits every trace_* field when no options are passed (legacy shape)', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.executeAsync('select 1', 100, []);
+    const body = bodyFrom(fetchMock);
+    expect(body.perfetto_sql).toBe('select 1');
+    expect(body.limit).toBe(100);
+    expect(body.trace_filters).toBeUndefined();
+    expect(body.trace_metadata_columns).toBeUndefined();
+    expect(body.trace_order_by).toBeUndefined();
+    expect(body.trace_limit).toBeUndefined();
+  });
+
+  test('ships trace_filters as a native, coerced array', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.executeAsync('select 1', 100, [], undefined, {
+      traceFilters: [
+        {field: 'file_name', op: 'glob', value: '*.pftrace'},
+        {field: 'size_bytes', op: '>', value: 1000},
+      ],
+    });
+    const body = bodyFrom(fetchMock);
+    expect(Array.isArray(body.trace_filters)).toBe(true);
+    expect(body.trace_filters).toEqual([
+      {field: 'file_name', op: 'glob', value: '*.pftrace'},
+      {field: 'size_bytes', op: '>', value: '1000'},
+    ]);
+  });
+
+  test('ships trace_metadata_columns / trace_order_by / trace_limit when set', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.executeSync('select 1', 100, [], undefined, {
+      traceMetadataColumns: ['device_name', 'android_id'],
+      traceOrderBy: 'size_bytes desc',
+      traceLimit: 50,
+    });
+    const body = bodyFrom(fetchMock);
+    expect(body.trace_metadata_columns).toEqual(['device_name', 'android_id']);
+    expect(body.trace_order_by).toBe('size_bytes desc');
+    expect(body.trace_limit).toBe(50);
+  });
+
+  test('omits empty / default trace_* fields', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.executeAsync('select 1', 100, [], undefined, {
+      traceFilters: [],
+      traceMetadataColumns: [],
+      traceOrderBy: '',
+      traceLimit: 0,
+    });
+    const body = bodyFrom(fetchMock);
+    expect(body.trace_filters).toBeUndefined();
+    expect(body.trace_metadata_columns).toBeUndefined();
+    expect(body.trace_order_by).toBeUndefined();
+    expect(body.trace_limit).toBeUndefined();
+  });
+});

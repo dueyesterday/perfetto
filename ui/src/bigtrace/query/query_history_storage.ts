@@ -15,6 +15,8 @@
 import {endpointStorage} from '../settings/endpoint_storage';
 import {BigtraceQueryClient} from './bigtrace_query_client';
 import type {QueryExecution} from './query_store';
+import type {Filter} from '../../components/widgets/datagrid/model';
+import type {SettingFilter} from '../settings/settings_types';
 
 // Wire shape from /query_executions[*].
 // Times are ISO-8601; `readonly` marks the wire boundary.
@@ -33,6 +35,13 @@ export interface RawQueryExecution {
   readonly materialized?: boolean;
   readonly tableName?: string;
   readonly tableLink?: string;
+  // Submit-time snapshot — what the query ran with. Echoed on the full GET
+  // /query_executions/{uuid}; omitted from :status and the list response.
+  readonly settings?: ReadonlyArray<SettingFilter>;
+  readonly traceFilters?: ReadonlyArray<Filter>;
+  readonly traceMetadataColumns?: ReadonlyArray<string>;
+  readonly traceOrderBy?: string;
+  readonly traceLimit?: number;
 }
 
 // ISO-8601 → epoch ms; invalid/missing → undefined (never NaN).
