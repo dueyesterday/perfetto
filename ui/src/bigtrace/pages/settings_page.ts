@@ -68,7 +68,10 @@ import {BigtraceTraceListDataSource} from '../query/bigtrace_trace_list_data_sou
 import {traceFilterState as traceFiltersState} from '../settings/trace_filter_state';
 import {traceOrderByState} from '../settings/trace_order_by_state';
 import {traceColumnsState} from '../settings/trace_columns_state';
-import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
+import {
+  traceQueryColumnsState,
+  effectiveQueryColumns,
+} from '../settings/trace_query_columns_state';
 
 interface BigTraceSettingsCardAttrs extends m.Attributes {
   id?: string;
@@ -282,7 +285,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     else traceFiltersState.set(filters);
   }
 
-  private readTraceMetadataColumns(): readonly string[] {
+  // null = unchosen (resolved to the schema's defaultVisible columns by the
+  // picker via effectiveQueryColumns); [] = explicit "attach nothing".
+  private readTraceMetadataColumns(): readonly string[] | null {
     return this.bindings
       ? this.bindings.getTraceMetadataColumns()
       : traceQueryColumnsState.get();
@@ -299,7 +304,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     else traceOrderByState.set(orderBy);
   }
 
-  private writeTraceMetadataColumns(cols: readonly string[]): void {
+  // `null` resets to the unchosen default (attach the schema's defaultVisible
+  // columns); a concrete list (including []) is honored verbatim.
+  private writeTraceMetadataColumns(cols: readonly string[] | null): void {
     if (this.bindings) this.bindings.setTraceMetadataColumns(cols);
     else traceQueryColumnsState.set(cols);
   }
@@ -711,18 +718,49 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     );
   }
 
+  // A subtle "Restore defaults" button shown next to a column picker only when
+  // its state is customized (non-default). Clicking resets to the live default
+  // (re-checks defaultVisible and resumes tracking the backend's default as it
+  // changes). Hidden at the default so it's never a no-op and doubles as an
+  // "overridden" cue.
+  private renderRestoreDefaultsButton(
+    customized: boolean,
+    title: string,
+    onReset: () => void,
+  ): m.Children {
+    if (!customized) return null;
+    return m(Button, {
+      label: 'Restore defaults',
+      icon: 'settings_backup_restore',
+      title,
+      onclick: () => {
+        onReset();
+        m.redraw();
+      },
+    });
+  }
+
   // Checkboxes for the "Query Result Columns" card. Picks which
   // trace-metadata columns get stapled onto every QUERY RESULT row
   // (stored server-side in the per-query metadata sidecar, projected
   // at fetch time). Distinct state from `traceColumnsState` — these
-  // checkboxes never affect the trace-list grid above. Default is
-  // empty so a user who never touches the picker pays zero overhead
-  // on backends with expensive per-trace metadata.
+  // checkboxes never affect the trace-list grid above. Unchosen (null)
+  // attaches the schema's defaultVisible columns by default; a user who
+  // wants none can uncheck every box (writes [] = "attach nothing").
   private renderQueryColumnsPicker(
     schemaCols: ReadonlyArray<TraceColumnDescriptor>,
   ): m.Children {
-    const chosen = this.readTraceMetadataColumns();
+    // Resolve the tri-state against the live schema: an unchosen (null) state
+    // shows the defaultVisible columns pre-checked, so the picker reflects what
+    // a query attaches by default. The first toggle writes the resolved set ±
+    // the change as a concrete list, which from then on is honored verbatim
+    // (unchecking the last one writes [] = "attach nothing").
+    const chosen = effectiveQueryColumns(
+      this.readTraceMetadataColumns(),
+      schemaCols,
+    );
     const chosenSet = new Set(chosen);
+    const customized = this.readTraceMetadataColumns() !== null;
     const options: MultiSelectOption[] = schemaCols.map((col) => ({
       id: col.name,
       name: col.name,
@@ -731,7 +769,14 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     }));
     return m(
       '.pf-bt-trace-query-columns',
-      {style: {marginTop: '16px'}},
+      {
+        style: {
+          marginTop: '16px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+        },
+      },
       m(PopupMultiSelect, {
         label: 'Columns to attach',
         icon: 'label',
@@ -752,6 +797,12 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
           m.redraw();
         },
       }),
+      this.renderRestoreDefaultsButton(
+        customized,
+        "Attach the backend's default columns, and keep tracking that " +
+          'default as it changes.',
+        () => this.writeTraceMetadataColumns(null),
+      ),
     );
   }
 
@@ -770,6 +821,10 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     chosen: ReadonlyArray<string>,
   ): m.Children {
     const chosenSet = new Set(chosen);
+    // The trace-grid shown-columns picker is backed by the global
+    // traceColumnsState only (no per-tab binding), so its customized check and
+    // reset both go straight to that state.
+    const customized = traceColumnsState.get() !== null;
     const options: MultiSelectOption[] = schemaCols.map((col) => ({
       id: col.name,
       name: col.name,
@@ -778,7 +833,14 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     }));
     return m(
       '.pf-bt-trace-columns',
-      {style: {marginTop: '20px'}},
+      {
+        style: {
+          marginTop: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+        },
+      },
       m(PopupMultiSelect, {
         label: 'Shown columns',
         icon: 'view_column',
@@ -790,6 +852,11 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
           this.applyColumnDiffs(chosen, diffs);
         },
       }),
+      this.renderRestoreDefaultsButton(
+        customized,
+        "Show the backend's default columns in the grid.",
+        () => traceColumnsState.clear(),
+      ),
     );
   }
 

@@ -17,6 +17,7 @@ import {InMemoryDataSource} from '../../components/widgets/datagrid/in_memory_da
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {getBigtraceEndpoint} from '../settings/endpoint_storage';
 import type {SettingFilter} from '../settings/settings_types';
+import {effectiveQueryColumns} from '../settings/trace_query_columns_state';
 import {BigtraceAsyncDataSource} from './bigtrace_async_data_source';
 import {
   BigtraceQueryClient,
@@ -95,19 +96,39 @@ export class QueryRunner {
     // creation, then edited via the settings bar). Globals are read only at
     // tab-creation time, not here.
     const traceFilters = tab.traceFilters;
-    const traceMetadataColumns = tab.traceMetadataColumns;
     const traceOrderBy = tab.traceOrderBy;
-    const executeOptions: ExecuteOptions = {
-      traceFilters,
-      traceMetadataColumns,
-      traceOrderBy,
-    };
 
     const queryClient = new BigtraceQueryClient(endpoint);
     tab.queryClient = queryClient;
     const requestController = new AbortController();
     const cancelForward = forwardAbort(tab.lifecycle.signal, requestController);
     tab.activeRequest = requestController;
+
+    // Resolve which trace-metadata columns to attach to each result row.
+    // `null` is the unchosen default: attach the backend's defaultVisible
+    // columns (symmetric with the trace grid defaulting to its defaultVisible
+    // columns), which needs the live schema. An explicit selection — including
+    // [] ("attach nothing") — ships verbatim with no fetch. A schema-fetch
+    // failure degrades to attaching nothing rather than blocking the run.
+    let traceMetadataColumns: readonly string[] =
+      tab.traceMetadataColumns ?? [];
+    if (tab.traceMetadataColumns === null) {
+      try {
+        const schema = await queryClient.listTraceMetadataSchema(
+          settings,
+          requestController.signal,
+        );
+        traceMetadataColumns = effectiveQueryColumns(null, schema.columns);
+      } catch {
+        traceMetadataColumns = [];
+      }
+    }
+    const executeOptions: ExecuteOptions = {
+      traceFilters,
+      traceMetadataColumns,
+      traceOrderBy,
+    };
+
     const wallStartMs = performance.now();
 
     try {

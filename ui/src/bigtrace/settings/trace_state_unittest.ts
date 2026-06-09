@@ -16,7 +16,10 @@ import {beforeEach, describe, expect, test} from 'vitest';
 import {traceFilterState} from './trace_filter_state';
 import {traceColumnsState} from './trace_columns_state';
 import {traceOrderByState} from './trace_order_by_state';
-import {traceQueryColumnsState} from './trace_query_columns_state';
+import {
+  traceQueryColumnsState,
+  effectiveQueryColumns,
+} from './trace_query_columns_state';
 import {queryResultColumnsState} from './query_result_columns_state';
 import type {Filter} from '../../components/widgets/datagrid/model';
 
@@ -117,13 +120,21 @@ describe('traceOrderByState', () => {
 });
 
 describe('traceQueryColumnsState', () => {
-  test('defaults to an empty list (attach nothing)', () => {
-    expect(traceQueryColumnsState.get()).toEqual([]);
+  test('defaults to null (unchosen → attach defaultVisible)', () => {
+    expect(traceQueryColumnsState.get()).toBeNull();
   });
 
   test('round-trips a selection', () => {
     traceQueryColumnsState.set(['device_name', 'android_id']);
     expect(traceQueryColumnsState.get()).toEqual(['device_name', 'android_id']);
+  });
+
+  test('preserves an explicit empty list as "attach nothing" (not null)', () => {
+    // Unlike traceColumnsState, [] must NOT collapse to the null default —
+    // otherwise the user could never express "attach no metadata columns"
+    // after unchecking every box.
+    traceQueryColumnsState.set([]);
+    expect(traceQueryColumnsState.get()).toEqual([]);
   });
 
   test('drops non-string entries from a malformed write', () => {
@@ -134,10 +145,42 @@ describe('traceQueryColumnsState', () => {
     expect(traceQueryColumnsState.get()).toEqual(['device_name', 'android_id']);
   });
 
-  test('clear() empties the list', () => {
+  test('a non-array stored value reads back as null', () => {
+    localStorage.setItem('bigtraceTraceQueryColumns', '{"chosen":"nope"}');
+    expect(traceQueryColumnsState.get()).toBeNull();
+  });
+
+  test('clear() reverts to the null default', () => {
     traceQueryColumnsState.set(['device_name']);
     traceQueryColumnsState.clear();
-    expect(traceQueryColumnsState.get()).toEqual([]);
+    expect(traceQueryColumnsState.get()).toBeNull();
+  });
+});
+
+describe('effectiveQueryColumns', () => {
+  const schema = [
+    {name: 'file_name', defaultVisible: true},
+    {name: 'size_bytes', defaultVisible: true},
+    {name: 'device_name', defaultVisible: false},
+  ];
+
+  test('null (unchosen) resolves to the defaultVisible columns', () => {
+    expect(effectiveQueryColumns(null, schema)).toEqual([
+      'file_name',
+      'size_bytes',
+    ]);
+  });
+
+  test('an explicit selection is intersected with the live schema', () => {
+    // 'gone' is stale (not in schema) and drops; order follows the selection;
+    // a non-defaultVisible column is honored because it was explicitly chosen.
+    expect(
+      effectiveQueryColumns(['device_name', 'gone', 'file_name'], schema),
+    ).toEqual(['device_name', 'file_name']);
+  });
+
+  test('an explicit empty list stays empty (attach nothing)', () => {
+    expect(effectiveQueryColumns([], schema)).toEqual([]);
   });
 });
 

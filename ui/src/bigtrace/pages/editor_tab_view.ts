@@ -122,7 +122,7 @@ function buildTabBindings(
     },
     getTraceMetadataColumns: () => tab.traceMetadataColumns,
     setTraceMetadataColumns: (cols) => {
-      tab.traceMetadataColumns = [...cols];
+      tab.traceMetadataColumns = cols === null ? null : [...cols];
       tabsState.markDirty();
     },
     getTraceOrderBy: () => tab.traceOrderBy,

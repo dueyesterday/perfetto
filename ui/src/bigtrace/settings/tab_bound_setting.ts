@@ -42,8 +42,11 @@ export interface SettingsBindings {
   ) => void;
   readonly getTraceFilters: () => readonly Filter[];
   readonly setTraceFilters: (filters: readonly Filter[]) => void;
-  readonly getTraceMetadataColumns: () => readonly string[];
-  readonly setTraceMetadataColumns: (cols: readonly string[]) => void;
+  // null = unchosen (attach the schema's defaultVisible columns); the picker
+  // resolves it via effectiveQueryColumns. Setting accepts a concrete list, or
+  // null to reset to that default.
+  readonly getTraceMetadataColumns: () => readonly string[] | null;
+  readonly setTraceMetadataColumns: (cols: readonly string[] | null) => void;
   // Per-tab AIP-132 ordering string (e.g. "size_bytes desc"). Drives
   // the top-level `trace_order_by` field on the next Run. Empty
   // string defers to the backend default.

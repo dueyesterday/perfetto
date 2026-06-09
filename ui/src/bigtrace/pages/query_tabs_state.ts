@@ -124,7 +124,10 @@ export interface BigTraceEditorTab {
   // by QueryRunner at run time and restored from history; powers the
   // query-page "what did this run with?" view.
   traceFilters: readonly Filter[];
-  traceMetadataColumns: readonly string[];
+  // Tri-state, resolved against the live schema at submit time (see
+  // effectiveQueryColumns): null = unchosen → attach the schema's
+  // defaultVisible columns; [] = attach nothing; [...] = exactly these.
+  traceMetadataColumns: readonly string[] | null;
   traceOrderBy: string;
   // Per-tab disabled setting IDs — independent of the global /settings state.
   // Seeded from globals at creation, then toggled per-tab; excluded from the
@@ -162,7 +165,8 @@ interface StoredTab {
   // Settings sub-tab survive reload.
   readonly querySettings?: ReadonlyArray<SettingFilter>;
   readonly traceFilters?: ReadonlyArray<Filter>;
-  readonly traceMetadataColumns?: ReadonlyArray<string>;
+  // null = unchosen (attach defaultVisible); preserved distinct from [].
+  readonly traceMetadataColumns?: ReadonlyArray<string> | null;
   readonly traceOrderBy?: string;
   readonly disabledSettings?: ReadonlyArray<string>;
 }
@@ -241,11 +245,16 @@ export class QueryTabsState {
       : isFromHistory
         ? []
         : [...traceFilterState.get()];
-    const traceMetadataColumns: string[] = isFromStorage
-      ? [...(stored?.traceMetadataColumns ?? [])]
+    // null = unchosen, resolved to the schema's defaultVisible columns at
+    // submit time. Restored tabs keep their persisted tri-state; history-reopen
+    // tabs start unchosen (the runner rehydrates the concrete snapshot from the
+    // backend GET); fresh tabs copy the current /settings global (also
+    // tri-state). `?? null` preserves [] ("attach nothing") distinct from null.
+    const traceMetadataColumns: readonly string[] | null = isFromStorage
+      ? stored?.traceMetadataColumns ?? null
       : isFromHistory
-        ? []
-        : [...traceQueryColumnsState.get()];
+        ? null
+        : traceQueryColumnsState.get();
     const traceOrderBy: string = isFromStorage
       ? stored?.traceOrderBy ?? ''
       : isFromHistory
