@@ -37,8 +37,9 @@ export interface RawQueryExecution {
   readonly tableLink?: string;
   // Submit-time snapshot — what the query ran with. Echoed on the full GET
   // /query_executions/{uuid}; omitted from :status and the list response.
-  // `settings` arrives in the snake_case wire shape; convert with
-  // snapshotSettingsToFilters before handing it to the settings layer.
+  // `settings` arrives in the camelCase wire shape (setting id as
+  // `settingId`); convert with snapshotSettingsToFilters before handing it to
+  // the settings layer.
   readonly settings?: ReadonlyArray<SnapshotSettingEntry>;
   readonly traceFilters?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
@@ -46,19 +47,20 @@ export interface RawQueryExecution {
   readonly traceLimit?: number;
 }
 
-// Snapshot settings as echoed on the wire: snake_case `setting_id`, and
-// permissive `values` (the backend stores exactly what the client sent).
-// Caller code converts to SettingFilter via snapshotSettingsToFilters.
+// Snapshot settings as echoed on the wire. Responses are camelCase (the same
+// proto/JSON convention as every other response field — queryUuid, perfettoSql,
+// traceFilters, …), so the setting id arrives as `settingId`. `values` is
+// permissive (the backend stores exactly what the client sent). Caller code
+// converts to SettingFilter via snapshotSettingsToFilters.
 export interface SnapshotSettingEntry {
-  readonly setting_id: string;
+  readonly settingId: string;
   readonly values: ReadonlyArray<string | number | boolean | null>;
   readonly category: string;
 }
 
-// Convert the wire snapshot settings into SettingFilter[] (camelCase
-// settingId, string values) so the settings layer sees the shape it
-// serialized. Skips malformed entries; coerces non-string values back to
-// strings (null → '').
+// Convert the wire snapshot settings into SettingFilter[] (string values) so
+// the settings layer sees the shape it serialized. Skips malformed entries;
+// coerces non-string values back to strings (null → '').
 export function snapshotSettingsToFilters(
   raw: ReadonlyArray<SnapshotSettingEntry> | undefined,
 ): SettingFilter[] {
@@ -66,14 +68,14 @@ export function snapshotSettingsToFilters(
   const out: SettingFilter[] = [];
   for (const s of raw) {
     if (
-      typeof s?.setting_id !== 'string' ||
-      !Array.isArray(s.values) ||
+      typeof s?.settingId !== 'string' ||
+      !Array.isArray(s?.values) ||
       typeof s?.category !== 'string'
     ) {
       continue;
     }
     out.push({
-      settingId: s.setting_id,
+      settingId: s.settingId,
       values: s.values.map((v) => (v === null ? '' : String(v))),
       category: s.category as SettingFilter['category'],
     });
