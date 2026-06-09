@@ -295,10 +295,30 @@
 // Anchors the abs-positioned buttons; the shared float made a BFC that
 // squeezed the meta card.
 .pf-query-history__item {
-  // margin-bottom: 10px;
+  // Real gap between entries so each reads as a distinct unit. Safe to set now
+  // that the buttons are position:absolute / float:none — the old float BFC
+  // that squeezed the meta card (and forced this margin off) is gone.
+  margin-bottom: 12px;
   max-height: none;
   overflow-y: visible;
   position: relative;
+}
+
+// Whole-entry hover highlight. The shared widgets/query_history.scss provides
+// this via color_hover(), but the bigtrace bundle re-implements the history
+// styles and dropped it — restate it here. The entry's surfaces (meta /
+// details / pre) are opaque and layered, so overlay the translucent tint via
+// background-image (which paints over each surface's background-color) instead
+// of replacing the background.
+.pf-query-history__item:hover {
+  .pf-bt-history-item-meta,
+  .pf-bt-history-item-details,
+  pre {
+    background-image: linear-gradient(
+      color_hover(transparent),
+      color_hover(transparent)
+    );
+  }
 }
 
 .pf-query-history__item-buttons {
