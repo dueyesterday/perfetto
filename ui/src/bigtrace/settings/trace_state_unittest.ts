@@ -21,6 +21,7 @@ import {
   effectiveQueryColumns,
 } from './trace_query_columns_state';
 import {queryResultColumnsState} from './query_result_columns_state';
+import {linkColumnFirst, linkNameFirst} from './column_order';
 import type {Filter} from '../../components/widgets/datagrid/model';
 
 beforeEach(() => {
@@ -94,6 +95,15 @@ describe('traceColumnsState', () => {
       'device_name',
       'file_name',
     ]);
+  });
+
+  test('effective() hoists a link column to the front', () => {
+    expect(
+      traceColumnsState.effective([
+        {name: 'file_name', defaultVisible: true},
+        {name: 'link', defaultVisible: true},
+      ]),
+    ).toEqual(['link', 'file_name']);
   });
 });
 
@@ -182,6 +192,47 @@ describe('effectiveQueryColumns', () => {
   test('an explicit empty list stays empty (attach nothing)', () => {
     expect(effectiveQueryColumns([], schema)).toEqual([]);
   });
+
+  test('hoists a link column to the front of the defaults', () => {
+    const withLink = [
+      {name: 'file_name', defaultVisible: true},
+      {name: 'link', defaultVisible: true},
+      {name: 'size_bytes', defaultVisible: true},
+    ];
+    expect(effectiveQueryColumns(null, withLink)).toEqual([
+      'link',
+      'file_name',
+      'size_bytes',
+    ]);
+  });
+});
+
+describe('linkColumnFirst (link leads everywhere)', () => {
+  test('hoists link from the middle, preserving the rest in order', () => {
+    expect(linkNameFirst(['a', 'link', 'b', 'c'])).toEqual([
+      'link',
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  test('is a no-op when link is absent', () => {
+    expect(linkNameFirst(['a', 'b'])).toEqual(['a', 'b']);
+  });
+
+  test('is a no-op when link is already first', () => {
+    expect(linkNameFirst(['link', 'a', 'b'])).toEqual(['link', 'a', 'b']);
+  });
+
+  test('keys objects by name', () => {
+    const cols = [{name: 'a'}, {name: 'link'}, {name: 'b'}];
+    expect(linkColumnFirst(cols, (c) => c.name)).toEqual([
+      {name: 'link'},
+      {name: 'a'},
+      {name: 'b'},
+    ]);
+  });
 });
 
 describe('queryResultColumnsState', () => {
@@ -222,6 +273,14 @@ describe('queryResultColumnsState', () => {
     // A schema change between queries shouldn't strand an empty grid.
     queryResultColumnsState.set(['old_a', 'old_b']);
     expect(queryResultColumnsState.effective(['name', 'dur'])).toEqual([
+      'name',
+      'dur',
+    ]);
+  });
+
+  test('effective() hoists a link column to the front of the visible set', () => {
+    expect(queryResultColumnsState.effective(['name', 'link', 'dur'])).toEqual([
+      'link',
       'name',
       'dur',
     ]);

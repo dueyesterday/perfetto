@@ -16,6 +16,7 @@ import {
   SingleFieldStorage,
   parseNullableStringArray,
 } from './single_field_storage';
+import {linkNameFirst} from './column_order';
 
 // Persisted set of columns the user has chosen to see in the trace-selection
 // grid. Backs the DataGrid's controlled `columns` prop.
@@ -41,14 +42,16 @@ class TraceColumnsState extends SingleFieldStorage<readonly string[] | null> {
   // hasn't chosen (`null`), the defaultVisible columns in declaration order;
   // otherwise the persisted selection intersected with the schema, so a stale
   // entry referencing a removed column drops silently instead of breaking the
-  // grid.
+  // grid. Either way `link`, if present, is hoisted to the front.
   effective(schema: ReadonlyArray<SchemaColumn>): string[] {
     const chosen = this.get();
     if (chosen === null) {
-      return schema.filter((c) => c.defaultVisible).map((c) => c.name);
+      return linkNameFirst(
+        schema.filter((c) => c.defaultVisible).map((c) => c.name),
+      );
     }
     const known = new Set(schema.map((c) => c.name));
-    return chosen.filter((c) => known.has(c));
+    return linkNameFirst(chosen.filter((c) => known.has(c)));
   }
 }
 

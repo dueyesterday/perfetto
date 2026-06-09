@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import {SingleFieldStorage} from './single_field_storage';
+import {linkNameFirst} from './column_order';
 
 // Minimal shape of a /trace_metadata_schema column, as far as the default
 // resolution cares.
@@ -24,7 +25,8 @@ interface SchemaColumn {
 // Resolve a chosen query-columns value against a live schema.
 //
 //   null  → unchosen: attach the schema's defaultVisible columns (in
-//           declaration order). This is the DEFAULT — symmetric with the
+//           declaration order, `link` hoisted first). This is the DEFAULT —
+//           symmetric with the
 //           trace-list grid, which SHOWS its defaultVisible columns by default
 //           (see traceColumnsState.effective). So a query attaches those
 //           columns even on a tab whose picker was never opened.
@@ -41,10 +43,12 @@ export function effectiveQueryColumns(
   schema: ReadonlyArray<SchemaColumn>,
 ): string[] {
   if (chosen === null) {
-    return schema.filter((c) => c.defaultVisible).map((c) => c.name);
+    return linkNameFirst(
+      schema.filter((c) => c.defaultVisible).map((c) => c.name),
+    );
   }
   const known = new Set(schema.map((c) => c.name));
-  return chosen.filter((c) => known.has(c));
+  return linkNameFirst(chosen.filter((c) => known.has(c)));
 }
 
 // Persisted set of trace-metadata columns to staple onto every query result

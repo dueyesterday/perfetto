@@ -72,6 +72,7 @@ import {
   traceQueryColumnsState,
   effectiveQueryColumns,
 } from '../settings/trace_query_columns_state';
+import {linkColumnFirst} from '../settings/column_order';
 
 interface BigTraceSettingsCardAttrs extends m.Attributes {
   id?: string;
@@ -761,7 +762,10 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     );
     const chosenSet = new Set(chosen);
     const customized = this.readTraceMetadataColumns() !== null;
-    const options: MultiSelectOption[] = schemaCols.map((col) => ({
+    const options: MultiSelectOption[] = linkColumnFirst(
+      schemaCols,
+      (c) => c.name,
+    ).map((col) => ({
       id: col.name,
       name: col.name,
       checked: chosenSet.has(col.name),
@@ -825,7 +829,10 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     // traceColumnsState only (no per-tab binding), so its customized check and
     // reset both go straight to that state.
     const customized = traceColumnsState.get() !== null;
-    const options: MultiSelectOption[] = schemaCols.map((col) => ({
+    const options: MultiSelectOption[] = linkColumnFirst(
+      schemaCols,
+      (c) => c.name,
+    ).map((col) => ({
       id: col.name,
       name: col.name,
       checked: chosenSet.has(col.name),

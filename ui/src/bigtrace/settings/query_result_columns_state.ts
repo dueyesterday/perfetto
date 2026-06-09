@@ -16,6 +16,7 @@ import {
   SingleFieldStorage,
   parseNullableStringArray,
 } from './single_field_storage';
+import {linkNameFirst} from './column_order';
 
 // Persisted set of columns shown on the query-results DataGrid. Backs the
 // grid's controlled-mode `columns` so the choice survives reload + applies
@@ -43,15 +44,16 @@ class QueryResultColumnsState extends SingleFieldStorage<
   // Nothing persisted → every available column in declaration order ("show
   // all"). A persisted selection → intersected with the live set so stale
   // entries drop silently; if every entry is stale, fall back to "show all"
-  // rather than a confusingly empty grid.
+  // rather than a confusingly empty grid. Either way `link`, if present, is
+  // hoisted to the front.
   effective(available: ReadonlyArray<string>): string[] {
     const chosen = this.get();
     if (chosen === null) {
-      return [...available];
+      return linkNameFirst([...available]);
     }
     const known = new Set(available);
     const filtered = chosen.filter((c) => known.has(c));
-    return filtered.length === 0 ? [...available] : filtered;
+    return linkNameFirst(filtered.length === 0 ? [...available] : filtered);
   }
 }
 
