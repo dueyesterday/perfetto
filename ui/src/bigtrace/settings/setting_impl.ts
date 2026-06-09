@@ -95,6 +95,11 @@ export class SettingImpl<T> implements Setting<T> {
   }
 
   isDisabled(): boolean {
+    // Boolean settings have no enable/disable concept — the value control IS
+    // the on/off — so they're never "disabled" (the UI also hides their
+    // enable/disable Switch). Returning false keeps the value control editable
+    // and the setting in the effective set.
+    if (this.type === 'boolean') return false;
     if (!this.disabledStateStorage) return false;
     return Boolean(this.disabledStateStorage.load()[this.id]);
   }

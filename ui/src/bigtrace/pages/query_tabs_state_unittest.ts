@@ -128,3 +128,30 @@ describe('disabledSettingsFromSnapshot (history reopen)', () => {
     ).toEqual(['trace_limit']);
   });
 });
+
+describe('boolean settings have no enable/disable concept', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    bigTraceSettingsStorage.clear();
+  });
+
+  test('a boolean reports not-disabled even after setDisabled(true)', () => {
+    const flag = bigTraceSettingsStorage.register({
+      id: 'my_flag',
+      name: 'my_flag',
+      description: '',
+      type: 'boolean',
+      schema: z.boolean() as never,
+      defaultValue: false,
+      category: 'BIGTRACE_QUERY_OPTIONS',
+    });
+    flag.setDisabled(true);
+    // Booleans ignore the enable/disable concept: the value control stays
+    // editable (renderSetting gates on isDisabled) and the setting stays in the
+    // effective set.
+    expect(flag.isDisabled()).toBe(false);
+    expect(effectiveTabSettings(fakeTab({})).map((s) => s.settingId)).toContain(
+      'my_flag',
+    );
+  });
+});

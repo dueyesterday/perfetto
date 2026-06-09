@@ -120,6 +120,9 @@ export class TabBoundSetting<T> implements BigTraceSetting<T> {
   }
 
   isDisabled(): boolean {
+    // Booleans have no enable/disable concept (the value is the on/off), so
+    // they're never disabled per-tab — mirrors SettingImpl.isDisabled.
+    if (this.type === 'boolean') return false;
     return this.bindings.isSettingDisabled(this.id);
   }
 
