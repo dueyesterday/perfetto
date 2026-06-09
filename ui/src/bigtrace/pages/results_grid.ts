@@ -23,7 +23,12 @@ import type {
   ColumnSchema,
   SchemaRegistry,
 } from '../../components/widgets/datagrid/datagrid_schema';
+import type {
+  Column,
+  SortDirection,
+} from '../../components/widgets/datagrid/model';
 import type {SettingFilter} from '../settings/settings_types';
+import {queryResultColumnsState} from '../settings/query_result_columns_state';
 import {BigtraceAsyncDataSource} from '../query/bigtrace_async_data_source';
 import {TERMINAL_STATUSES} from '../query/query_store';
 import type {QueryRunner} from '../query/query_runner';
@@ -33,6 +38,15 @@ import type {
   QueryTabsState,
 } from './query_tabs_state';
 import {formatDurationS} from './status_box';
+
+// Per-tab results sort state. The DataGrid carries sort on the Column object,
+// so controlled-mode `columns` must splice it back in each render — otherwise
+// a header-click sort is dropped on our redraws. In-memory (not persisted):
+// sort is ephemeral, unlike the visible-columns set.
+const resultsSortByTab = new WeakMap<
+  BigTraceEditorTab,
+  {field: string; direction: SortDirection}
+>();
 
 export function renderResultsGrid(
   tab: BigTraceEditorTab,
@@ -119,8 +133,31 @@ function renderDataGrid(
 ): m.Children {
   const querySettings: SettingFilter[] = tab.querySettings;
 
+  // The "+ Add column" menu populates from the schema. For async queries the
+  // backend declares the full union (result cols ∪ sidecar metadata cols) via
+  // availableColumnNames on every :fetch_results response — that's what the
+  // user can pick from. For sync (and async pre-first-fetch) fall back to
+  // `columns` (the result columns the first row carried).
+  let allColumns: ReadonlyArray<string> = columns;
+  if (dataSource instanceof BigtraceAsyncDataSource) {
+    const available = dataSource.availableColumnNames;
+    if (available !== undefined && available.length > 0) {
+      allColumns = available;
+    }
+  }
+
+  // Hide private underscore-prefixed columns unless an active TRACE_METADATA
+  // setting opts them in by matching the post-underscore name.
+  allColumns = allColumns.filter((col) => {
+    if (!col.startsWith('_')) return true;
+    const settingId = col.substring(1);
+    return querySettings.some(
+      (s) => s.settingId === settingId && s.category === 'TRACE_METADATA',
+    );
+  });
+
   const columnSchema: ColumnSchema = {};
-  for (const column of columns) {
+  for (const column of allColumns) {
     if (column === 'link') {
       columnSchema[column] = {
         cellRenderer: (value) => {
@@ -134,25 +171,51 @@ function renderDataGrid(
   }
   const schema: SchemaRegistry = {data: columnSchema};
 
+  // Controlled-mode columns: the user's chosen subset intersected with what
+  // the schema offers (empty/unset → all available), persisted to
+  // queryResultColumnsState so the choice survives reload and the data source
+  // ships it as the `:fetch_results` `columns` projection.
+  const visible = queryResultColumnsState.effective(allColumns);
+  const isAsync = dataSource instanceof BigtraceAsyncDataSource;
+  const sortState = resultsSortByTab.get(tab);
+
   return m(DataGrid, {
     schema,
     rootSchema: 'data',
     disablePivotControls: true,
-    initialColumns: columns
-      .filter((col) => {
-        if (!col.startsWith('_')) return true;
-        if (col === '_trace_id') return true;
-        const settingId = col.substring(1);
-        return querySettings.some(
-          (s) => s.settingId === settingId && s.category === 'TRACE_METADATA',
-        );
-      })
-      .map((col) => ({id: col, field: col})),
+    // Splice per-tab sort onto the matching column so a header click survives
+    // our controlled-mode redraws.
+    columns: visible.map((col) => {
+      const base: Column = {id: col, field: col};
+      if (sortState && sortState.field === col) {
+        return {...base, sort: sortState.direction};
+      }
+      return base;
+    }),
+    onColumnsChanged: (cols: ReadonlyArray<Column>) => {
+      // Extract sort into the per-tab WeakMap before collapsing to string[],
+      // else it's discarded on the next render.
+      const sorted = cols.find((c) => c.sort);
+      if (sorted && sorted.sort !== undefined) {
+        resultsSortByTab.set(tab, {
+          field: sorted.field,
+          direction: sorted.sort,
+        });
+      } else {
+        resultsSortByTab.delete(tab);
+      }
+      queryResultColumnsState.set(cols.map((c) => c.field));
+    },
+    canAddColumns: true,
+    canRemoveColumns: true,
     className: 'pf-bt-query-page__results',
     data: dataSource,
     fillHeight: true,
     showExportButton: true,
-    emptyStateMessage: 'Query returned no rows',
+    emptyStateMessage:
+      isAsync && allColumns.length === visible.length
+        ? 'Query returned no rows'
+        : 'No rows match the visible columns',
     toolbarItemsLeft: [
       m('span.pf-bt-results-summary', renderResultsSummary(tab, queryResult)),
     ],

@@ -33,8 +33,12 @@ import {
   type BigTraceEditorTab,
   type QueryTabsState,
   deriveTitleFromQuery,
+  effectiveTabSettings,
 } from './query_tabs_state';
 import {renderResultsPanel} from './results_panel';
+import type {SettingCategory, SettingFilter} from '../settings/settings_types';
+import type {SettingsBindings} from '../settings/tab_bound_setting';
+import {BigtraceSettingsBar} from './bigtrace_settings_bar';
 
 export interface EditorTabViewAttrs {
   readonly tab: BigTraceEditorTab;
@@ -58,14 +62,83 @@ export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
       tab.queryResult.totalRowCount = tab.execution.processedRows;
     }
 
-    return m(SplitPanel, {
-      direction: 'vertical',
-      initialSplit: {percent: 22},
-      minSize: 100,
-      firstPanel: renderEditorPanel(tab, tabsState, runner, useBigtraceBackend),
-      secondPanel: renderResultsPanel(tab, tabsState, runner),
-    });
+    return m('.pf-bt-editor-tab', [
+      m(BigtraceSettingsBar, {
+        tab,
+        tabsState,
+        bindings: buildTabBindings(tab, tabsState),
+      }),
+      m(SplitPanel, {
+        direction: 'vertical',
+        initialSplit: {percent: 22},
+        minSize: 100,
+        firstPanel: renderEditorPanel(
+          tab,
+          tabsState,
+          runner,
+          useBigtraceBackend,
+        ),
+        secondPanel: renderResultsPanel(tab, tabsState, runner),
+      }),
+    ]);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Per-tab bindings shared between the chip strip and any modal it opens.
+// Each getter returns a live view of the tab's snapshot; each setter mutates
+// the tab in place and flips the dirty flag. getEffectiveSettings merges
+// global defaults under per-tab overrides so /trace_metadata sees a complete
+// settings array even before the user edits anything from the strip.
+// ---------------------------------------------------------------------------
+
+function buildTabBindings(
+  tab: BigTraceEditorTab,
+  tabsState: QueryTabsState,
+): SettingsBindings {
+  return {
+    getEffectiveSettings: () => effectiveTabSettings(tab),
+    getSettingValue: (id) => {
+      const entry = tab.querySettings.find((s) => s.settingId === id);
+      return entry?.values;
+    },
+    setSettingValue: (id, values, category) => {
+      const next = [...tab.querySettings];
+      const idx = next.findIndex((s) => s.settingId === id);
+      const entry: SettingFilter = {
+        settingId: id,
+        values: [...values],
+        category: category as SettingCategory,
+      };
+      if (idx >= 0) next[idx] = entry;
+      else next.push(entry);
+      tab.querySettings = next;
+      tabsState.markDirty();
+    },
+    getTraceFilters: () => tab.traceFilters,
+    setTraceFilters: (filters) => {
+      tab.traceFilters = [...filters];
+      tabsState.markDirty();
+    },
+    getTraceMetadataColumns: () => tab.traceMetadataColumns,
+    setTraceMetadataColumns: (cols) => {
+      tab.traceMetadataColumns = [...cols];
+      tabsState.markDirty();
+    },
+    getTraceOrderBy: () => tab.traceOrderBy,
+    setTraceOrderBy: (orderBy) => {
+      tab.traceOrderBy = orderBy;
+      tabsState.markDirty();
+    },
+    isSettingDisabled: (id) => tab.disabledSettings.includes(id),
+    setSettingDisabled: (id, disabled) => {
+      const set = new Set(tab.disabledSettings);
+      if (disabled) set.add(id);
+      else set.delete(id);
+      tab.disabledSettings = [...set];
+      tabsState.markDirty();
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

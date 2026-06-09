@@ -694,7 +694,7 @@ pre.pf-bt-history-item-query--standalone {
 
 // ---------- Settings page ----------
 
-.pf-bt-settings-page {
+.pf-settings-page {
   &__plugin-section {
     margin-bottom: 32px;
 
@@ -711,61 +711,115 @@ pre.pf-bt-history-item-query--standalone {
     background: var(--pf-minimal-background);
     border-radius: 4px;
   }
+
+  // The settings cards live in a CardStack, but BigTraceSettingsCard wraps
+  // each Card in a <div> for its disabled-state class — that wrapper hides the
+  // cards from CardStack's unified-seam styling, so they render flush with no
+  // gap. Render every settings card as a distinct, spaced, bordered card
+  // instead (clearer for the mix of simple key/value settings and the compound
+  // Traces / Query Result Columns cards).
+  .pf-card-stack {
+    border: none;
+    box-shadow: none;
+    overflow: visible;
+    gap: 12px;
+  }
+
+  .pf-card-stack > .pf-card,
+  .pf-card-stack > div > .pf-card {
+    border: solid 1px var(--pf-color-border);
+    border-radius: 4px;
+  }
 }
 
-// Bounds the trace-selection grid so DataGrid fillHeight has a height to fill
-// (the Settings page itself scrolls, so an unbounded fillHeight would collapse).
-.pf-bt-trace-selection-grid {
+// ---------- Query-page settings bar + per-chip modals ----------
+
+.pf-bt-editor-tab {
   display: flex;
   flex-direction: column;
-  height: 480px;
+  height: 100%;
   min-height: 0;
 }
 
-// The per-tab "Bigtrace Settings" sub-tab on the query page.
-.pf-bt-query-settings {
+.pf-bt-editor-tab > .pf-split-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pf-bt-settings-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--pf-color-background-secondary);
+  border-bottom: 1px solid var(--pf-color-border-secondary);
+  flex: 0 0 auto;
+
+  &__chips {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  // Only the "Edit settings" chip is clickable — give it the pointer cursor.
+  // The other chips are read-only display (× still removes), so they keep the
+  // default cursor.
+  &__add {
+    cursor: pointer;
+  }
+}
+
+// "Traces" card header — title with the refresh icon directly to its
+// right. Used by both /settings and the embedded SettingsPage (+Add modal).
+.pf-bt-trace-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  .pf-settings-card__title {
+    margin: 0;
+  }
+}
+
+// Per-chip edit modal — narrow, content stacked vertically. The +Add modal
+// hosts the full SettingsPage embedded view (.pf-bt-settings-embedded below).
+.pf-bt-settings-chip-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 320px;
+  padding: 4px 0;
+}
+
+.pf-bt-settings-chip-modal__description {
+  font-size: 12px;
+  color: var(--pf-color-text-muted);
+  line-height: 1.4;
+}
+
+.pf-bt-settings-chip-modal__control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+// Vertical column of checkboxes for the "Show with results" picker.
+.pf-bt-settings-chip-modal__checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+// Settings sub-tab embedded SettingsPage — scrollable container, no
+// SettingsShell chrome.
+.pf-bt-settings-embedded {
   overflow: auto;
   height: 100%;
-  padding: 12px;
+  box-sizing: border-box;
+  padding: 16px 20px 24px;
 
-  &__section {
-    margin-bottom: 24px;
-  }
-
-  &__title {
-    font-size: var(--pf-font-size-l);
-    font-weight: 600;
-    margin: 0 0 12px 0;
-  }
-
-  &__row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 12px;
-  }
-
-  &__label {
-    font-weight: 600;
-  }
-
-  &__hint {
-    color: var(--pf-color-text-muted, gray);
-    font-size: var(--pf-font-size-s);
-  }
-
-  &__snapshot {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 4px 16px;
+  .pf-settings-page {
     margin: 0;
-
-    dt {
-      font-weight: 600;
-    }
-
-    dd {
-      margin: 0;
-    }
   }
 }

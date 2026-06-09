@@ -30,7 +30,7 @@ export interface BigTraceSettingsStore {
   register<T>(setting: SettingDescriptor<T>): Setting<T>;
   get<T>(id: string): Setting<T> | undefined;
   getAllSettings(): ReadonlyArray<Setting<unknown>>;
-  buildSettingFilters(): SettingFilter[];
+  buildSettingFilters(opts?: {includeDisabled?: boolean}): SettingFilter[];
   clear(): void;
 }
 
@@ -103,10 +103,18 @@ class BigTraceSettingsStoreImpl implements BigTraceSettingsStore {
 
   // ----- Filter assembly -----
 
-  buildSettingFilters(): SettingFilter[] {
+  // `includeDisabled` builds filters for every categorised setting regardless
+  // of its enabled state — used by the per-tab merge, which applies the tab's
+  // own disabled set on top (so a tab can enable a setting the global default
+  // has off, and vice-versa).
+  buildSettingFilters(opts?: {includeDisabled?: boolean}): SettingFilter[] {
+    const includeDisabled = opts?.includeDisabled ?? false;
     const filters: SettingFilter[] = [];
     for (const setting of this.getAllSettings()) {
-      if (!setting.isDisabled() && setting.category !== undefined) {
+      if (
+        setting.category !== undefined &&
+        (includeDisabled || !setting.isDisabled())
+      ) {
         let values: string[] = [];
         const val = setting.get();
         if (Array.isArray(val)) {

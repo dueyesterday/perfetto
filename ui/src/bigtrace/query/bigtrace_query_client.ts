@@ -15,7 +15,7 @@
 import type {Row as DataGridRow} from '../../trace_processor/query_result';
 import type {Filter} from '../../components/widgets/datagrid/model';
 import type {SettingFilter} from '../settings/settings_types';
-import {coerceFiltersForWire, encodeFilters} from './filter_encoding';
+import {coerceFiltersForWire} from './filter_encoding';
 import type {RawQueryExecution} from './query_history_storage';
 
 // Tabular wire shape. Values are always strings, 'null' denotes SQL NULL.
@@ -25,6 +25,10 @@ interface QueryResponsePayload {
   rows?: Array<{values: Array<string | null>}>;
   // Filtered count for scrollbar sizing.
   totalFilteredRows?: number;
+  // Full union of (result-table cols ∪ sidecar metadata cols), surfaced on
+  // `:fetch_results` so the results column picker can offer sidecar columns
+  // even when the current projection omits them. Undefined elsewhere.
+  availableColumnNames?: string[];
 }
 
 export interface QueryResultPage {
@@ -33,6 +37,9 @@ export interface QueryResultPage {
   readonly queryUuid?: string;
   // Post-filter count from `:fetch_results`; undefined elsewhere.
   readonly totalFilteredRows?: number;
+  // Full schema returned by `:fetch_results` (result + sidecar); undefined
+  // on every other endpoint.
+  readonly availableColumnNames?: ReadonlyArray<string>;
 }
 
 // One column the `/trace_metadata` endpoint can return for the current trace
@@ -142,9 +149,12 @@ export class BigtraceQueryClient {
     });
   }
 
-  // Page the materialized table; `limit`/`offset` apply after orderBy/filter.
-  // `orderBy` is AIP-132; `filter` is the DataGrid `Filter[]` shape encoded
-  // via `encodeFilters`. Mid-flight calls return whatever rows have merged.
+  // Page the materialized table. POST body carries `limit`/`offset` plus the
+  // optional `order_by` (AIP-132), `filters` (native Filter[] under the
+  // strict-native contract), and `columns` field-mask projecting the union of
+  // (result cols ∪ sidecar metadata cols). The response echoes the full union
+  // as `availableColumnNames` so the results column picker can offer sidecar
+  // columns. Mid-flight calls return whatever rows have merged.
   async fetchResults(
     uuid: string,
     limit: number,
@@ -152,16 +162,35 @@ export class BigtraceQueryClient {
     signal?: AbortSignal,
     orderBy?: string,
     filter?: ReadonlyArray<Filter>,
+    columns?: ReadonlyArray<string>,
   ): Promise<QueryResultPage> {
-    let path = `/query_executions/${uuid}:fetch_results?limit=${limit}&offset=${offset}`;
+    const body: Record<string, unknown> = {limit, offset};
     if (orderBy && orderBy.length > 0) {
-      path += `&order_by=${encodeURIComponent(orderBy)}`;
+      body.order_by = orderBy;
     }
     if (filter && filter.length > 0) {
-      path += `&filter=${encodeURIComponent(encodeFilters(filter))}`;
+      body.filters = coerceFiltersForWire(filter);
     }
-    const result = await this.requestJson<QueryResponsePayload>(path, {signal});
-    return parseQueryResponse(result);
+    if (columns && columns.length > 0) {
+      body.columns = [...columns];
+    }
+    const result = await this.requestJson<QueryResponsePayload>(
+      `/query_executions/${uuid}:fetch_results`,
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+        signal,
+      },
+    );
+    // `availableColumnNames` is `:fetch_results`-only by spec — `/trace_metadata`
+    // mustn't echo a column catalog (`/trace_metadata_schema` is its source of
+    // truth), so the parser stays endpoint-agnostic and only this call site
+    // exposes the field.
+    return {
+      ...parseQueryResponse(result),
+      availableColumnNames: result.availableColumnNames,
+    };
   }
 
   async cancelQuery(uuid: string, signal?: AbortSignal): Promise<void> {

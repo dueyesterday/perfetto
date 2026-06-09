@@ -24,27 +24,76 @@ import {
 import {Checkbox} from '../../widgets/checkbox';
 import {Editor} from '../../widgets/editor';
 
+interface DeferredCommitInputAttrs {
+  // The committed value to display when there's no pending local edit.
+  readonly initial: string;
+  readonly type?: string;
+  readonly placeholder?: string;
+  readonly disabled?: boolean;
+  // Called on blur / Enter with the field's text.
+  readonly commit: (value: string) => void;
+}
+
+// A text/number input that commits to its Setting only on blur / Enter, while
+// holding the in-progress text in its own state. The shared TextInput is
+// controlled (re-applies `value` on every redraw, with no focus guard), so
+// committing on blur with `value = setting.get()` would let an unrelated redraw
+// (e.g. the trace grid finishing a fetch) wipe the typed text. Rendering the
+// local buffer instead avoids that; we re-sync to the external value when it
+// changes and there's no pending edit (e.g. a reset elsewhere).
+class DeferredCommitInput
+  implements m.ClassComponent<DeferredCommitInputAttrs>
+{
+  private local = '';
+  private syncedInitial: string | undefined;
+
+  view({attrs}: m.Vnode<DeferredCommitInputAttrs>) {
+    if (attrs.initial !== this.syncedInitial) {
+      // First render, or the external value changed. Adopt it unless the user
+      // has an uncommitted edit in flight (local diverged from what we synced).
+      if (
+        this.syncedInitial === undefined ||
+        this.local === this.syncedInitial
+      ) {
+        this.local = attrs.initial;
+      }
+      this.syncedInitial = attrs.initial;
+    }
+    return m(TextInput, {
+      type: attrs.type,
+      value: this.local,
+      placeholder: attrs.placeholder,
+      disabled: attrs.disabled,
+      onInput: (v: string) => {
+        this.local = v;
+      },
+      onChange: (v: string) => {
+        this.local = v;
+        attrs.commit(v);
+      },
+    });
+  }
+}
+
 export function renderSetting(setting: Setting<unknown>): m.Children {
   const currentValue = setting.get();
   const disabled = setting.isDisabled();
 
   switch (setting.type) {
     case 'number':
-      // Commit on every keystroke so an unrelated Mithril redraw doesn't
-      // wipe the user's typed value.
-      const commitNumber = (value: string) => {
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          setting.set(numValue);
-        }
-      };
-      return m(TextInput, {
+      // Commit on blur / Enter; the local buffer keeps typing from being reset
+      // by redraws. parseFloat guards partial/empty input.
+      return m(DeferredCommitInput, {
         type: 'number',
-        value: String(currentValue),
+        initial: String(currentValue),
         placeholder: setting.placeholder,
         disabled,
-        onInput: commitNumber,
-        onChange: commitNumber,
+        commit: (value: string) => {
+          const numValue = parseFloat(value);
+          if (!isNaN(numValue)) {
+            setting.set(numValue);
+          }
+        },
       });
     case 'string':
       if (setting.format === 'sql') {
@@ -57,15 +106,13 @@ export function renderSetting(setting: Setting<unknown>): m.Children {
           },
         });
       }
-      return m(TextInput, {
-        value: String(currentValue),
+      return m(DeferredCommitInput, {
+        initial: String(currentValue),
         placeholder: setting.placeholder,
         disabled,
-        // Commit on every keystroke so Run-click doesn't race blur.
-        onInput: (value: string) => {
-          setting.set(value);
-        },
-        onChange: (value: string) => {
+        // Commit on blur / Enter; the local buffer keeps a mid-typing redraw
+        // from resetting the field.
+        commit: (value: string) => {
           setting.set(value);
         },
       });

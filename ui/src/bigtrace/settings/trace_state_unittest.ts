@@ -17,6 +17,7 @@ import {traceFilterState} from './trace_filter_state';
 import {traceColumnsState} from './trace_columns_state';
 import {traceOrderByState} from './trace_order_by_state';
 import {traceQueryColumnsState} from './trace_query_columns_state';
+import {queryResultColumnsState} from './query_result_columns_state';
 import type {Filter} from '../../components/widgets/datagrid/model';
 
 beforeEach(() => {
@@ -137,5 +138,49 @@ describe('traceQueryColumnsState', () => {
     traceQueryColumnsState.set(['device_name']);
     traceQueryColumnsState.clear();
     expect(traceQueryColumnsState.get()).toEqual([]);
+  });
+});
+
+describe('queryResultColumnsState', () => {
+  test('defaults to null (show all available)', () => {
+    expect(queryResultColumnsState.get()).toBeNull();
+  });
+
+  test('round-trips an explicit selection', () => {
+    queryResultColumnsState.set(['name', 'dur']);
+    expect(queryResultColumnsState.get()).toEqual(['name', 'dur']);
+  });
+
+  test('an empty selection collapses to the null default', () => {
+    queryResultColumnsState.set([]);
+    expect(queryResultColumnsState.get()).toBeNull();
+  });
+
+  test('clear() reverts to null', () => {
+    queryResultColumnsState.set(['name']);
+    queryResultColumnsState.clear();
+    expect(queryResultColumnsState.get()).toBeNull();
+  });
+
+  test('effective() shows every available column when unset', () => {
+    const available = ['name', 'dur', 'device_name'];
+    expect(queryResultColumnsState.effective(available)).toEqual(available);
+  });
+
+  test('effective() intersects a selection with the live availableColumnNames', () => {
+    // 'gone' is stale and drops; order follows the selection.
+    queryResultColumnsState.set(['device_name', 'gone', 'name']);
+    expect(
+      queryResultColumnsState.effective(['name', 'dur', 'device_name']),
+    ).toEqual(['device_name', 'name']);
+  });
+
+  test('effective() falls back to show-all when every entry is stale', () => {
+    // A schema change between queries shouldn't strand an empty grid.
+    queryResultColumnsState.set(['old_a', 'old_b']);
+    expect(queryResultColumnsState.effective(['name', 'dur'])).toEqual([
+      'name',
+      'dur',
+    ]);
   });
 });

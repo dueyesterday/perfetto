@@ -320,3 +320,96 @@ describe('BigtraceQueryClient execute trace-selection snapshot', () => {
     expect(body.trace_limit).toBeUndefined();
   });
 });
+
+describe('BigtraceQueryClient.fetchResults', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function captureFetch(
+    payload: unknown = {columnNames: [], rows: []},
+  ): ReturnType<typeof vi.fn> {
+    const body = JSON.stringify(payload);
+    const fakeResp = {
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(body),
+      json: () => Promise.resolve(payload),
+    };
+    const fn = vi.fn().mockResolvedValue(fakeResp);
+    global.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function urlFrom(fetchMock: ReturnType<typeof vi.fn>): string {
+    return (fetchMock.mock.calls[0] as unknown[])[0] as string;
+  }
+
+  function initFrom(fetchMock: ReturnType<typeof vi.fn>): RequestInit {
+    return (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+  }
+
+  function bodyFrom(
+    fetchMock: ReturnType<typeof vi.fn>,
+  ): Record<string, unknown> {
+    return JSON.parse(initFrom(fetchMock).body as string);
+  }
+
+  test('POSTs to a plain :fetch_results URL with limit/offset in the body', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.fetchResults('uid', 50, 10);
+    expect(urlFrom(fetchMock)).toBe(
+      'http://example//query_executions/uid:fetch_results',
+    );
+    expect(initFrom(fetchMock).method).toBe('POST');
+    expect(urlFrom(fetchMock)).not.toContain('?');
+    const body = bodyFrom(fetchMock);
+    expect(body.limit).toBe(50);
+    expect(body.offset).toBe(10);
+    expect(body.order_by).toBeUndefined();
+    expect(body.filters).toBeUndefined();
+    expect(body.columns).toBeUndefined();
+  });
+
+  test('ships order_by, native-array filters, and the columns field-mask', async () => {
+    const fetchMock = captureFetch();
+    const client = new BigtraceQueryClient('http://example/');
+    await client.fetchResults(
+      'uid',
+      50,
+      0,
+      undefined,
+      'dur desc',
+      [{field: 'dur', op: '>', value: 9223372036854775807n}],
+      ['name', 'dur', 'device_name'],
+    );
+    const body = bodyFrom(fetchMock);
+    expect(body.order_by).toBe('dur desc');
+    expect(Array.isArray(body.filters)).toBe(true);
+    // bigint coerced to string for lossless int64 round-trip.
+    expect(body.filters).toEqual([
+      {field: 'dur', op: '>', value: '9223372036854775807'},
+    ]);
+    expect(body.columns).toEqual(['name', 'dur', 'device_name']);
+  });
+
+  test('exposes availableColumnNames from the response (the column-picker union)', async () => {
+    const fetchMock = captureFetch({
+      columnNames: ['name', 'dur'],
+      rows: [{values: ['slice', '10']}],
+      availableColumnNames: ['name', 'dur', 'device_name', 'android_id'],
+    });
+    const client = new BigtraceQueryClient('http://example/');
+    const page = await client.fetchResults('uid', 50, 0);
+    expect(page.columns).toEqual(['name', 'dur']);
+    expect(page.availableColumnNames).toEqual([
+      'name',
+      'dur',
+      'device_name',
+      'android_id',
+    ]);
+    expect(urlFrom(fetchMock)).toContain(':fetch_results');
+  });
+});

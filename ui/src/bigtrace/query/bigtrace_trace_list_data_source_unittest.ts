@@ -232,4 +232,62 @@ describe('BigtraceTraceListDataSource', () => {
     await flush();
     expect(seen).toEqual(['size_bytes desc', '']);
   });
+
+  test('coalesces settings changes during a slow in-flight fetch (only the latest refetches)', async () => {
+    // A client whose fetches stay pending until released — simulates a slow
+    // backend so we can change settings while a fetch is in flight.
+    const calls: ReadonlyArray<SettingFilter>[] = [];
+    let resolvers: Array<() => void> = [];
+    const client = {
+      listTraceMetadata: vi.fn((settings: ReadonlyArray<SettingFilter>) => {
+        calls.push(settings);
+        return new Promise<QueryResultPage>((resolve) => {
+          resolvers.push(() => resolve(PAGE));
+        });
+      }),
+    } as unknown as BigtraceQueryClient;
+    const releaseAll = () => {
+      const rs = resolvers;
+      resolvers = [];
+      rs.forEach((r) => r());
+    };
+
+    const S1 = SETTINGS;
+    const S2: SettingFilter[] = [
+      {settingId: 'trace_directory', values: ['/a'], category: 'TRACE_ADDRESS'},
+    ];
+    const S3: SettingFilter[] = [
+      {
+        settingId: 'trace_directory',
+        values: ['/abc'],
+        category: 'TRACE_ADDRESS',
+      },
+    ];
+    let settings: SettingFilter[] = S1;
+    const ds = new BigtraceTraceListDataSource(client, () => settings);
+
+    // First render starts a fetch for S1 that never resolves (stays in flight).
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    expect(calls).toHaveLength(1);
+
+    // Two settings changes while the fetch is in flight — both skipped by the
+    // !isFetching guard, so no new requests fire.
+    settings = S2;
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    settings = S3;
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    expect(calls).toHaveLength(1);
+
+    // The slow fetch completes; the redraw-driven next render fetches ONLY the
+    // latest settings (S3) — the intermediate S2 was coalesced away.
+    releaseAll();
+    await flush();
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toBe(S3);
+  });
 });

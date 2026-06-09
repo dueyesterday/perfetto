@@ -17,9 +17,6 @@ import {InMemoryDataSource} from '../../components/widgets/datagrid/in_memory_da
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {endpointStorage} from '../settings/endpoint_storage';
 import type {SettingFilter} from '../settings/settings_types';
-import {traceFilterState} from '../settings/trace_filter_state';
-import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
-import {traceOrderByState} from '../settings/trace_order_by_state';
 import {BigtraceAsyncDataSource} from './bigtrace_async_data_source';
 import {
   BigtraceQueryClient,
@@ -28,9 +25,17 @@ import {
   QueryNotFoundError,
 } from './bigtrace_query_client';
 import {forwardAbort} from './abort_utils';
-import {isoToEpochMs, type RawQueryExecution} from './query_history_storage';
+import {
+  isoToEpochMs,
+  snapshotSettingsToFilters,
+  type RawQueryExecution,
+} from './query_history_storage';
 import {queryStore, TERMINAL_STATUSES} from './query_store';
-import {makeQueryResponse} from '../pages/query_tabs_state';
+import {
+  disabledSettingsFromSnapshot,
+  effectiveTabSettings,
+  makeQueryResponse,
+} from '../pages/query_tabs_state';
 import type {BigTraceEditorTab} from '../pages/query_tabs_state';
 import {PollingController} from './polling_controller';
 
@@ -81,18 +86,18 @@ export class QueryRunner {
 
     await bigTraceSettingsStorage.loadSettings();
 
-    const settings = bigTraceSettingsStorage.buildSettingFilters();
-    tab.querySettings = settings;
+    // What this tab runs with: global defaults overridden by the tab's per-tab
+    // values, minus the tab's per-tab-disabled settings. Same helper the trace
+    // grid's data source uses, so /trace_metadata and /execute_* can't drift.
+    const settings = effectiveTabSettings(tab);
 
-    // Freeze the trace-selection snapshot at submit time so the tab can answer
-    // "what did this query run with?" and the backend runs over exactly this
-    // set, even if the user edits the grid afterwards.
-    const traceFilters = traceFilterState.get();
-    const traceMetadataColumns = traceQueryColumnsState.get();
-    const traceOrderBy = traceOrderByState.get();
-    tab.traceFilters = traceFilters;
-    tab.traceMetadataColumns = traceMetadataColumns;
-    tab.traceOrderBy = traceOrderBy;
+    // The per-tab snapshot is the source of truth for the trace selection —
+    // it's what the user staged on this tab (seeded from globals at tab
+    // creation, then edited via the settings bar). Globals are read only at
+    // tab-creation time, not here.
+    const traceFilters = tab.traceFilters;
+    const traceMetadataColumns = tab.traceMetadataColumns;
+    const traceOrderBy = tab.traceOrderBy;
     const executeOptions: ExecuteOptions = {
       traceFilters,
       traceMetadataColumns,
@@ -190,6 +195,11 @@ export class QueryRunner {
     const queryClient = new BigtraceQueryClient(endpoint);
     tab.queryClient = queryClient;
 
+    // Need the global registry populated before we can reconstruct the tab's
+    // disabled set below (it's the complement of the snapshot against every
+    // categoried setting). Cached + coalesced, so this is a no-op once loaded.
+    await bigTraceSettingsStorage.loadSettings();
+
     if (
       !tab.dataSource ||
       (tab.materialize && !(tab.dataSource instanceof BigtraceAsyncDataSource))
@@ -227,20 +237,39 @@ export class QueryRunner {
     exec.processedTraces = details.processedTraces ?? 0;
     exec.totalTraces = details.totalTraces ?? 0;
     if (details.limit !== undefined) tab.limit = details.limit;
-    // Restore the submit-time trace-selection snapshot for the "what did this
-    // run with?" view. The full GET echoes these; the list endpoint omits them.
-    if (details.settings !== undefined) {
-      tab.querySettings = [...details.settings];
+    // Restore the submit-time trace-selection snapshot onto the tab so the
+    // settings bar reflects what this query ran with. The full GET echoes
+    // these; the list endpoint omits them. `settings` arrives snake_case, so
+    // convert it back to SettingFilter[].
+    const snapshotSettings = snapshotSettingsToFilters(details.settings);
+    tab.querySettings = snapshotSettings;
+    // Reconstruct the per-tab disabled set from the snapshot. The submit-time
+    // `settings` array lists exactly the settings that were ACTIVE for this run
+    // (effectiveTabSettings = every categoried global minus the per-tab-disabled
+    // ones), so any categoried global absent from the snapshot was disabled at
+    // submit time. Without this a history-reopened tab shows every setting
+    // enabled even though the run had one turned off. Skip empty snapshots (rows
+    // predating the feature): there we can't tell "ran with nothing disabled"
+    // from "no snapshot", so we keep the default (nothing disabled) rather than
+    // blanking every toggle.
+    if (snapshotSettings.length > 0) {
+      tab.disabledSettings = disabledSettingsFromSnapshot(
+        snapshotSettings.map((s) => s.settingId),
+        bigTraceSettingsStorage
+          .buildSettingFilters({includeDisabled: true})
+          .map((s) => s.settingId),
+      );
     }
-    if (details.traceFilters !== undefined) {
+    if (Array.isArray(details.traceFilters)) {
       tab.traceFilters = details.traceFilters;
     }
-    if (details.traceMetadataColumns !== undefined) {
+    if (Array.isArray(details.traceMetadataColumns)) {
       tab.traceMetadataColumns = details.traceMetadataColumns;
     }
-    if (details.traceOrderBy !== undefined) {
+    if (typeof details.traceOrderBy === 'string') {
       tab.traceOrderBy = details.traceOrderBy;
     }
+    this.cb.markDirty?.();
     tab.editorText = details.perfettoSql || fallbackQuery;
     const startMs = isoToEpochMs(details.startTime);
     if (startMs !== undefined) exec.startTime = startMs;
