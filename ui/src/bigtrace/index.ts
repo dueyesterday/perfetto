@@ -21,7 +21,7 @@ import {defer} from '../base/deferred';
 import {reportError, addErrorHandler, type ErrorDetails} from '../base/logging';
 import {initLiveReload} from '../core/live_reload';
 import {settingsStorage} from './settings/settings_storage';
-import {endpointStorage} from './settings/endpoint_storage';
+import {getBigtraceEndpoint} from './settings/endpoint_storage';
 import {ThemeProvider} from '../frontend/theme_provider';
 import {OverlayContainer} from '../widgets/overlay_container';
 import {QueryPage, queryRightSidebarToggleFn} from './pages/query_page';
@@ -56,8 +56,7 @@ function getRoot() {
 // Origin of the configured BigTrace backend (e.g. 'http://127.0.0.1:8002' in
 // dev, 'https://...corp.google.com' in prod), or undefined if unset/unparseable.
 function getConfiguredEndpointOrigin(): string | undefined {
-  const setting = endpointStorage.get('bigtraceEndpoint');
-  const endpoint = setting ? (setting.get() as string) ?? '' : '';
+  const endpoint = getBigtraceEndpoint();
   if (endpoint.trim() === '') return undefined;
   try {
     return new URL(endpoint).origin;

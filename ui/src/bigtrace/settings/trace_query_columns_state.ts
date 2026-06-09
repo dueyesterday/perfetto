@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {LocalStorage} from '../../core/local_storage';
+import {SingleFieldStorage} from './single_field_storage';
 
 // Persisted set of trace-metadata columns to staple onto every query result
 // row. Distinct from `traceColumnsState` (what the trace-list grid SHOWS):
@@ -24,28 +24,13 @@ import {LocalStorage} from '../../core/local_storage';
 // Default: empty list — users opt in via the picker, keeping the default
 // zero-overhead (a backend with expensive per-trace metadata pays nothing
 // unless asked). This differs from traceColumnsState, where null means "use
-// schema defaults".
-const STORAGE_KEY = 'bigtraceTraceQueryColumns';
-const CHOSEN_FIELD = 'chosen';
-
-class TraceQueryColumnsState {
-  private readonly storage = new LocalStorage(STORAGE_KEY);
-
-  // Returns the user's selection, or [] for nothing-stored / a malformed
-  // value. [] is the meaningful default ("attach nothing").
-  get(): readonly string[] {
-    const raw = this.storage.load()[CHOSEN_FIELD];
-    if (!Array.isArray(raw)) return [];
-    return raw.filter((v): v is string => typeof v === 'string');
-  }
-
-  set(columns: readonly string[]): void {
-    this.storage.save({[CHOSEN_FIELD]: [...columns]});
-  }
-
-  clear(): void {
-    this.set([]);
-  }
-}
-
-export const traceQueryColumnsState = new TraceQueryColumnsState();
+// schema defaults". `get()` returns [] for nothing-stored / a malformed value.
+export const traceQueryColumnsState = new SingleFieldStorage<readonly string[]>(
+  'bigtraceTraceQueryColumns',
+  'chosen',
+  (raw) =>
+    Array.isArray(raw)
+      ? raw.filter((v): v is string => typeof v === 'string')
+      : [],
+  [],
+);

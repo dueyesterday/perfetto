@@ -24,7 +24,7 @@ import {Stack, StackAuto} from '../../widgets/stack';
 import {Switch} from '../../widgets/switch';
 import {TextInput} from '../../widgets/text_input';
 import {InMemoryDataSource} from '../../components/widgets/datagrid/in_memory_data_source';
-import {endpointStorage} from '../settings/endpoint_storage';
+import {getBigtraceEndpoint} from '../settings/endpoint_storage';
 import {BigtraceAsyncDataSource} from '../query/bigtrace_async_data_source';
 import {setHistoryActiveTab} from '../query/query_history';
 import {BigtraceQueryClient} from '../query/bigtrace_query_client';
@@ -247,9 +247,7 @@ function attachAsyncDataSource(
   runner: QueryRunner,
 ): void {
   if (!tab.queryUuid) return;
-  const endpointSetting = endpointStorage.get('bigtraceEndpoint');
-  const endpoint = endpointSetting ? (endpointSetting.get() as string) : '';
-  const queryClient = new BigtraceQueryClient(endpoint);
+  const queryClient = new BigtraceQueryClient(getBigtraceEndpoint());
   tab.queryClient = queryClient;
   if (!tab.materialize) {
     tab.dataSource = new InMemoryDataSource([]);

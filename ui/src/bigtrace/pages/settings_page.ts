@@ -40,7 +40,10 @@ import {
 } from '../settings/tab_bound_setting';
 import {Button, ButtonVariant} from '../../widgets/button';
 
-import {endpointStorage} from '../settings/endpoint_storage';
+import {
+  endpointStorage,
+  getBigtraceEndpoint,
+} from '../settings/endpoint_storage';
 import type {Setting} from '../../public/settings';
 
 import {TextInput} from '../../widgets/text_input';
@@ -880,9 +883,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         // attached to each row of query results. Both omitted while the user
         // is searching the settings list.
         if (category === TRACE_ADDRESS_DISPLAY && this.searchQuery === '') {
-          const endpoint = endpointSetting
-            ? (endpointSetting.get() as string) ?? ''
-            : '';
+          const endpoint = getBigtraceEndpoint();
           cards.push(this.renderTraceListCard(endpoint));
           cards.push(this.renderQueryColumnsCard());
         }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {endpointStorage} from '../settings/endpoint_storage';
+import {getBigtraceEndpoint} from '../settings/endpoint_storage';
 import {BigtraceQueryClient} from './bigtrace_query_client';
 import type {QueryExecution} from './query_store';
 import type {Filter} from '../../components/widgets/datagrid/model';
@@ -91,16 +91,12 @@ export function isoToEpochMs(iso: string | undefined): number | undefined {
 export class QueryHistoryStorage {
   // Fresh client per call so endpoint changes apply without restart.
   private client(): BigtraceQueryClient {
-    const setting = endpointStorage.get('bigtraceEndpoint');
-    const endpoint = setting ? (setting.get() as string) : '';
-    return new BigtraceQueryClient(endpoint);
+    return new BigtraceQueryClient(getBigtraceEndpoint());
   }
 
   async getAllHistory(): Promise<QueryExecution[]> {
     // No endpoint → empty, so the sidebar shows its empty state, not a 404.
-    const setting = endpointStorage.get('bigtraceEndpoint');
-    const endpoint = setting ? (setting.get() as string) : '';
-    if (endpoint.trim() === '') return [];
+    if (getBigtraceEndpoint().trim() === '') return [];
     const list = await this.client().listQueryExecutions();
     const mapped = list.map(toQueryExecution);
     mapped.sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0));

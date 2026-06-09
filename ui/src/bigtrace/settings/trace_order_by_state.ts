@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {LocalStorage} from '../../core/local_storage';
+import {SingleFieldStorage} from './single_field_storage';
 
 // Persisted processing order for the trace set a query runs over.
 //
@@ -21,27 +21,11 @@ import {LocalStorage} from '../../core/local_storage';
 // functionally under a trace cap — the backend keeps the FIRST N traces in
 // this order — so it's persisted across navigations / reloads / tabs.
 //
-// Empty string means "let the backend pick its default".
-const STORAGE_KEY = 'bigtraceTraceOrderBy';
-const ORDER_BY_FIELD = 'orderBy';
-
-class TraceOrderByState {
-  private readonly storage = new LocalStorage(STORAGE_KEY);
-
-  // Returns '' for nothing-stored, a non-string value (older format, partial
-  // write, hand-edited LocalStorage), or a cleared key.
-  get(): string {
-    const raw = this.storage.load()[ORDER_BY_FIELD];
-    return typeof raw === 'string' ? raw : '';
-  }
-
-  set(orderBy: string): void {
-    this.storage.save({[ORDER_BY_FIELD]: orderBy});
-  }
-
-  clear(): void {
-    this.set('');
-  }
-}
-
-export const traceOrderByState = new TraceOrderByState();
+// `get()` returns '' for nothing-stored / a non-string value / a cleared key,
+// meaning "let the backend pick its default".
+export const traceOrderByState = new SingleFieldStorage<string>(
+  'bigtraceTraceOrderBy',
+  'orderBy',
+  (raw) => (typeof raw === 'string' ? raw : ''),
+  '',
+);

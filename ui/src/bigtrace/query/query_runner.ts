@@ -15,7 +15,7 @@
 import m from 'mithril';
 import {InMemoryDataSource} from '../../components/widgets/datagrid/in_memory_data_source';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
-import {endpointStorage} from '../settings/endpoint_storage';
+import {getBigtraceEndpoint} from '../settings/endpoint_storage';
 import type {SettingFilter} from '../settings/settings_types';
 import {BigtraceAsyncDataSource} from './bigtrace_async_data_source';
 import {
@@ -71,8 +71,7 @@ export class QueryRunner {
     this.redraw();
 
     this.cb.onHistoryChanged();
-    const endpointSetting = endpointStorage.get('bigtraceEndpoint');
-    const endpoint = endpointSetting ? (endpointSetting.get() as string) : '';
+    const endpoint = getBigtraceEndpoint();
 
     if (endpoint.trim() === '') {
       tab.queryResult = makeQueryResponse(query, {
@@ -190,9 +189,7 @@ export class QueryRunner {
     fallbackQuery: string,
   ): Promise<void> {
     if (!tab.queryUuid) return;
-    const endpointSetting = endpointStorage.get('bigtraceEndpoint');
-    const endpoint = endpointSetting ? (endpointSetting.get() as string) : '';
-    const queryClient = new BigtraceQueryClient(endpoint);
+    const queryClient = new BigtraceQueryClient(getBigtraceEndpoint());
     tab.queryClient = queryClient;
 
     // Need the global registry populated before we can reconstruct the tab's

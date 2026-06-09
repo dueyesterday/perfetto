@@ -235,11 +235,7 @@ export class BigtraceQueryClient {
     columns?: ReadonlyArray<string>,
   ): Promise<QueryResultPage> {
     const body: Record<string, unknown> = {
-      settings: settings.map((s) => ({
-        setting_id: s.settingId,
-        values: s.values,
-        category: s.category,
-      })),
+      settings: this.settingsToWire(settings),
       limit,
       offset,
     };
@@ -275,11 +271,7 @@ export class BigtraceQueryClient {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        settings: settings.map((s) => ({
-          setting_id: s.settingId,
-          values: s.values,
-          category: s.category,
-        })),
+        settings: this.settingsToWire(settings),
       }),
       signal,
     });
@@ -298,11 +290,7 @@ export class BigtraceQueryClient {
     const body: Record<string, unknown> = {
       limit,
       perfetto_sql: query,
-      settings: settings.map((s) => ({
-        setting_id: s.settingId,
-        values: s.values,
-        category: s.category,
-      })),
+      settings: this.settingsToWire(settings),
     };
     // Each trace-selection field rides only when non-default, so a query with
     // no selection keeps the legacy request shape.
@@ -328,6 +316,17 @@ export class BigtraceQueryClient {
       signal,
     });
     return parseQueryResponse(result);
+  }
+
+  // camelCase SettingFilter[] -> the snake_case {setting_id, values, category}
+  // shape every POST body that ships settings uses (/trace_metadata,
+  // /trace_metadata_schema, /execute_*).
+  private settingsToWire(settings: ReadonlyArray<SettingFilter>) {
+    return settings.map((s) => ({
+      setting_id: s.settingId,
+      values: s.values,
+      category: s.category,
+    }));
   }
 
   private async request(path: string, init?: RequestInit): Promise<Response> {

@@ -14,7 +14,7 @@
 
 import {z} from 'zod';
 import type {SettingDescriptor, SettingCategory} from './settings_types';
-import {endpointStorage} from './endpoint_storage';
+import {getBigtraceEndpoint} from './endpoint_storage';
 
 interface BackendSettingOption {
   value?: string;
@@ -113,8 +113,7 @@ function toSettingDescriptor(
 
 // Resolves the current BigTrace endpoint or throws a user-facing message.
 function getEndpoint(): string {
-  const endpointSetting = endpointStorage.get('bigtraceEndpoint');
-  const endpoint = endpointSetting ? (endpointSetting.get() as string) : '';
+  const endpoint = getBigtraceEndpoint();
   if (endpoint.trim() === '') {
     throw new Error(
       'Set the BigTrace Endpoint above to load backend settings.',

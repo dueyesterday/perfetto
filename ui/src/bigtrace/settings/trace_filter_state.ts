@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import type {Filter} from '../../components/widgets/datagrid/model';
-import {LocalStorage} from '../../core/local_storage';
+import {SingleFieldStorage} from './single_field_storage';
 
 // Persisted filter chips for the Settings-page trace-selection grid.
 //
@@ -24,29 +24,11 @@ import {LocalStorage} from '../../core/local_storage';
 //
 // The grid binds to this in controlled mode: `get()` seeds the `filters` prop,
 // `onFiltersChanged` calls `set()`. (A later change ships it as the
-// `trace_filters` field on /execute_*.)
-const STORAGE_KEY = 'bigtraceTraceFilters';
-const FILTERS_FIELD = 'filters';
-
-class TraceFilterState {
-  private readonly storage = new LocalStorage(STORAGE_KEY);
-
-  // Returns [] for nothing-stored, a malformed value (older format, partial
-  // write, hand-edited LocalStorage), or a cleared key — so callers never
-  // need a defensive null check.
-  get(): readonly Filter[] {
-    const raw = this.storage.load()[FILTERS_FIELD];
-    if (!Array.isArray(raw)) return [];
-    return raw as Filter[];
-  }
-
-  set(filters: readonly Filter[]): void {
-    this.storage.save({[FILTERS_FIELD]: [...filters]});
-  }
-
-  clear(): void {
-    this.set([]);
-  }
-}
-
-export const traceFilterState = new TraceFilterState();
+// `trace_filters` field on /execute_*.) `get()` returns [] for nothing-stored,
+// a malformed value, or a cleared key, so callers never need a null check.
+export const traceFilterState = new SingleFieldStorage<readonly Filter[]>(
+  'bigtraceTraceFilters',
+  'filters',
+  (raw) => (Array.isArray(raw) ? (raw as Filter[]) : []),
+  [],
+);

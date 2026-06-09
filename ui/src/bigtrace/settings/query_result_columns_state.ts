@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {LocalStorage} from '../../core/local_storage';
+import {
+  SingleFieldStorage,
+  parseNullableStringArray,
+} from './single_field_storage';
 
 // Persisted set of columns shown on the query-results DataGrid. Backs the
 // grid's controlled-mode `columns` so the choice survives reload + applies
@@ -23,25 +26,17 @@ import {LocalStorage} from '../../core/local_storage';
 // order, intersected with what's actually available" — we intersect rather
 // than literally project so a stale entry from a previous query's schema
 // doesn't strand a brand-new query whose schema differs.
-const STORAGE_KEY = 'bigtraceQueryResultColumns';
-const CHOSEN_FIELD = 'chosen';
 
-class QueryResultColumnsState {
-  private readonly storage = new LocalStorage(STORAGE_KEY);
-
-  get(): readonly string[] | null {
-    const raw = this.storage.load()[CHOSEN_FIELD];
-    if (!Array.isArray(raw)) return null;
-    const filtered = raw.filter((v): v is string => typeof v === 'string');
-    return filtered.length === 0 ? null : filtered;
-  }
-
-  set(columns: readonly string[]): void {
-    this.storage.save({[CHOSEN_FIELD]: [...columns]});
-  }
-
-  clear(): void {
-    this.storage.save({[CHOSEN_FIELD]: null});
+class QueryResultColumnsState extends SingleFieldStorage<
+  readonly string[] | null
+> {
+  constructor() {
+    super(
+      'bigtraceQueryResultColumns',
+      'chosen',
+      parseNullableStringArray,
+      null,
+    );
   }
 
   // Reconcile the persisted selection against the live availableColumnNames.
