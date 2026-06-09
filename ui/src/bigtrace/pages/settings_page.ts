@@ -82,6 +82,9 @@ interface BigTraceSettingsCardAttrs extends m.Attributes {
   disabled?: boolean;
   onChange?: (disabled: boolean) => void;
   fullWidthControls?: boolean;
+  // When provided, a compact "reset to default" affordance is shown in the
+  // title row. Callers pass it only when the setting differs from its default.
+  onReset?: () => void;
 }
 
 class BigTraceSettingsCard
@@ -96,6 +99,7 @@ class BigTraceSettingsCard
       disabled,
       onChange,
       fullWidthControls,
+      onReset,
       ...rest
     } = vnode.attrs;
 
@@ -116,6 +120,13 @@ class BigTraceSettingsCard
             },
           }),
         title,
+        onReset &&
+          m(Button, {
+            icon: 'settings_backup_restore',
+            title: 'Reset this setting to its default value.',
+            className: 'pf-settings-card__reset',
+            onclick: () => onReset(),
+          }),
       ]),
       description !== undefined &&
         m('.pf-settings-card__description', description),
@@ -945,6 +956,12 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         const cards: m.Children[] = [];
         // Render the endpoint card inside "General".
         if (category === 'General' && endpointSetting) {
+          // Reset restores the default backend URL (a real URL, not empty).
+          // It needs a reload like any endpoint edit — reset() sets the value,
+          // then renderEndpointControl's existing "Reload to apply" appears.
+          const endpointAtDefault =
+            JSON.stringify(endpointSetting.get()) ===
+            JSON.stringify(endpointSetting.defaultValue);
           cards.push(
             m(BigTraceSettingsCard, {
               id: endpointSetting.id,
@@ -952,6 +969,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
               description: endpointSetting.description,
               disabled: undefined,
               controls: this.renderEndpointControl(endpointSetting),
+              onReset: endpointAtDefault
+                ? undefined
+                : () => endpointSetting.reset(),
             }),
           );
         }
@@ -1137,6 +1157,15 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     // undefined hides the Switch, like the endpoint card). Every other type
     // gets the enable/disable Switch, on /settings and in the "+ Add" modal.
     const showToggle = setting.type !== 'boolean';
+    // Show a reset affordance whenever the value differs from the registered
+    // default. JSON compare so array-valued settings (string-array /
+    // multi-select) compare by contents, not reference (SettingImpl.isDefault
+    // uses ===, which is reference-unsafe for arrays). setting.reset() targets
+    // the right scope in either mount — the global setting on /settings, the
+    // per-tab TabBoundSetting in the embedded modal. The endpoint card has its
+    // own render path (renderEndpointControl) and never reaches here.
+    const atDefault =
+      JSON.stringify(setting.get()) === JSON.stringify(setting.defaultValue);
     return m(BigTraceSettingsCard, {
       id: setting.id,
       title: setting.name,
@@ -1149,6 +1178,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
             setting.setDisabled(newDisabled);
           }
         : undefined,
+      onReset: atDefault ? undefined : () => setting.reset(),
     });
   }
 }
