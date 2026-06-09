@@ -59,7 +59,10 @@ export default class OomAdjScoreViz implements PerfettoPlugin {
       CREATE OR REPLACE PERFETTO TABLE ${OomAdjScoreViz.TBL_COUNT} AS
       SELECT
         ts,
-        lead(ts) OVER(PARTITION BY group_name ORDER BY ts) - ts AS dur,
+        coalesce(
+          lead(ts) OVER(PARTITION BY group_name ORDER BY ts) - ts,
+          trace_end() - ts
+        ) AS dur,
         group_name AS bucket,
         value AS concurrency
       FROM intervals_overlap_count_by_group!(${OomAdjScoreViz.TBL_INTERVALS}, ts, dur, bucket);
