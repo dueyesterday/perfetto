@@ -383,8 +383,11 @@ export class BigtraceQueryClient {
   }
 }
 
-// Preserves wire strings as-is (no numeric coercion — would corrupt 64-bit
-// ids/timestamps). Only translates 'NULL' to JS null.
+// Passes wire values through as-is: strings stay strings (no numeric coercion —
+// it would corrupt 64-bit ids/timestamps past 2^53), and SQL NULL arrives as
+// JSON null per the wire contract, so it flows through natively. Do NOT
+// special-case the literal string "NULL" — that would corrupt a genuine string
+// value of "NULL" into SQL NULL (and it never matched a real NULL anyway).
 export function parseQueryResponse(
   result: QueryResponsePayload,
 ): QueryResultPage {
@@ -404,8 +407,7 @@ export function parseQueryResponse(
     for (let i = 0; i < colNames.length; i++) {
       const header = colNames[i];
       if (header === null) continue;
-      const value = row.values[i];
-      out[header] = value === 'NULL' ? null : value;
+      out[header] = row.values[i];
     }
     return out;
   });

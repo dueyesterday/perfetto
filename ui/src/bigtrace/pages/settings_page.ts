@@ -386,7 +386,14 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       this.schemaKey = undefined;
       return;
     }
-    const key = `${endpoint}|${JSON.stringify(this.effectiveSettings())}`;
+    // Key on endpoint + only the TRACE_ADDRESS (trace-source) settings: the
+    // schema varies by source, so a query-option / metadata setting edit
+    // shouldn't refetch the catalog. The fetch itself still sends every
+    // setting.
+    const sourceSettings = this.effectiveSettings().filter(
+      (s) => s.category === 'TRACE_ADDRESS',
+    );
+    const key = `${endpoint}|${JSON.stringify(sourceSettings)}`;
     if (this.schemaKey === key && this.schemaState !== undefined) {
       return;
     }
@@ -1051,18 +1058,23 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
             ),
           ]
         : setting.description;
-    // Every setting gets an enable/disable Switch — on the standalone
-    // /settings page AND in the per-tab "+ Add" modal.
+    // Boolean settings carry their on/off in the value control itself, so a
+    // second enable/disable Switch is just confusing — suppress it (disabled:
+    // undefined hides the Switch, like the endpoint card). Every other type
+    // gets the enable/disable Switch, on /settings and in the "+ Add" modal.
+    const showToggle = setting.type !== 'boolean';
     return m(BigTraceSettingsCard, {
       id: setting.id,
       title: setting.name,
       description,
       controls: renderSetting(setting),
-      disabled,
+      disabled: showToggle ? disabled : undefined,
       fullWidthControls: fullWidth,
-      onChange: (newDisabled: boolean) => {
-        setting.setDisabled(newDisabled);
-      },
+      onChange: showToggle
+        ? (newDisabled: boolean) => {
+            setting.setDisabled(newDisabled);
+          }
+        : undefined,
     });
   }
 }

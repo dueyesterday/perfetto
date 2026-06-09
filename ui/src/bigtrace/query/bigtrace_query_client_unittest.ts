@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import {afterEach, describe, expect, test, vi} from 'vitest';
-import {BigtraceQueryClient} from './bigtrace_query_client';
+import {BigtraceQueryClient, parseQueryResponse} from './bigtrace_query_client';
 import {coerceFiltersForWire, encodeFilters} from './filter_encoding';
 import type {Filter} from '../../components/widgets/datagrid/model';
 import type {SettingFilter} from '../settings/settings_types';
@@ -411,5 +411,19 @@ describe('BigtraceQueryClient.fetchResults', () => {
       'android_id',
     ]);
     expect(urlFrom(fetchMock)).toContain(':fetch_results');
+  });
+});
+
+describe('parseQueryResponse', () => {
+  test('passes values through: JSON null is SQL NULL, the string "NULL" stays text', () => {
+    const page = parseQueryResponse({
+      columnNames: ['name', 'note'],
+      rows: [{values: ['NULL', null]}, {values: ['x', 'y']}],
+    });
+    expect(page.columns).toEqual(['name', 'note']);
+    // A genuine string value of "NULL" must NOT be coerced to SQL NULL; a
+    // real SQL NULL arrives as JSON null and stays null.
+    expect(page.rows[0]).toEqual({name: 'NULL', note: null});
+    expect(page.rows[1]).toEqual({name: 'x', note: 'y'});
   });
 });

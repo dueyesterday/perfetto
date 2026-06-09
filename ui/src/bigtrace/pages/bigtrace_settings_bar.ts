@@ -56,7 +56,7 @@ export class BigtraceSettingsBar
           className: 'pf-bt-settings-bar__add',
           onclick: () => openAddSettingsModal(bindings),
         }),
-        renderSettingChips(tab, tabsState, bindings),
+        renderSettingChips(bindings),
         renderFilterChips(tab, tabsState, bindings),
       ),
     );
@@ -67,80 +67,28 @@ export class BigtraceSettingsBar
 // Chip rendering
 // ---------------------------------------------------------------------------
 
-// TRACE_ADDRESS settings always render (they're required for the
-// backend to know what to run over). Non-TRACE_ADDRESS settings only
-// render when this tab's value differs from the current global
-// default — removing reverts to that default.
-function renderSettingChips(
-  tab: BigTraceEditorTab,
-  tabsState: QueryTabsState,
-  bindings: SettingsBindings,
-): m.Children {
-  const defaults = bigTraceSettingsStorage.buildSettingFilters();
-  const defaultJsonById = new Map(
-    defaults.map((d) => [d.settingId, JSON.stringify(d.values)] as const),
-  );
-  const defaultById = new Map(defaults.map((d) => [d.settingId, d] as const));
-  const out: m.Children[] = [];
-  const rendered = new Set<string>();
-
-  for (const entry of tab.querySettings) {
+// Every setting the tab runs with (its effective settings), shown as a
+// read-only chip — uniform across categories, like the trace source.
+// getEffectiveSettings already applies per-tab overrides and drops per-tab-
+// disabled settings; editing happens in the "+ Add" modal, so the chips aren't
+// interactive.
+function renderSettingChips(bindings: SettingsBindings): m.Children {
+  return bindings.getEffectiveSettings().map((entry) => {
     const setting = bigTraceSettingsStorage.get(entry.settingId) as
       | BigTraceSetting<unknown>
       | undefined;
-    if (setting === undefined) continue;
-    // A per-tab-disabled setting is excluded from effectiveTabSettings (the
-    // settings the tab actually runs with), so its chip must drop too — else
-    // the strip claims a filter the run won't apply.
-    if (bindings.isSettingDisabled(entry.settingId)) continue;
-    const isTraceAddress = entry.category === 'TRACE_ADDRESS';
-    const matchesDefault =
-      defaultJsonById.get(entry.settingId) === JSON.stringify(entry.values);
-    if (!isTraceAddress && matchesDefault) continue;
-    rendered.add(entry.settingId);
-    out.push(
-      renderSettingChip(setting, entry.values, isTraceAddress, () => {
-        const def = defaultById.get(entry.settingId);
-        bindings.setSettingValue(
-          entry.settingId,
-          def?.values ?? [],
-          entry.category,
-        );
-        tabsState.markDirty();
-        m.redraw();
-      }),
-    );
-  }
-
-  // TRACE_ADDRESS settings the catalog declares but the per-tab snapshot
-  // doesn't carry yet — render the global default value as a display chip.
-  for (const def of defaults) {
-    if (def.category !== 'TRACE_ADDRESS') continue;
-    if (rendered.has(def.settingId)) continue;
-    // Same as above: a disabled TRACE_ADDRESS setting isn't part of the run.
-    if (bindings.isSettingDisabled(def.settingId)) continue;
-    const setting = bigTraceSettingsStorage.get(def.settingId) as
-      | BigTraceSetting<unknown>
-      | undefined;
-    if (setting === undefined) continue;
-    out.push(renderSettingChip(setting, def.values, true, undefined));
-  }
-
-  return out;
+    if (setting === undefined) return null;
+    return renderSettingChip(setting, entry.values);
+  });
 }
 
 function renderSettingChip(
   setting: BigTraceSetting<unknown>,
   values: ReadonlyArray<string>,
-  required: boolean,
-  onRevert: (() => void) | undefined,
 ): m.Children {
-  // Read-only display chip. A × reverts non-required settings to the global
-  // default; editing happens in the "+ Add" modal, so the body isn't clickable.
+  // Read-only display, like the trace source — editing is in the "+ Add" modal.
   return m(Chip, {
     label: `${setting.name}: ${formatSettingValue(values)}`,
-    removable: !required && onRevert !== undefined,
-    onRemove: onRevert,
   });
 }
 

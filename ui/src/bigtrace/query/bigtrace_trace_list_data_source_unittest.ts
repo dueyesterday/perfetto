@@ -186,6 +186,53 @@ describe('BigtraceTraceListDataSource', () => {
     expect(calls[1].settings).toBe(settings);
   });
 
+  test('refetches only on TRACE_ADDRESS changes, not query-option / metadata edits', async () => {
+    const {client, calls} = fakeClient();
+    let settings: SettingFilter[] = [
+      {settingId: 'trace_directory', values: ['/d'], category: 'TRACE_ADDRESS'},
+      {
+        settingId: 'row_limit',
+        values: ['100'],
+        category: 'BIGTRACE_QUERY_OPTIONS',
+      },
+    ];
+    const ds = new BigtraceTraceListDataSource(client, () => settings);
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    expect(calls).toHaveLength(1);
+
+    // Editing a non-source setting (query option) leaves the trace set
+    // unchanged — must NOT re-hit /trace_metadata.
+    settings = [
+      {settingId: 'trace_directory', values: ['/d'], category: 'TRACE_ADDRESS'},
+      {
+        settingId: 'row_limit',
+        values: ['500'],
+        category: 'BIGTRACE_QUERY_OPTIONS',
+      },
+    ];
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    expect(calls).toHaveLength(1);
+
+    // Changing the TRACE_ADDRESS source DOES refetch.
+    settings = [
+      {
+        settingId: 'trace_directory',
+        values: ['/other'],
+        category: 'TRACE_ADDRESS',
+      },
+      {
+        settingId: 'row_limit',
+        values: ['500'],
+        category: 'BIGTRACE_QUERY_OPTIONS',
+      },
+    ];
+    ds.useRows(flatModel({limit: 100}));
+    await flush();
+    expect(calls).toHaveLength(2);
+  });
+
   test('a failed fetch clears rows and surfaces the error', async () => {
     const {client} = fakeClient({reject: new Error('status: 400 bad dir')});
     const ds = new BigtraceTraceListDataSource(client, () => SETTINGS);

@@ -34,6 +34,17 @@ type ModelWithColumns = DataSourceModel & {
   readonly columns?: ReadonlyArray<{readonly field: string}>;
 };
 
+// Only TRACE_ADDRESS (trace-source) settings change which traces exist, so the
+// grid refetches on those alone — editing a query-option or metadata setting
+// leaves the trace set unchanged and must not re-hit /trace_metadata. The full
+// settings array is still SENT on each fetch; this only narrows change
+// detection.
+function traceSourceSettingsKey(
+  settings: ReadonlyArray<SettingFilter>,
+): string {
+  return JSON.stringify(settings.filter((s) => s.category === 'TRACE_ADDRESS'));
+}
+
 // DataSource adapter paging `/trace_metadata` into the DataGrid widget — the
 // sibling of `BigtraceAsyncDataSource`. Same sort / filter / pagination
 // interaction model, but pointed at the trace-metadata endpoint instead of a
@@ -86,7 +97,7 @@ export class BigtraceTraceListDataSource implements DataSource {
     const wantedOffset = model.pagination?.offset ?? 0;
     const wantedLimit = model.pagination?.limit ?? 0;
     const wantedSettings = this.getSettings();
-    const wantedSettingsKey = JSON.stringify(wantedSettings);
+    const wantedSettingsKey = traceSourceSettingsKey(wantedSettings);
     // Flat model carries the visible-column field-mask; pivot / tree models
     // don't — in those modes we ship no projection (server returns defaults).
     const wantedColumns =
@@ -167,7 +178,7 @@ export class BigtraceTraceListDataSource implements DataSource {
     if (this.signal?.aborted) return;
     this.error = null;
     this.isFetching = true;
-    this.lastSettingsKey = JSON.stringify(settings);
+    this.lastSettingsKey = traceSourceSettingsKey(settings);
     m.redraw();
     try {
       const result = await this.queryClient.listTraceMetadata(
