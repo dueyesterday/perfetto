@@ -125,39 +125,24 @@ function getEndpoint(): string {
 class BigTraceSettingsService {
   private execConfigAbortController: AbortController | null = null;
 
-  abortAll(): void {
-    this.execConfigAbortController?.abort();
-  }
-
   async getExecutionSettings(): Promise<SettingDescriptor<unknown>[]> {
     const endpoint = getEndpoint();
     this.execConfigAbortController?.abort();
     this.execConfigAbortController = new AbortController();
-
-    const settings = await this.fetchSettings(
-      endpoint,
-      '/bigtrace_execution_config',
-      '{}',
-      this.execConfigAbortController,
-    );
+    const settings = await this.fetchSettings(endpoint);
     return settings.map(toSettingDescriptor);
   }
 
-  // Shared fetch+parse logic for both settings endpoints.
-  private async fetchSettings(
-    endpoint: string,
-    path: string,
-    body: string,
-    controller: AbortController,
-  ): Promise<BackendSetting[]> {
+  // Fetch + parse the backend execution-settings response.
+  private async fetchSettings(endpoint: string): Promise<BackendSetting[]> {
     try {
-      const response = await fetch(`${endpoint}${path}`, {
+      const response = await fetch(`${endpoint}/bigtrace_execution_config`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body,
+        body: '{}',
         credentials: 'include',
         mode: 'cors',
-        signal: controller.signal,
+        signal: this.execConfigAbortController?.signal,
       });
 
       if (!response.ok) {

@@ -28,14 +28,6 @@ export class SettingsLoader {
 
   constructor(private readonly store: BigTraceSettingsStore) {}
 
-  get isLoading(): boolean {
-    return this.loadingPhase !== 'idle';
-  }
-
-  get loadError(): string | undefined {
-    return this.execConfigLoadError;
-  }
-
   async loadSettings(force = false): Promise<void> {
     if (this.hasLoaded && !force) return;
     if (this.loadPromise) return this.loadPromise;

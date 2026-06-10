@@ -72,7 +72,7 @@ import {
   traceQueryColumnsState,
   effectiveQueryColumns,
 } from '../settings/trace_query_columns_state';
-import {linkColumnFirst} from '../settings/column_order';
+import {linkColumnFirst, LINK_COLUMN} from '../settings/column_order';
 
 interface BigTraceSettingsCardAttrs extends m.Attributes {
   id?: string;
@@ -183,10 +183,10 @@ function buildSchemaRegistry(
 ): SchemaRegistry {
   const columnSchema: ColumnSchema = {};
   for (const c of schema) {
-    // A column literally named `link` renders as a clickable link (same as the
-    // results grid); every other column uses the default string renderer.
+    // A column named `link` renders as a clickable link (same as the results
+    // grid); every other column uses the default string renderer.
     columnSchema[c.name] =
-      c.name === 'link'
+      c.name === LINK_COLUMN
         ? {
             cellRenderer: (value) =>
               value === null || value === undefined

@@ -54,14 +54,6 @@ class BigTraceSettingsStoreImpl implements BigTraceSettingsStore {
     return this.loader.loadSettings(force);
   }
 
-  get loadError(): string | undefined {
-    return this.loader.loadError;
-  }
-
-  get isLoading(): boolean {
-    return this.loader.isLoading;
-  }
-
   get isExecConfigLoading(): boolean {
     return this.loader.loadingPhase === 'exec';
   }

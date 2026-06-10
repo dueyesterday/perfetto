@@ -28,9 +28,9 @@ import type {
   SortDirection,
 } from '../../components/widgets/datagrid/model';
 import {resolveResultColumns} from '../settings/result_columns';
+import {LINK_COLUMN} from '../settings/column_order';
 import {BigtraceAsyncDataSource} from '../query/bigtrace_async_data_source';
 import {TERMINAL_STATUSES} from '../query/query_store';
-import type {QueryRunner} from '../query/query_runner';
 import type {
   BigTraceEditorTab,
   QueryResponse,
@@ -50,7 +50,6 @@ const resultsSortByTab = new WeakMap<
 export function renderResultsGrid(
   tab: BigTraceEditorTab,
   tabsState: QueryTabsState,
-  runner: QueryRunner,
 ): m.Children {
   const queryResult = tab.queryResult!;
   const dataSource = tab.dataSource!;
@@ -117,7 +116,7 @@ export function renderResultsGrid(
   }
 
   tableContent.push(
-    renderDataGrid(tab, tabsState, runner, columns, queryResult, dataSource),
+    renderDataGrid(tab, tabsState, columns, queryResult, dataSource),
   );
   return tableContent;
 }
@@ -125,7 +124,6 @@ export function renderResultsGrid(
 function renderDataGrid(
   tab: BigTraceEditorTab,
   tabsState: QueryTabsState,
-  _runner: QueryRunner,
   columns: ReadonlyArray<string>,
   queryResult: QueryResponse,
   dataSource: DataSource,
@@ -143,7 +141,7 @@ function renderDataGrid(
 
   const columnSchema: ColumnSchema = {};
   for (const column of allColumns) {
-    if (column === 'link') {
+    if (column === LINK_COLUMN) {
       columnSchema[column] = {
         cellRenderer: (value) => {
           if (value === null || value === undefined) return '';

@@ -78,7 +78,7 @@ export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
           runner,
           useBigtraceBackend,
         ),
-        secondPanel: renderResultsPanel(tab, tabsState, runner),
+        secondPanel: renderResultsPanel(tab, tabsState),
       }),
     ]);
   }
