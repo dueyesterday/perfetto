@@ -298,8 +298,11 @@ export class QueryTabsState {
       disabledSettings,
       lifecycle: new AbortController(),
       activeRequest: undefined,
-      // History-reopen → Persistent; new tab → sync; caller overrides.
-      materialize: materialize ?? Boolean(queryUuid),
+      // Persistent (materialized) is the default for new queries; an explicit
+      // caller value or a restored/history value wins (?? only falls through
+      // when unset, so an opted-in ephemeral tab stays ephemeral). Users switch
+      // a tab to ephemeral via the editor toggle.
+      materialize: materialize ?? true,
       lastProcessedRows: 0,
       queryUuid,
       pollGeneration: 0,
