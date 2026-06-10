@@ -27,7 +27,6 @@ import type {
   Column,
   SortDirection,
 } from '../../components/widgets/datagrid/model';
-import type {SettingFilter} from '../settings/settings_types';
 import {queryResultColumnsState} from '../settings/query_result_columns_state';
 import {BigtraceAsyncDataSource} from '../query/bigtrace_async_data_source';
 import {TERMINAL_STATUSES} from '../query/query_store';
@@ -131,8 +130,6 @@ function renderDataGrid(
   queryResult: QueryResponse,
   dataSource: DataSource,
 ): m.Children {
-  const querySettings: SettingFilter[] = tab.querySettings;
-
   // The "+ Add column" menu populates from the schema. For async queries the
   // backend declares the full union (result cols ∪ sidecar metadata cols) via
   // availableColumnNames on every :fetch_results response — that's what the
@@ -145,16 +142,6 @@ function renderDataGrid(
       allColumns = available;
     }
   }
-
-  // Hide private underscore-prefixed columns unless an active TRACE_METADATA
-  // setting opts them in by matching the post-underscore name.
-  allColumns = allColumns.filter((col) => {
-    if (!col.startsWith('_')) return true;
-    const settingId = col.substring(1);
-    return querySettings.some(
-      (s) => s.settingId === settingId && s.category === 'TRACE_METADATA',
-    );
-  });
 
   const columnSchema: ColumnSchema = {};
   for (const column of allColumns) {
