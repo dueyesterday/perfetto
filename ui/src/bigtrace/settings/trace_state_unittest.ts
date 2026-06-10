@@ -20,7 +20,7 @@ import {
   traceQueryColumnsState,
   effectiveQueryColumns,
 } from './trace_query_columns_state';
-import {queryResultColumnsState} from './query_result_columns_state';
+import {resolveResultColumns} from './result_columns';
 import {
   linkColumnFirst,
   linkNameFirst,
@@ -259,75 +259,58 @@ describe('groupResultColumns', () => {
   });
 });
 
-describe('queryResultColumnsState', () => {
-  test('defaults to null (show all available)', () => {
-    expect(queryResultColumnsState.get()).toBeNull();
-  });
-
-  test('round-trips an explicit selection', () => {
-    queryResultColumnsState.set(['name', 'dur']);
-    expect(queryResultColumnsState.get()).toEqual(['name', 'dur']);
-  });
-
-  test('an empty selection collapses to the null default', () => {
-    queryResultColumnsState.set([]);
-    expect(queryResultColumnsState.get()).toBeNull();
-  });
-
-  test('clear() reverts to null', () => {
-    queryResultColumnsState.set(['name']);
-    queryResultColumnsState.clear();
-    expect(queryResultColumnsState.get()).toBeNull();
-  });
-
-  test('effective() shows every available column when unset', () => {
+describe('resolveResultColumns', () => {
+  test('null (unchosen) shows every available column', () => {
     const available = ['name', 'dur', 'device_name'];
-    expect(queryResultColumnsState.effective(available)).toEqual(available);
+    expect(resolveResultColumns(null, available)).toEqual(available);
   });
 
-  test('effective() intersects a selection with the live availableColumnNames', () => {
+  test('intersects an explicit selection with the live columns', () => {
     // 'gone' is stale and drops; order follows the selection.
-    queryResultColumnsState.set(['device_name', 'gone', 'name']);
     expect(
-      queryResultColumnsState.effective(['name', 'dur', 'device_name']),
+      resolveResultColumns(
+        ['device_name', 'gone', 'name'],
+        ['name', 'dur', 'device_name'],
+      ),
     ).toEqual(['device_name', 'name']);
   });
 
-  test('effective() falls back to show-all when every entry is stale', () => {
+  test('falls back to show-all when every entry is stale', () => {
     // A schema change between queries shouldn't strand an empty grid.
-    queryResultColumnsState.set(['old_a', 'old_b']);
-    expect(queryResultColumnsState.effective(['name', 'dur'])).toEqual([
+    expect(resolveResultColumns(['old_a', 'old_b'], ['name', 'dur'])).toEqual([
       'name',
       'dur',
     ]);
   });
 
-  test('effective() hoists a link column to the front of the visible set', () => {
-    expect(queryResultColumnsState.effective(['name', 'link', 'dur'])).toEqual([
+  test('hoists a link column to the front', () => {
+    expect(resolveResultColumns(null, ['name', 'link', 'dur'])).toEqual([
       'link',
       'name',
       'dur',
     ]);
   });
 
-  test('effective() groups _-prefixed columns after the result columns', () => {
-    expect(
-      queryResultColumnsState.effective(['name', '_meta', 'dur', '_x']),
-    ).toEqual(['name', 'dur', '_meta', '_x']);
+  test('groups _-prefixed columns after the result columns', () => {
+    expect(resolveResultColumns(null, ['name', '_meta', 'dur', '_x'])).toEqual([
+      'name',
+      'dur',
+      '_meta',
+      '_x',
+    ]);
   });
 
-  test('effective() orders link first, then results, then _-metadata', () => {
-    expect(queryResultColumnsState.effective(['_m', 'link', 'name'])).toEqual([
+  test('orders link first, then results, then _-metadata', () => {
+    expect(resolveResultColumns(null, ['_m', 'link', 'name'])).toEqual([
       'link',
       'name',
       '_m',
     ]);
   });
 
-  test('effective() groups within an explicit selection too', () => {
-    queryResultColumnsState.set(['_meta', 'name', 'dur']);
-    expect(queryResultColumnsState.effective(['name', 'dur', '_meta'])).toEqual(
-      ['name', 'dur', '_meta'],
-    );
+  test('groups within an explicit selection too', () => {
+    expect(
+      resolveResultColumns(['_meta', 'name', 'dur'], ['name', 'dur', '_meta']),
+    ).toEqual(['name', 'dur', '_meta']);
   });
 });

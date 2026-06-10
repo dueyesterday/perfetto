@@ -129,6 +129,11 @@ export interface BigTraceEditorTab {
   // defaultVisible columns; [] = attach nothing; [...] = exactly these.
   traceMetadataColumns: readonly string[] | null;
   traceOrderBy: string;
+  // Per-tab results-grid layout: which result columns are shown. A display
+  // preference (not part of the submit-time snapshot above), persisted with the
+  // tab so it survives re-runs and reloads; null = show all. Resolved against
+  // each run's live columns by resolveResultColumns.
+  resultColumns: readonly string[] | null;
   // Per-tab disabled setting IDs — independent of the global /settings state.
   // Seeded from globals at creation, then toggled per-tab; excluded from the
   // tab's effective settings.
@@ -168,6 +173,7 @@ interface StoredTab {
   // null = unchosen (attach defaultVisible); preserved distinct from [].
   readonly traceMetadataColumns?: ReadonlyArray<string> | null;
   readonly traceOrderBy?: string;
+  readonly resultColumns?: ReadonlyArray<string> | null;
   readonly disabledSettings?: ReadonlyArray<string>;
 }
 
@@ -260,6 +266,12 @@ export class QueryTabsState {
       : isFromHistory
         ? ''
         : traceOrderByState.get();
+    // Per-tab results-grid column layout (a display pref, not a query snapshot):
+    // restored tabs keep their persisted layout; fresh and history-reopen tabs
+    // start at "show all" (null).
+    const resultColumns: readonly string[] | null = isFromStorage
+      ? stored?.resultColumns ?? null
+      : null;
     // Per-tab enable/disable. Fresh tabs mirror the current global state, then
     // diverge independently; restored tabs use their persisted set.
     const disabledSettings: string[] = isFromStorage
@@ -282,6 +294,7 @@ export class QueryTabsState {
       traceFilters,
       traceMetadataColumns,
       traceOrderBy,
+      resultColumns,
       disabledSettings,
       lifecycle: new AbortController(),
       activeRequest: undefined,
@@ -374,6 +387,7 @@ export class QueryTabsState {
         traceFilters: t.traceFilters,
         traceMetadataColumns: t.traceMetadataColumns,
         traceOrderBy: t.traceOrderBy,
+        resultColumns: t.resultColumns,
         disabledSettings: t.disabledSettings,
       })),
       activeTabId: this.activeTabId,

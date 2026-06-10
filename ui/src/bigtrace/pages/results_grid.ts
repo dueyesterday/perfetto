@@ -27,7 +27,7 @@ import type {
   Column,
   SortDirection,
 } from '../../components/widgets/datagrid/model';
-import {queryResultColumnsState} from '../settings/query_result_columns_state';
+import {resolveResultColumns} from '../settings/result_columns';
 import {BigtraceAsyncDataSource} from '../query/bigtrace_async_data_source';
 import {TERMINAL_STATUSES} from '../query/query_store';
 import type {QueryRunner} from '../query/query_runner';
@@ -124,7 +124,7 @@ export function renderResultsGrid(
 
 function renderDataGrid(
   tab: BigTraceEditorTab,
-  _tabsState: QueryTabsState,
+  tabsState: QueryTabsState,
   _runner: QueryRunner,
   columns: ReadonlyArray<string>,
   queryResult: QueryResponse,
@@ -158,11 +158,11 @@ function renderDataGrid(
   }
   const schema: SchemaRegistry = {data: columnSchema};
 
-  // Controlled-mode columns: the user's chosen subset intersected with what
-  // the schema offers (empty/unset → all available), persisted to
-  // queryResultColumnsState so the choice survives reload and the data source
-  // ships it as the `:fetch_results` `columns` projection.
-  const visible = queryResultColumnsState.effective(allColumns);
+  // Controlled-mode columns: the tab's chosen subset intersected with what the
+  // schema offers (empty/unset → all available), persisted per-tab on
+  // tab.resultColumns so each tab keeps its layout across re-runs and reloads,
+  // and the data source ships it as the `:fetch_results` `columns` projection.
+  const visible = resolveResultColumns(tab.resultColumns, allColumns);
   const isAsync = dataSource instanceof BigtraceAsyncDataSource;
   const sortState = resultsSortByTab.get(tab);
 
@@ -191,7 +191,9 @@ function renderDataGrid(
       } else {
         resultsSortByTab.delete(tab);
       }
-      queryResultColumnsState.set(cols.map((c) => c.field));
+      const nextColumns = cols.map((c) => c.field);
+      tab.resultColumns = nextColumns.length === 0 ? null : nextColumns;
+      tabsState.markDirty();
     },
     canAddColumns: true,
     canRemoveColumns: true,
