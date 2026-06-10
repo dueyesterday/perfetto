@@ -16,7 +16,7 @@ import {
   SingleFieldStorage,
   parseNullableStringArray,
 } from './single_field_storage';
-import {linkNameFirst} from './column_order';
+import {groupResultColumns} from './column_order';
 
 // Persisted set of columns shown on the query-results DataGrid. Backs the
 // grid's controlled-mode `columns` so the choice survives reload + applies
@@ -41,19 +41,23 @@ class QueryResultColumnsState extends SingleFieldStorage<
   }
 
   // Reconcile the persisted selection against the live availableColumnNames.
-  // Nothing persisted → every available column in declaration order ("show
-  // all"). A persisted selection → intersected with the live set so stale
-  // entries drop silently; if every entry is stale, fall back to "show all"
-  // rather than a confusingly empty grid. Either way `link`, if present, is
-  // hoisted to the front.
+  // Nothing persisted → every available column ("show all"). A persisted
+  // selection → intersected with the live set so stale entries drop silently;
+  // if every entry is stale, fall back to "show all" rather than a confusingly
+  // empty grid. Either way the columns are ordered by groupResultColumns:
+  // `link` first, then result columns, then `_`-prefixed metadata grouped into
+  // a contiguous block at the end (a visual separation between the query's
+  // columns and its trace metadata). Nothing is hidden — every column shows.
   effective(available: ReadonlyArray<string>): string[] {
     const chosen = this.get();
     if (chosen === null) {
-      return linkNameFirst([...available]);
+      return groupResultColumns([...available]);
     }
     const known = new Set(available);
     const filtered = chosen.filter((c) => known.has(c));
-    return linkNameFirst(filtered.length === 0 ? [...available] : filtered);
+    return groupResultColumns(
+      filtered.length === 0 ? [...available] : filtered,
+    );
   }
 }
 

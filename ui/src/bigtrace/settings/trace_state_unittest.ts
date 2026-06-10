@@ -21,7 +21,11 @@ import {
   effectiveQueryColumns,
 } from './trace_query_columns_state';
 import {queryResultColumnsState} from './query_result_columns_state';
-import {linkColumnFirst, linkNameFirst} from './column_order';
+import {
+  linkColumnFirst,
+  linkNameFirst,
+  groupResultColumns,
+} from './column_order';
 import type {Filter} from '../../components/widgets/datagrid/model';
 
 beforeEach(() => {
@@ -235,6 +239,26 @@ describe('linkColumnFirst (link leads everywhere)', () => {
   });
 });
 
+describe('groupResultColumns', () => {
+  test('orders link, then result columns, then _-metadata at the end', () => {
+    expect(groupResultColumns(['_b', 'name', 'link', '_a', 'dur'])).toEqual([
+      'link',
+      'name',
+      'dur',
+      '_b',
+      '_a',
+    ]);
+  });
+
+  test('is stable within each group and a no-op without _ or link', () => {
+    expect(groupResultColumns(['name', 'dur', 'ts'])).toEqual([
+      'name',
+      'dur',
+      'ts',
+    ]);
+  });
+});
+
 describe('queryResultColumnsState', () => {
   test('defaults to null (show all available)', () => {
     expect(queryResultColumnsState.get()).toBeNull();
@@ -284,5 +308,26 @@ describe('queryResultColumnsState', () => {
       'name',
       'dur',
     ]);
+  });
+
+  test('effective() groups _-prefixed columns after the result columns', () => {
+    expect(
+      queryResultColumnsState.effective(['name', '_meta', 'dur', '_x']),
+    ).toEqual(['name', 'dur', '_meta', '_x']);
+  });
+
+  test('effective() orders link first, then results, then _-metadata', () => {
+    expect(queryResultColumnsState.effective(['_m', 'link', 'name'])).toEqual([
+      'link',
+      'name',
+      '_m',
+    ]);
+  });
+
+  test('effective() groups within an explicit selection too', () => {
+    queryResultColumnsState.set(['_meta', 'name', 'dur']);
+    expect(queryResultColumnsState.effective(['name', 'dur', '_meta'])).toEqual(
+      ['name', 'dur', '_meta'],
+    );
   });
 });

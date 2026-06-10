@@ -35,3 +35,16 @@ export function linkColumnFirst<T>(
 export function linkNameFirst(names: readonly string[]): string[] {
   return linkColumnFirst(names, (n) => n);
 }
+
+// Order results-grid columns for display: `link` first, then ordinary result
+// columns, then `_`-prefixed (secondary / attached-metadata) columns grouped at
+// the end. Stable within each group. Clustering the `_` columns into one
+// contiguous block reads as a visual separation between the query's own columns
+// and its trace metadata — the closest we can get without grid-level column
+// grouping. No column is dropped; a result with no `_` columns is unchanged.
+export function groupResultColumns(names: readonly string[]): string[] {
+  const link = names.filter((n) => n === LINK_COLUMN);
+  const ordinary = names.filter((n) => n !== LINK_COLUMN && !n.startsWith('_'));
+  const meta = names.filter((n) => n !== LINK_COLUMN && n.startsWith('_'));
+  return [...link, ...ordinary, ...meta];
+}
