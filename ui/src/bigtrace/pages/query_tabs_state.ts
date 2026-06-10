@@ -124,15 +124,12 @@ export interface BigTraceEditorTab {
   // by QueryRunner at run time and restored from history; powers the
   // query-page "what did this run with?" view.
   traceFilters: readonly Filter[];
-  // Tri-state, resolved against the live schema at submit time (see
-  // effectiveQueryColumns): null = unchosen → attach the schema's
-  // defaultVisible columns; [] = attach nothing; [...] = exactly these.
+  // Tri-state, resolved against the live schema at submit (effectiveQueryColumns):
+  // null = attach defaultVisible; [] = attach nothing; [...] = these.
   traceMetadataColumns: readonly string[] | null;
   traceOrderBy: string;
-  // Per-tab results-grid layout: which result columns are shown. A display
-  // preference (not part of the submit-time snapshot above), persisted with the
-  // tab so it survives re-runs and reloads; null = show all. Resolved against
-  // each run's live columns by resolveResultColumns.
+  // Per-tab results-grid layout (which columns are shown); a display pref, not
+  // part of the snapshot above. Persisted; null = show all (resolveResultColumns).
   resultColumns: readonly string[] | null;
   // Per-tab disabled setting IDs — independent of the global /settings state.
   // Seeded from globals at creation, then toggled per-tab; excluded from the
@@ -251,11 +248,8 @@ export class QueryTabsState {
       : isFromHistory
         ? []
         : [...traceFilterState.get()];
-    // null = unchosen, resolved to the schema's defaultVisible columns at
-    // submit time. Restored tabs keep their persisted tri-state; history-reopen
-    // tabs start unchosen (the runner rehydrates the concrete snapshot from the
-    // backend GET); fresh tabs copy the current /settings global (also
-    // tri-state). `?? null` preserves [] ("attach nothing") distinct from null.
+    // Restored tabs keep their persisted tri-state; history-reopen starts null
+    // (runner rehydrates from the GET); fresh tabs copy the /settings global.
     const traceMetadataColumns: readonly string[] | null = isFromStorage
       ? stored?.traceMetadataColumns ?? null
       : isFromHistory
@@ -266,9 +260,8 @@ export class QueryTabsState {
       : isFromHistory
         ? ''
         : traceOrderByState.get();
-    // Per-tab results-grid column layout (a display pref, not a query snapshot):
-    // restored tabs keep their persisted layout; fresh and history-reopen tabs
-    // start at "show all" (null).
+    // Display pref, not a query snapshot: restored tabs keep their layout; fresh
+    // and history-reopen tabs start at show-all (null).
     const resultColumns: readonly string[] | null = isFromStorage
       ? stored?.resultColumns ?? null
       : null;
@@ -298,10 +291,8 @@ export class QueryTabsState {
       disabledSettings,
       lifecycle: new AbortController(),
       activeRequest: undefined,
-      // Persistent (materialized) is the default for new queries; an explicit
-      // caller value or a restored/history value wins (?? only falls through
-      // when unset, so an opted-in ephemeral tab stays ephemeral). Users switch
-      // a tab to ephemeral via the editor toggle.
+      // Default new queries to persistent; an explicit/restored value wins (??
+      // only falls through when unset). Toggle a tab to ephemeral in the editor.
       materialize: materialize ?? true,
       lastProcessedRows: 0,
       queryUuid,

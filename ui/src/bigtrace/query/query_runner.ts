@@ -104,12 +104,9 @@ export class QueryRunner {
     const cancelForward = forwardAbort(tab.lifecycle.signal, requestController);
     tab.activeRequest = requestController;
 
-    // Resolve which trace-metadata columns to attach to each result row.
-    // `null` is the unchosen default: attach the backend's defaultVisible
-    // columns (symmetric with the trace grid defaulting to its defaultVisible
-    // columns), which needs the live schema. An explicit selection — including
-    // [] ("attach nothing") — ships verbatim with no fetch. A schema-fetch
-    // failure degrades to attaching nothing rather than blocking the run.
+    // Resolve the columns to attach. null = unchosen → fetch the schema for its
+    // defaultVisible columns; an explicit list (incl. [] = "attach nothing")
+    // ships verbatim. A schema-fetch failure degrades to attaching nothing.
     let traceMetadataColumns: readonly string[] =
       tab.traceMetadataColumns ?? [];
     if (tab.traceMetadataColumns === null) {

@@ -22,22 +22,11 @@ interface SchemaColumn {
   readonly defaultVisible: boolean;
 }
 
-// Resolve a chosen query-columns value against a live schema.
-//
-//   null  → unchosen: attach the schema's defaultVisible columns (in
-//           declaration order, `link` hoisted first). This is the DEFAULT —
-//           symmetric with the
-//           trace-list grid, which SHOWS its defaultVisible columns by default
-//           (see traceColumnsState.effective). So a query attaches those
-//           columns even on a tab whose picker was never opened.
-//   [...] → exactly these columns, intersected with the live schema so a stale
-//           entry referencing a removed column drops silently.
-//   []    → explicit "attach nothing" (the user unchecked every column);
-//           intersection of an empty list is empty, so it stays empty.
-//
-// Used by the picker (display + resolution of the chosen set) and by
-// QueryRunner (resolving the per-tab snapshot at submit time, where the live
-// schema is fetched to expand the null default).
+// Resolve a chosen value against the live schema; `link` hoisted first.
+//   null  → defaultVisible columns (the default; attached even if the picker
+//           was never opened, mirroring the trace-list grid).
+//   [...] → these, intersected with the schema (stale entries drop).
+//   []    → attach nothing.
 export function effectiveQueryColumns(
   chosen: readonly string[] | null,
   schema: ReadonlyArray<SchemaColumn>,
@@ -51,23 +40,12 @@ export function effectiveQueryColumns(
   return linkNameFirst(chosen.filter((c) => known.has(c)));
 }
 
-// Persisted set of trace-metadata columns to staple onto every query result
-// row. Distinct from `traceColumnsState` (what the trace-list grid SHOWS):
-// this controls what the executor ATTACHES to each query result.
-//
-// Wire: read at submit time by QueryRunner, resolved via effectiveQueryColumns
-// against the live schema, and shipped as the top-level `trace_metadata_columns`
-// field on /execute_*.
-//
-// Tri-state (see effectiveQueryColumns):
-//   null  → unchosen, attach the schema's defaultVisible columns (the default).
-//   []    → explicit "attach nothing".
-//   [...] → exactly these columns.
-// `null` (not `[]`) is the unchosen sentinel — unlike traceColumnsState we must
-// NOT collapse `[]` to the default, or the user could never express "attach
-// nothing" after unchecking everything. `get()` returns null for
-// nothing-stored / a non-array (malformed); a stored array is filtered to
-// strings and kept verbatim (the empty list included).
+// Persisted trace-metadata columns attached to every query result row (shipped
+// as `trace_metadata_columns` on /execute_*, resolved via effectiveQueryColumns).
+// Distinct from traceColumnsState (what the trace-list grid SHOWS).
+// Tri-state: null = unchosen (attach defaultVisible); [] = attach nothing; [...]
+// = these. `null` (not `[]`) is the unchosen sentinel — don't collapse `[]`, or
+// "attach nothing" couldn't be expressed.
 export const traceQueryColumnsState = new SingleFieldStorage<
   readonly string[] | null
 >(

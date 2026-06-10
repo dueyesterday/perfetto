@@ -12,16 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Convention: a column literally named `link` (the clickable open-trace link,
-// rendered via linkify in both grids) leads every grid and picker when present.
-// These helpers hoist it to the front of an already-ordered column list; both
-// are no-ops when `link` is absent or already first, and preserve the relative
-// order of every other column.
+// `link` (the clickable open-trace column, rendered via linkify in both grids)
+// leads every grid/picker. These helpers reorder an already-ordered list.
 
 export const LINK_COLUMN = 'link';
 
-// Hoist the `link` entry to the front, keying each item by name (so it works
-// for both bare column-name lists and schema-descriptor objects).
+// Hoist `link` to the front (keyed by name); no-op if absent or already first.
 export function linkColumnFirst<T>(
   items: readonly T[],
   nameOf: (item: T) => string,
@@ -31,17 +27,13 @@ export function linkColumnFirst<T>(
   return [items[i], ...items.slice(0, i), ...items.slice(i + 1)];
 }
 
-// String-list convenience over linkColumnFirst.
 export function linkNameFirst(names: readonly string[]): string[] {
   return linkColumnFirst(names, (n) => n);
 }
 
-// Order results-grid columns for display: `link` first, then ordinary result
-// columns, then `_`-prefixed (secondary / attached-metadata) columns grouped at
-// the end. Stable within each group. Clustering the `_` columns into one
-// contiguous block reads as a visual separation between the query's own columns
-// and its trace metadata — the closest we can get without grid-level column
-// grouping. No column is dropped; a result with no `_` columns is unchanged.
+// Display order: `link`, then result columns, then `_`-prefixed metadata grouped
+// at the end (stable within groups) — clusters metadata into a visual block.
+// Nothing dropped.
 export function groupResultColumns(names: readonly string[]): string[] {
   const link = names.filter((n) => n === LINK_COLUMN);
   const ordinary = names.filter((n) => n !== LINK_COLUMN && !n.startsWith('_'));

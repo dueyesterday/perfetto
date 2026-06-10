@@ -42,9 +42,7 @@ export interface SettingsBindings {
   ) => void;
   readonly getTraceFilters: () => readonly Filter[];
   readonly setTraceFilters: (filters: readonly Filter[]) => void;
-  // null = unchosen (attach the schema's defaultVisible columns); the picker
-  // resolves it via effectiveQueryColumns. Setting accepts a concrete list, or
-  // null to reset to that default.
+  // null = unchosen (defaultVisible); set accepts a concrete list or null.
   readonly getTraceMetadataColumns: () => readonly string[] | null;
   readonly setTraceMetadataColumns: (cols: readonly string[] | null) => void;
   // Per-tab AIP-132 ordering string (e.g. "size_bytes desc"). Drives

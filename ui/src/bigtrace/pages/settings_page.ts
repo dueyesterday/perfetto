@@ -297,8 +297,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     else traceFiltersState.set(filters);
   }
 
-  // null = unchosen (resolved to the schema's defaultVisible columns by the
-  // picker via effectiveQueryColumns); [] = explicit "attach nothing".
+  // null = unchosen (picker resolves to defaultVisible); [] = attach nothing.
   private readTraceMetadataColumns(): readonly string[] | null {
     return this.bindings
       ? this.bindings.getTraceMetadataColumns()
@@ -316,8 +315,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     else traceOrderByState.set(orderBy);
   }
 
-  // `null` resets to the unchosen default (attach the schema's defaultVisible
-  // columns); a concrete list (including []) is honored verbatim.
+  // `null` resets to the unchosen default; a concrete list (incl. []) is verbatim.
   private writeTraceMetadataColumns(cols: readonly string[] | null): void {
     if (this.bindings) this.bindings.setTraceMetadataColumns(cols);
     else traceQueryColumnsState.set(cols);
@@ -730,10 +728,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     );
   }
 
-  // A subtle "Restore defaults" button shown next to a column picker only when
-  // its state is customized (non-default). Clicking resets to the live default
-  // (re-checks defaultVisible and resumes tracking the backend's default as it
-  // changes). Hidden at the default so it's never a no-op and doubles as an
+  // "Restore defaults" — shown only when the picker is customized (non-default).
+  // Resets to the live default (re-checks defaultVisible); doubles as an
   // "overridden" cue.
   private renderRestoreDefaultsButton(
     customized: boolean,
@@ -752,21 +748,14 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     });
   }
 
-  // Checkboxes for the "Query Result Columns" card. Picks which
-  // trace-metadata columns get stapled onto every QUERY RESULT row
-  // (stored server-side in the per-query metadata sidecar, projected
-  // at fetch time). Distinct state from `traceColumnsState` — these
-  // checkboxes never affect the trace-list grid above. Unchosen (null)
-  // attaches the schema's defaultVisible columns by default; a user who
-  // wants none can uncheck every box (writes [] = "attach nothing").
+  // Picks the trace-metadata columns attached to every QUERY RESULT row (the
+  // sidecar). Distinct from traceColumnsState (the trace-list grid). Unchosen
+  // (null) attaches defaultVisible; uncheck all → [] = "attach nothing".
   private renderQueryColumnsPicker(
     schemaCols: ReadonlyArray<TraceColumnDescriptor>,
   ): m.Children {
-    // Resolve the tri-state against the live schema: an unchosen (null) state
-    // shows the defaultVisible columns pre-checked, so the picker reflects what
-    // a query attaches by default. The first toggle writes the resolved set ±
-    // the change as a concrete list, which from then on is honored verbatim
-    // (unchecking the last one writes [] = "attach nothing").
+    // Unchosen (null) shows defaultVisible pre-checked; the first toggle writes
+    // a concrete list (uncheck the last → [] = "attach nothing").
     const chosen = effectiveQueryColumns(
       this.readTraceMetadataColumns(),
       schemaCols,
@@ -836,9 +825,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     chosen: ReadonlyArray<string>,
   ): m.Children {
     const chosenSet = new Set(chosen);
-    // The trace-grid shown-columns picker is backed by the global
-    // traceColumnsState only (no per-tab binding), so its customized check and
-    // reset both go straight to that state.
+    // Backed by the global traceColumnsState only (no per-tab binding).
     const customized = traceColumnsState.get() !== null;
     const options: MultiSelectOption[] = linkColumnFirst(
       schemaCols,
@@ -956,9 +943,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         const cards: m.Children[] = [];
         // Render the endpoint card inside "General".
         if (category === 'General' && endpointSetting) {
-          // Reset restores the default backend URL (a real URL, not empty).
-          // It needs a reload like any endpoint edit — reset() sets the value,
-          // then renderEndpointControl's existing "Reload to apply" appears.
+          // Reset restores the default backend URL; like any endpoint edit it
+          // needs a reload — the existing "Reload to apply" then appears.
           const endpointAtDefault =
             JSON.stringify(endpointSetting.get()) ===
             JSON.stringify(endpointSetting.defaultValue);
@@ -1157,13 +1143,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     // undefined hides the Switch, like the endpoint card). Every other type
     // gets the enable/disable Switch, on /settings and in the "+ Add" modal.
     const showToggle = setting.type !== 'boolean';
-    // Show a reset affordance whenever the value differs from the registered
-    // default. JSON compare so array-valued settings (string-array /
-    // multi-select) compare by contents, not reference (SettingImpl.isDefault
-    // uses ===, which is reference-unsafe for arrays). setting.reset() targets
-    // the right scope in either mount — the global setting on /settings, the
-    // per-tab TabBoundSetting in the embedded modal. The endpoint card has its
-    // own render path (renderEndpointControl) and never reaches here.
+    // Reset shown only when the value differs from default. JSON compare so
+    // array-valued settings compare by contents (SettingImpl.isDefault uses ===,
+    // unsafe for arrays). reset() hits the right scope (global or per-tab).
     const atDefault =
       JSON.stringify(setting.get()) === JSON.stringify(setting.defaultValue);
     return m(BigTraceSettingsCard, {

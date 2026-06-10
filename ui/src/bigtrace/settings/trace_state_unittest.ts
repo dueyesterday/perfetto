@@ -144,9 +144,8 @@ describe('traceQueryColumnsState', () => {
   });
 
   test('preserves an explicit empty list as "attach nothing" (not null)', () => {
-    // Unlike traceColumnsState, [] must NOT collapse to the null default —
-    // otherwise the user could never express "attach no metadata columns"
-    // after unchecking every box.
+    // Unlike traceColumnsState, [] must NOT collapse to null (else "attach
+    // nothing" is unexpressible).
     traceQueryColumnsState.set([]);
     expect(traceQueryColumnsState.get()).toEqual([]);
   });

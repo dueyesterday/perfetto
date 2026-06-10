@@ -14,18 +14,10 @@
 
 import {groupResultColumns} from './column_order';
 
-// Pure reconciliation + ordering for a tab's shown-columns selection. The
-// selection itself is per-tab state — `BigTraceEditorTab.resultColumns`,
-// persisted with the tab — and this resolves it at render time against the
-// query's live availableColumnNames:
-//
-//   null  → show every available column.
-//   [...] → show exactly these, intersected with what's actually available so a
-//           stale entry from a different-shaped query drops silently; if every
-//           entry is stale, fall back to show-all rather than an empty grid.
-//
-// Either way the result is ordered by groupResultColumns (`link` first, then
-// the query's own columns, then `_`-prefixed metadata grouped at the end).
+// Resolve a tab's shown-columns selection (BigTraceEditorTab.resultColumns,
+// persisted per-tab) against the live availableColumnNames: null = show all; an
+// explicit list is intersected (stale entries drop, all-stale → show all).
+// Ordered by groupResultColumns.
 export function resolveResultColumns(
   chosen: readonly string[] | null,
   available: ReadonlyArray<string>,

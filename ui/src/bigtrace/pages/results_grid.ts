@@ -130,11 +130,9 @@ function renderDataGrid(
   queryResult: QueryResponse,
   dataSource: DataSource,
 ): m.Children {
-  // The "+ Add column" menu populates from the schema. For async queries the
-  // backend declares the full union (result cols ∪ sidecar metadata cols) via
-  // availableColumnNames on every :fetch_results response — that's what the
-  // user can pick from. For sync (and async pre-first-fetch) fall back to
-  // `columns` (the result columns the first row carried).
+  // "+ Add column" populates from the schema. Async: the full union (result ∪
+  // sidecar) from availableColumnNames on each :fetch_results. Sync / pre-fetch:
+  // fall back to `columns` (the result columns the first row carried).
   let allColumns: ReadonlyArray<string> = columns;
   if (dataSource instanceof BigtraceAsyncDataSource) {
     const available = dataSource.availableColumnNames;
@@ -158,10 +156,8 @@ function renderDataGrid(
   }
   const schema: SchemaRegistry = {data: columnSchema};
 
-  // Controlled-mode columns: the tab's chosen subset intersected with what the
-  // schema offers (empty/unset → all available), persisted per-tab on
-  // tab.resultColumns so each tab keeps its layout across re-runs and reloads,
-  // and the data source ships it as the `:fetch_results` `columns` projection.
+  // The tab's chosen subset intersected with the schema (empty/unset → all),
+  // persisted per-tab; shipped as the `:fetch_results` `columns` projection.
   const visible = resolveResultColumns(tab.resultColumns, allColumns);
   const isAsync = dataSource instanceof BigtraceAsyncDataSource;
   const sortState = resultsSortByTab.get(tab);

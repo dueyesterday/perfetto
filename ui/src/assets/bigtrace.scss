@@ -29,10 +29,8 @@
   pointer-events: none;
 }
 
-// Settings-card title row: enable/disable Switch + title on the left, the
-// optional per-setting "reset to default" button pushed to the right edge.
-// Flex here is safe — it only lays out the title row's own children (the
-// sibling description is unaffected).
+// Title row: Switch + title left, optional per-setting reset pushed right.
+// Flex only affects the row's own children (description sibling unaffected).
 .pf-settings-card__title {
   display: flex;
   align-items: center;

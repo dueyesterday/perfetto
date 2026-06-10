@@ -21,7 +21,6 @@ import {defer} from '../base/deferred';
 import {reportError, addErrorHandler, type ErrorDetails} from '../base/logging';
 import {initLiveReload} from '../core/live_reload';
 import {settingsStorage} from './settings/settings_storage';
-import {getBigtraceEndpoint} from './settings/endpoint_storage';
 import {ThemeProvider} from '../frontend/theme_provider';
 import {OverlayContainer} from '../widgets/overlay_container';
 import {QueryPage, queryRightSidebarToggleFn} from './pages/query_page';
@@ -53,36 +52,17 @@ function getRoot() {
   return root;
 }
 
-// Origin of the configured BigTrace backend (e.g. 'http://127.0.0.1:8002' in
-// dev, 'https://...corp.google.com' in prod), or undefined if unset/unparseable.
-function getConfiguredEndpointOrigin(): string | undefined {
-  const endpoint = getBigtraceEndpoint();
-  if (endpoint.trim() === '') return undefined;
-  try {
-    return new URL(endpoint).origin;
-  } catch {
-    return undefined;
-  }
-}
-
 function setupContentSecurityPolicy() {
   // Note: self and sha-xxx must be quoted, urls data: and blob: must not.
-  const connectSrc = [
-    `'self'`,
-    'https://autopush-brush-googleapis.corp.google.com',
-    'https://brush-googleapis.corp.google.com',
-  ];
-  // Allowlist whatever backend the user configured. It's per-user and requires
-  // a reload to change, so reading it once at startup keeps the CSP in sync.
-  const endpointOrigin = getConfiguredEndpointOrigin();
-  if (endpointOrigin !== undefined && !connectSrc.includes(endpointOrigin)) {
-    connectSrc.push(endpointOrigin);
-  }
   const policy = {
     'default-src': [`'self'`],
     'script-src': [`'self'`],
     'object-src': ['none'],
-    'connect-src': connectSrc,
+    'connect-src': [
+      `'self'`,
+      'https://autopush-brush-googleapis.corp.google.com',
+      'https://brush-googleapis.corp.google.com',
+    ],
     'img-src': [`'self'`, 'data:', 'blob:'],
     'style-src': [
       `'self'`,
