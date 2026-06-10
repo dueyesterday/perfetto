@@ -146,9 +146,8 @@ describe('boolean settings have no enable/disable concept', () => {
       category: 'BIGTRACE_QUERY_OPTIONS',
     });
     flag.setDisabled(true);
-    // Booleans ignore the enable/disable concept: the value control stays
-    // editable (renderSetting gates on isDisabled) and the setting stays in the
-    // effective set.
+    // Booleans ignore enable/disable: isDisabled() stays false so the control
+    // stays editable, and the setting stays in the effective set.
     expect(flag.isDisabled()).toBe(false);
     expect(effectiveTabSettings(fakeTab({})).map((s) => s.settingId)).toContain(
       'my_flag',

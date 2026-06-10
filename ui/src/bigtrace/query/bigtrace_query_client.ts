@@ -18,16 +18,15 @@ import type {SettingFilter} from '../settings/settings_types';
 import {coerceFiltersForWire} from './filter_encoding';
 import type {RawQueryExecution} from './query_history_storage';
 
-// Tabular wire shape. Values are always strings, 'null' denotes SQL NULL.
+// Tabular wire shape. Values are always strings; JSON null denotes SQL NULL.
 interface QueryResponsePayload {
   queryUuid?: string;
   columnNames?: string[];
   rows?: Array<{values: Array<string | null>}>;
   // Filtered count for scrollbar sizing.
   totalFilteredRows?: number;
-  // Full union of (result-table cols ∪ sidecar metadata cols), surfaced on
-  // `:fetch_results` so the results column picker can offer sidecar columns
-  // even when the current projection omits them. Undefined elsewhere.
+  // Every column the client could project (result + metadata columns), so the
+  // picker can offer ones the current projection omits. `:fetch_results`-only.
   availableColumnNames?: string[];
 }
 
@@ -37,8 +36,7 @@ export interface QueryResultPage {
   readonly queryUuid?: string;
   // Post-filter count from `:fetch_results`; undefined elsewhere.
   readonly totalFilteredRows?: number;
-  // Full schema returned by `:fetch_results` (result + sidecar); undefined
-  // on every other endpoint.
+  // Every projectable column (result + metadata columns); `:fetch_results`-only.
   readonly availableColumnNames?: ReadonlyArray<string>;
 }
 
@@ -60,14 +58,14 @@ export interface TracesSchemaResponse {
 
 // The submit-time trace-selection snapshot shipped as top-level fields on
 // /execute_*. Each is omitted from the wire when empty / default, so a query
-// run with no trace selection keeps the legacy request shape.
+// run with no trace selection sends just the base limit/perfetto_sql/settings.
 export interface ExecuteOptions {
   // Structured filter picking which traces the query runs over. Shipped as a
-  // native JSON array (strict-native body contract) via coerceFiltersForWire.
+  // native JSON array via coerceFiltersForWire.
   readonly traceFilters?: ReadonlyArray<Filter>;
-  // Trace-metadata columns to staple onto each result row.
+  // Trace-metadata columns to attach to each result row.
   readonly traceMetadataColumns?: ReadonlyArray<string>;
-  // AIP-132 ordering controlling the trace processing order.
+  // AIP-132 ordering for the trace processing order.
   readonly traceOrderBy?: string;
   // Non-negative cap on traces fanned out; 0 / undefined means no cap.
   readonly traceLimit?: number;
@@ -149,12 +147,10 @@ export class BigtraceQueryClient {
     });
   }
 
-  // Page the materialized table. POST body carries `limit`/`offset` plus the
-  // optional `order_by` (AIP-132), `filters` (native Filter[] under the
-  // strict-native contract), and `columns` field-mask projecting the union of
-  // (result cols ∪ sidecar metadata cols). The response echoes the full union
-  // as `availableColumnNames` so the results column picker can offer sidecar
-  // columns. Mid-flight calls return whatever rows have merged.
+  // Page a query's results. POST body: `limit`/`offset` plus optional
+  // `order_by` (AIP-132), `filters` (native Filter[]), and `columns` field-mask
+  // over (result cols + metadata columns). The response echoes that set as
+  // `availableColumnNames`. Mid-flight calls return whatever rows are ready.
   async fetchResults(
     uuid: string,
     limit: number,
@@ -183,10 +179,8 @@ export class BigtraceQueryClient {
         signal,
       },
     );
-    // `availableColumnNames` is `:fetch_results`-only by spec — `/trace_metadata`
-    // mustn't echo a column catalog (`/trace_metadata_schema` is its source of
-    // truth), so the parser stays endpoint-agnostic and only this call site
-    // exposes the field.
+    // `availableColumnNames` is `:fetch_results`-only, so the shared parser
+    // stays endpoint-agnostic and only this call site exposes the field.
     return {
       ...parseQueryResponse(result),
       availableColumnNames: result.availableColumnNames,
@@ -223,8 +217,8 @@ export class BigtraceQueryClient {
 
   // Paginated trace metadata for the current trace source — the data behind
   // the Settings-page trace-selection grid. `filter` / `order_by` / `columns`
-  // mirror `:fetch_results`; `filter` ships as a native JSON array under the
-  // strict-native body contract (NOT a JSON-encoded string).
+  // mirror `:fetch_results`; `filter` ships as a native JSON array, NOT a
+  // JSON-encoded string.
   async listTraceMetadata(
     settings: ReadonlyArray<SettingFilter>,
     limit: number,
@@ -261,8 +255,8 @@ export class BigtraceQueryClient {
   }
 
   // Column catalog for `/trace_metadata`, fetched once on Settings-page load
-  // to build the grid's schema + the column-picker. `settings` lets a
-  // schema-varies-by-source backend tailor the response.
+  // to build the grid's schema + the column-picker. `settings` lets the
+  // response vary when the schema depends on the trace source.
   async listTraceMetadataSchema(
     settings: ReadonlyArray<SettingFilter>,
     signal?: AbortSignal,
@@ -292,8 +286,7 @@ export class BigtraceQueryClient {
       perfetto_sql: query,
       settings: this.settingsToWire(settings),
     };
-    // Each trace-selection field rides only when non-default, so a query with
-    // no selection keeps the legacy request shape.
+    // Each trace-selection field rides only when non-default.
     if (options?.traceFilters && options.traceFilters.length > 0) {
       body.trace_filters = coerceFiltersForWire(options.traceFilters);
     }
@@ -383,11 +376,10 @@ export class BigtraceQueryClient {
   }
 }
 
-// Passes wire values through as-is: strings stay strings (no numeric coercion —
-// it would corrupt 64-bit ids/timestamps past 2^53), and SQL NULL arrives as
-// JSON null per the wire contract, so it flows through natively. Do NOT
-// special-case the literal string "NULL" — that would corrupt a genuine string
-// value of "NULL" into SQL NULL (and it never matched a real NULL anyway).
+// Passes wire values through as-is: no numeric coercion (would corrupt 64-bit
+// ids/timestamps past 2^53), and SQL NULL arrives as JSON null. Do NOT
+// special-case the literal string "NULL" — that would corrupt a genuine "NULL"
+// string value into SQL NULL.
 export function parseQueryResponse(
   result: QueryResponsePayload,
 ): QueryResultPage {

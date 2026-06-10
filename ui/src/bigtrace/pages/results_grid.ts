@@ -27,8 +27,7 @@ import type {
   Column,
   SortDirection,
 } from '../../components/widgets/datagrid/model';
-import {resolveResultColumns} from '../settings/result_columns';
-import {LINK_COLUMN} from '../settings/column_order';
+import {LINK_COLUMN, resolveResultColumns} from '../settings/column_order';
 import {BigtraceAsyncDataSource} from '../query/bigtrace_async_data_source';
 import {TERMINAL_STATUSES} from '../query/query_store';
 import type {
@@ -38,10 +37,9 @@ import type {
 } from './query_tabs_state';
 import {formatDurationS} from './status_box';
 
-// Per-tab results sort state. The DataGrid carries sort on the Column object,
-// so controlled-mode `columns` must splice it back in each render — otherwise
-// a header-click sort is dropped on our redraws. In-memory (not persisted):
-// sort is ephemeral, unlike the visible-columns set.
+// Per-tab results sort. DataGrid carries sort on the Column object, so
+// controlled-mode `columns` must splice it back each render or a header click
+// is dropped on our redraws. Not persisted, unlike the visible-columns set.
 const resultsSortByTab = new WeakMap<
   BigTraceEditorTab,
   {field: string; direction: SortDirection}
@@ -128,9 +126,8 @@ function renderDataGrid(
   queryResult: QueryResponse,
   dataSource: DataSource,
 ): m.Children {
-  // "+ Add column" populates from the schema. Async: the full union (result ∪
-  // sidecar) from availableColumnNames on each :fetch_results. Sync / pre-fetch:
-  // fall back to `columns` (the result columns the first row carried).
+  // "+ Add column" choices. Async: the full union (result ∪ metadata) from
+  // availableColumnNames. Sync / pre-fetch: fall back to the result columns.
   let allColumns: ReadonlyArray<string> = columns;
   if (dataSource instanceof BigtraceAsyncDataSource) {
     const available = dataSource.availableColumnNames;
@@ -154,8 +151,8 @@ function renderDataGrid(
   }
   const schema: SchemaRegistry = {data: columnSchema};
 
-  // The tab's chosen subset intersected with the schema (empty/unset → all),
-  // persisted per-tab; shipped as the `:fetch_results` `columns` projection.
+  // Per-tab visible subset (empty/unset → all); shipped as the
+  // `:fetch_results` `columns` projection.
   const visible = resolveResultColumns(tab.resultColumns, allColumns);
   const isAsync = dataSource instanceof BigtraceAsyncDataSource;
   const sortState = resultsSortByTab.get(tab);
@@ -164,8 +161,7 @@ function renderDataGrid(
     schema,
     rootSchema: 'data',
     disablePivotControls: true,
-    // Splice per-tab sort onto the matching column so a header click survives
-    // our controlled-mode redraws.
+    // Splice per-tab sort onto its column so a header click survives redraws.
     columns: visible.map((col) => {
       const base: Column = {id: col, field: col};
       if (sortState && sortState.field === col) {
@@ -174,8 +170,7 @@ function renderDataGrid(
       return base;
     }),
     onColumnsChanged: (cols: ReadonlyArray<Column>) => {
-      // Extract sort into the per-tab WeakMap before collapsing to string[],
-      // else it's discarded on the next render.
+      // Stash sort before collapsing to string[], else it's lost next render.
       const sorted = cols.find((c) => c.sort);
       if (sorted && sorted.sort !== undefined) {
         resultsSortByTab.set(tab, {

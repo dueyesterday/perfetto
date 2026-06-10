@@ -65,13 +65,13 @@ import {
   type TracesSchemaResponse,
 } from '../query/bigtrace_query_client';
 import {BigtraceTraceListDataSource} from '../query/bigtrace_trace_list_data_source';
-import {traceFilterState as traceFiltersState} from '../settings/trace_filter_state';
-import {traceOrderByState} from '../settings/trace_order_by_state';
-import {traceColumnsState} from '../settings/trace_columns_state';
 import {
+  traceFilterState as traceFiltersState,
+  traceOrderByState,
+  traceColumnsState,
   traceQueryColumnsState,
   effectiveQueryColumns,
-} from '../settings/trace_query_columns_state';
+} from '../settings/trace_selection_state';
 import {linkColumnFirst, LINK_COLUMN} from '../settings/column_order';
 
 interface BigTraceSettingsCardAttrs extends m.Attributes {
@@ -82,8 +82,7 @@ interface BigTraceSettingsCardAttrs extends m.Attributes {
   disabled?: boolean;
   onChange?: (disabled: boolean) => void;
   fullWidthControls?: boolean;
-  // When provided, a compact "reset to default" affordance is shown in the
-  // title row. Callers pass it only when the setting differs from its default.
+  // Shows a "reset to default" affordance; pass only when value differs from default.
   onReset?: () => void;
 }
 
@@ -105,7 +104,7 @@ class BigTraceSettingsCard
 
     const details = m(
       '.pf-settings-card__details',
-      m('.pf-settings-card__title', [
+      m('.pf-settings-card__title.pf-bt-settings-card-title', [
         disabled !== undefined &&
           m(Switch, {
             className: 'pf-settings-card__toggle',
@@ -124,7 +123,7 @@ class BigTraceSettingsCard
           m(Button, {
             icon: 'settings_backup_restore',
             title: 'Reset this setting to its default value.',
-            className: 'pf-settings-card__reset',
+            className: 'pf-bt-settings-card-reset',
             onclick: () => onReset(),
           }),
       ]),
@@ -167,24 +166,20 @@ class BigTraceSettingsCard
   }
 }
 
-// Display category name for the section that hosts the trace-selection
-// grid. Must match the localised label in CATEGORY_DISPLAY_NAMES so the
+// Trace-selection-grid section label. Must match CATEGORY_DISPLAY_NAMES so the
 // renderer can branch on it.
 const TRACE_ADDRESS_DISPLAY = 'Trace Address';
 
 const SCHEMA_ROOT = 'trace_list';
 
-// Build a SchemaRegistry from the backend's /trace_metadata_schema response.
-// One entry per declared column; cellRenderer stays undefined so the
-// DataGrid uses its default string renderer (every cell is a string
-// on the wire per the always-strings contract).
+// SchemaRegistry from /trace_metadata_schema: one entry per column, default
+// string renderer (every cell is a string per the always-strings contract).
 function buildSchemaRegistry(
   schema: ReadonlyArray<TraceColumnDescriptor>,
 ): SchemaRegistry {
   const columnSchema: ColumnSchema = {};
   for (const c of schema) {
-    // A column named `link` renders as a clickable link (same as the results
-    // grid); every other column uses the default string renderer.
+    // The `link` column renders as a clickable link; all others as strings.
     columnSchema[c.name] =
       c.name === LINK_COLUMN
         ? {
@@ -205,20 +200,16 @@ interface SchemaError {
 type SchemaState = undefined | 'loading' | SchemaError | TracesSchemaResponse;
 
 export interface SettingsPageAttrs {
-  // When provided, every read/write that would normally hit
-  // bigTraceSettingsStorage / traceFiltersState / traceQueryColumnsState
-  // is routed through the bindings instead. The /settings route
-  // mounts SettingsPage without bindings (global state); the Query
-  // page's "Bigtrace Settings" sub-tab mounts with per-tab bindings.
+  // When set, reads/writes route through the bindings instead of global state.
+  // The /settings route mounts without bindings; the Query page's "Bigtrace
+  // Settings" sub-tab mounts with per-tab bindings.
   readonly bindings?: SettingsBindings;
 }
 
-// AIP-132 single-field order_by helpers. The trace grid only supports
-// one active sort column at a time (DataGrid limit), so a one-field
-// parser is sufficient — multi-field strings are persisted verbatim
-// but we only round-trip the first entry into the UI's sort state.
-// Returns undefined for empty / unparseable input so the caller can
-// fall back to "no sort applied".
+// AIP-132 single-field order_by helpers. The DataGrid supports only one active
+// sort column, so multi-field strings persist verbatim but only the first entry
+// round-trips into the UI's sort state. Returns undefined for empty/unparseable
+// input so the caller falls back to "no sort applied".
 function parseSingleFieldOrderBy(
   raw: string,
 ): {field: string; direction: SortDirection} | undefined {
@@ -240,40 +231,32 @@ function formatSingleFieldOrderBy(
 
 export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   private searchQuery = '';
-  // Captured on every view() so private methods can read it without
-  // threading attrs everywhere. Stale-bindings risk = zero: view runs
-  // before any rendering, and bindings are owned by the caller.
+  // Captured on every view() so private methods read it without threading attrs.
   private bindings: SettingsBindings | undefined;
-  // Trace-list grid state. The DataSource is rebuilt whenever the
-  // backend endpoint changes (its BigtraceQueryClient binds to one
-  // endpoint at construction). With bindings set, the data source's
-  // `getSettings` callback also routes through bindings so /trace_metadata
-  // sees the per-tab snapshot, not the global defaults.
+  // Trace-list grid state. Rebuilt whenever the endpoint changes (its
+  // BigtraceQueryClient binds to one endpoint at construction). With bindings
+  // set, the data source's `getSettings` callback routes through them so
+  // /trace_metadata sees the per-tab snapshot, not the global defaults.
   private traceListDataSource: BigtraceTraceListDataSource | undefined;
   private traceListEndpoint: string | undefined;
   private traceFilterss: readonly Filter[] = [];
-  // Sort state for the trace grid. The DataGrid carries sort on the
-  // `Column` object itself, so when we run in controlled-mode
-  // `columns` we have to splice it back onto the matching column on
-  // every render — otherwise the click that set it gets discarded
-  // on the next redraw. Persisted to `traceOrderByState` because
-  // the trace-grid sort is functionally significant (under
-  // `trace_limit > 0` it controls which traces the executor picks
-  // first); seeding on oninit means a reload doesn't reset the
-  // chosen order under the user.
+  // Sort state for the trace grid. The DataGrid carries sort on the `Column`
+  // object, so controlled-mode `columns` splices it back onto the matching
+  // column every render, else the click that set it is discarded on the next
+  // redraw. Persisted to `traceOrderByState` because the sort is functionally
+  // significant (under `trace_limit > 0` it picks which traces run first);
+  // seeding on oninit survives a reload.
   private traceListSortField: string | undefined;
   private traceListSortDirection: SortDirection | undefined;
-  // /trace_metadata_schema response. `undefined` = not yet requested;
-  // 'loading' = in flight; SchemaError = the request failed; otherwise the
-  // resolved response.
+  // /trace_metadata_schema response. undefined = not yet requested; 'loading' =
+  // in flight; SchemaError = failed; else the resolved response.
   private schemaState: SchemaState = undefined;
-  // Keyed on endpoint + effective settings: the backend can vary the schema
-  // by trace source (TRACE_ADDRESS settings), so a source change must refetch
-  // — endpoint-only keying would serve a stale catalog.
+  // Keyed on endpoint + effective settings: the schema can vary by trace source
+  // (TRACE_ADDRESS settings), so a source change must refetch — endpoint-only
+  // keying would serve a stale catalog.
   private schemaKey: string | undefined;
-  // One schema fetch at a time. A key change mid-flight bails the current
-  // render and is picked up on the next render once the fetch settles, so
-  // rapid source edits coalesce instead of racing.
+  // One schema fetch at a time. A key change mid-flight is picked up once the
+  // fetch settles, so rapid source edits coalesce instead of racing.
   private schemaFetching = false;
   oninit({attrs}: m.Vnode<SettingsPageAttrs>) {
     this.bindings = attrs.bindings;
@@ -284,7 +267,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     bigTraceSettingsStorage.loadSettings();
   }
 
-  // ----- Binding-aware accessors (fall back to globals) -----
+  // Binding-aware accessors (fall back to globals).
 
   private readTraceFilters(): readonly Filter[] {
     return this.bindings
@@ -297,7 +280,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     else traceFiltersState.set(filters);
   }
 
-  // null = unchosen (picker resolves to defaultVisible); [] = attach nothing.
+  // null = unchosen (resolves to defaultVisible); [] = attach nothing.
   private readTraceMetadataColumns(): readonly string[] | null {
     return this.bindings
       ? this.bindings.getTraceMetadataColumns()
@@ -315,24 +298,23 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     else traceOrderByState.set(orderBy);
   }
 
-  // `null` resets to the unchosen default; a concrete list (incl. []) is verbatim.
+  // `null` resets to unchosen; a concrete list (incl. []) is stored verbatim.
   private writeTraceMetadataColumns(cols: readonly string[] | null): void {
     if (this.bindings) this.bindings.setTraceMetadataColumns(cols);
     else traceQueryColumnsState.set(cols);
   }
 
-  // Effective settings for outgoing requests (/trace_metadata, /trace_metadata_schema).
-  // With bindings set, the per-tab snapshot wins so the trace grid
-  // reflects the same `trace_directory` / `trace_limit` the next Run
-  // will use, not the user's /settings defaults.
+  // Effective settings for outgoing /trace_metadata[_schema] requests. With
+  // bindings set, the per-tab snapshot wins so the grid reflects the same
+  // trace_directory / trace_limit the next Run uses, not /settings defaults.
   private effectiveSettings(): ReadonlyArray<SettingFilter> {
     return this.bindings
       ? this.bindings.getEffectiveSettings()
       : bigTraceSettingsStorage.buildSettingFilters();
   }
 
-  // Wrap a globally-registered setting so its widget reads/writes
-  // per-tab. No-op when bindings is undefined (returns the original).
+  // Wrap a globally-registered setting so its widget reads/writes per-tab.
+  // No-op when bindings is undefined (returns the original).
   private boundSetting(
     setting: BigTraceSetting<unknown>,
   ): BigTraceSetting<unknown> {
@@ -352,11 +334,10 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     return SettingsPage.CATEGORY_DISPLAY_NAMES.get(raw) ?? raw;
   }
 
-  // Lazily build / re-build the trace-list data source. The
-  // BigtraceQueryClient binds to one endpoint at construction, so a
-  // change to bigtraceEndpoint requires a fresh DataSource (and a
-  // fresh grid lifecycle — the caller keys the DataGrid on the
-  // endpoint so Mithril rebuilds it).
+  // Lazily build/rebuild the trace-list data source. BigtraceQueryClient binds
+  // to one endpoint at construction, so an endpoint change needs a fresh
+  // DataSource (the caller keys the DataGrid on the endpoint so Mithril
+  // rebuilds it).
   private getTraceListDataSource(
     endpoint: string,
   ): BigtraceTraceListDataSource | undefined {
@@ -370,9 +351,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       this.traceListEndpoint !== endpoint
     ) {
       const client = new BigtraceQueryClient(endpoint);
-      // `getSettings` is invoked on every fetch, so a per-tab caller
-      // sees the latest snapshot edits without rebuilding the data
-      // source.
+      // `getSettings` runs on every fetch, so a per-tab caller sees latest
+      // snapshot edits without rebuilding the data source.
       this.traceListDataSource = new BigtraceTraceListDataSource(client, () =>
         this.effectiveSettings(),
       );
@@ -381,9 +361,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     return this.traceListDataSource;
   }
 
-  // Resolved schema or `undefined` while loading / errored. The
-  // toggle widget and the column-picker menu both go through this so
-  // a single fetch backs both UIs.
+  // Resolved schema, or undefined while loading/errored. The toggle widget and
+  // column-picker menu both go through this so one fetch backs both.
   private resolvedSchema(): TracesSchemaResponse | undefined {
     const s = this.schemaState;
     if (s === undefined || s === 'loading') return undefined;
@@ -391,22 +370,17 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     return s;
   }
 
-  // Fetch /trace_metadata_schema, keyed on endpoint + effective settings, so a
-  // change to the trace source (TRACE_ADDRESS settings) refetches the catalog
-  // instead of serving a stale one. The in-flight guard keeps it to one fetch
-  // at a time: a key change while a fetch is running bails this render and is
-  // picked up on the next render once the fetch settles — so rapid edits
-  // coalesce rather than racing.
+  // Fetch /trace_metadata_schema, keyed on endpoint + effective settings (see
+  // schemaKey / schemaFetching for the keying and in-flight rationale).
   private ensureSchemaFetched(endpoint: string): void {
     if (endpoint === '') {
       this.schemaState = undefined;
       this.schemaKey = undefined;
       return;
     }
-    // Key on endpoint + only the TRACE_ADDRESS (trace-source) settings: the
-    // schema varies by source, so a query-option / metadata setting edit
-    // shouldn't refetch the catalog. The fetch itself still sends every
-    // setting.
+    // Key on endpoint + only the TRACE_ADDRESS (source) settings: the schema
+    // varies by source, so a query-option/metadata edit shouldn't refetch. The
+    // fetch itself still sends every setting.
     const sourceSettings = this.effectiveSettings().filter(
       (s) => s.category === 'TRACE_ADDRESS',
     );
@@ -426,7 +400,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       .then((resp) => {
         this.schemaFetching = false;
         // Stale-response guard: drop if the key moved on (endpoint cleared, or
-        // the source changed and a newer fetch is warranted).
+        // source changed).
         if (this.schemaKey !== key) {
           m.redraw();
           return;
@@ -448,11 +422,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       });
   }
 
-  // Build the controlled-mode `columns` array for the trace grid.
-  // Splices the per-session sort state onto the column it applies
-  // to so the DataGrid's header sort indicator survives our redraws.
-  // Without this, the controlled-mode reset wipes sort on every
-  // render and the user perceives "sort doesn't work".
+  // Build the controlled-mode `columns` array, splicing the sort state onto its
+  // column so the DataGrid's header sort indicator survives redraws (else
+  // controlled-mode reset wipes it).
   private buildTraceListColumns(names: ReadonlyArray<string>): Column[] {
     return names.map((n) => {
       const base: Column = {id: n, field: n};
@@ -466,17 +438,11 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     });
   }
 
-  // Apply a column-set change coming from either UI affordance
-  // (toggle row or DataGrid header menu). The two routes converge
-  // here so they can't drift.
+  // Apply a column-set change from either affordance (toggle row or DataGrid
+  // header menu); both converge here so they can't drift.
   private updateChosenColumns(names: readonly string[]): void {
-    // The DataGrid emits onColumnsChanged with the new visible-set
-    // (which may include an aliased column if the user renamed one).
-    // We don't alias trace-list columns, so id === field for every
-    // entry; we just normalise to a string list.
     if (names.length === 0) {
-      // Defend against a degenerate state — at least one column has
-      // to be visible. Reset to defaults instead.
+      // At least one column must be visible; reset to defaults instead.
       traceColumnsState.clear();
     } else {
       traceColumnsState.set(names);
@@ -484,12 +450,10 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     m.redraw();
   }
 
-  // Renders the embedded "Traces" card. The card has three parts:
-  // (a) a caption pinning the implicit-selection contract; (b) a
-  // toggle row letting the user check the columns they want; (c) a
-  // DataGrid driven by the trace-list DataSource. Both the toggle
-  // row and the grid's built-in "Add column" menu write through the
-  // same `traceColumnsState`, so they stay in sync.
+  // Renders the "Traces" card: a caption, a column-picker toggle row, and a
+  // DataGrid driven by the trace-list DataSource. The toggle row and the grid's
+  // "Add column" menu both write through `traceColumnsState`, so they stay in
+  // sync.
   private renderTraceListCard(endpoint: string): m.Children {
     const ds = this.getTraceListDataSource(endpoint);
     if (ds === undefined) {
@@ -513,9 +477,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     const header: m.Children = [
       m('.pf-bt-trace-card__title-row', [
         m('.pf-settings-card__title', 'Traces'),
-        // Inline refresh action — forces a /trace_metadata refetch with the
-        // current filter / sort / columns / settings. Lives next to
-        // the section title so it's obvious which list it refreshes.
+        // Forces a /trace_metadata refetch with the current filter/sort/
+        // columns/settings. Sits next to the title so it's obvious which list
+        // it refreshes.
         m(Button, {
           icon: 'refresh',
           className: 'pf-bt-trace-card__refresh',
@@ -562,8 +526,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       );
     }
 
-    // schema is resolved here; build the controlled-mode column list
-    // from the effective selection.
+    // Schema resolved: build the column list from the effective selection.
     const chosen = traceColumnsState.effective(schema!.columns);
     const schemaRegistry = buildSchemaRegistry(schema!.columns);
 
@@ -571,11 +534,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       Card,
       {
         className: 'pf-settings-card pf-bt-trace-card',
-        // Extra top margin separates this richer compound widget
-        // from the plain key-value cards above (Trace Directory,
-        // Trace Limit). Without it the grid sits flush against the
-        // settings list and the visual hierarchy collapses.
-        // padding-bottom keeps the grid's bottom edge clear of the
+        // Top margin separates this from the plain key-value cards above (Trace
+        // Directory, Trace Limit); padding-bottom keeps the grid clear of the
         // card border.
         style: {
           display: 'block',
@@ -589,41 +549,29 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         m(
           '.pf-bt-trace-list-grid',
           {
-            // Fixed height so the inner virtualized Grid has a
-            // bounded viewport — without it, the DataGrid's
-            // `height: 100%` resolves against an auto-height parent
-            // and the Grid expands to render every row. For a
-            // 7M-row trace directory that's catastrophic; the
-            // results-page grid avoids it via its flex-bounded
-            // parent layout, but the Settings page is a scrolling
-            // card layout so the trace-list wrapper has to set its
-            // own height. 500px is generous enough for typical
-            // settings UX, capped so virtualization always engages.
+            // Fixed height bounds the inner virtualized Grid's viewport:
+            // without it the DataGrid's `height: 100%` resolves against an
+            // auto-height parent and renders every row (catastrophic for a
+            // large trace directory). This scrolling card must set its own
+            // height; 500px engages virtualization while staying generous.
             style: {height: '500px', marginTop: '16px'},
           },
           m(DataGrid, {
             schema: schemaRegistry,
             rootSchema: SCHEMA_ROOT,
             data: ds,
-            // Engages the `pf-data-grid--fill-height` CSS class so
-            // the inner virtualized Grid can use the wrapper's 500px
-            // as its viewport (without this the grid renders every
-            // row regardless of how big the result set is).
+            // Inner virtualized Grid uses the wrapper's 500px as its viewport.
             fillHeight: true,
-            // Controlled-mode columns: the grid renders exactly what
-            // the user picked, in their preferred order. Its built-in
-            // header menus ("Add column", "Remove column") emit
-            // onColumnsChanged with the new list, which we persist
-            // back to traceColumnsState — same write path as the
-            // toggle widget above.
+            // Controlled-mode columns: render exactly what the user picked, in
+            // their order. The grid's header menus ("Add"/"Remove column")
+            // emit onColumnsChanged, persisted to traceColumnsState — the same
+            // write path as the toggle widget above.
             columns: this.buildTraceListColumns(chosen),
             onColumnsChanged: (cols: ReadonlyArray<Column>) => {
-              // Sort lives on the Column object — extract it before
-              // we collapse cols to a string[] so the next render
-              // can splice it back. Without this the user's
-              // header click reverts on every redraw. The sort
-              // also gets persisted to traceOrderByState so a
-              // reload doesn't drop it, and a Run picks it up as
+              // Extract sort (it lives on the Column object) before collapsing
+              // cols to string[] so the next render can splice it back, else
+              // the header click reverts each redraw. Persisted to
+              // traceOrderByState so a reload keeps it; a Run ships it as
               // `trace_order_by` on /execute_*.
               const sorted = cols.find((c) => c.sort);
               this.traceListSortField = sorted?.field;
@@ -633,10 +581,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
             },
             canAddColumns: true,
             canRemoveColumns: true,
-            // Controlled-mode filter: source of truth is the binding
-            // (per-tab snapshot) or `traceFiltersState` (global on
-            // /settings). Persist immediately so a Run picks up the
-            // latest selection without a separate "apply" step.
+            // Controlled-mode filter: source of truth is the binding (per-tab
+            // snapshot) or `traceFiltersState` (global on /settings). Persisted
+            // immediately so a Run picks it up without a separate "apply".
             filters: this.traceFilterss,
             onFiltersChanged: (filters: readonly Filter[]) => {
               this.traceFilterss = filters;
@@ -645,11 +592,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
             emptyStateMessage:
               'No traces match your filter (or Trace Directory is empty).',
             disablePivotControls: true,
-            // Inline match-count so users see at a glance how many
-            // traces the current filter (or trace_directory alone)
-            // selects. Backed by the data source's
-            // filteredTotalRows, refreshed on every successful
-            // fetch.
+            // How many traces the current filter (or trace_directory alone)
+            // selects. Backed by the data source's filteredTotalRows.
             toolbarItemsLeft: [this.renderTraceMatchCount(ds)],
           }),
         ),
@@ -657,12 +601,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     );
   }
 
-  // Sibling card to the Traces card. Lives below it in the
-  // TRACE_ADDRESS section. Separate visual unit — its own title +
-  // description — so the "what shows up in the grid" picker and the
-  // "what gets attached to query results" picker don't look like
-  // duplicates of each other. Renders nothing while the schema is
-  // still loading.
+  // Sibling card below Traces. Its own title/description keep the "shown in the
+  // grid" picker distinct from the "attached to query results" picker. Renders
+  // nothing while schema loads.
   private renderQueryColumnsCard(): m.Children {
     const schema = this.resolvedSchema();
     if (schema === undefined) return null;
@@ -687,18 +628,13 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     );
   }
 
-  // Single-line summary of how many traces currently match. Sits in
-  // the grid's toolbar so it's visible alongside the filter chips
-  // and the search-result feel mirrors the query-page results
-  // summary. Uses `filteredTotalRows` from the data source (post-
-  // filter count; equal to the trace-directory total when no filter
-  // is active).
+  // Single-line summary of how many traces match, shown in the grid toolbar.
+  // Uses the data source's `filteredTotalRows` (post-filter count; equals the
+  // trace-directory total when no filter set).
   private renderTraceMatchCount(ds: BigtraceTraceListDataSource): m.Children {
     const n = ds.filteredTotalRows;
-    // Cache the count back to the embedded caller (e.g. the drawer
-    // prototype) so a closed-drawer summary can show it without
-    // re-fetching. No-op when the standalone /settings route is the
-    // caller — that mount doesn't set onTraceMatchCount.
+    // Report the count to the embedded caller so a closed-drawer summary can
+    // show it without re-fetching. No-op on /settings (no onTraceMatchCount).
     this.bindings?.onTraceMatchCount?.(n);
     const hasFilter = this.traceFilterss.length > 0;
     const text =
@@ -707,9 +643,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         : hasFilter
           ? `${n.toLocaleString()} trace${n === 1 ? '' : 's'} match`
           : `${n.toLocaleString()} trace${n === 1 ? '' : 's'}`;
-    // Subtle filled label — small radius, low-contrast background,
-    // inherits the font family. Reads as a "status" rather than as
-    // a clickable chip.
+    // Filled label that reads as a status, not a clickable chip.
     return m(
       'span.pf-bt-trace-match-count',
       {
@@ -728,9 +662,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     );
   }
 
-  // "Restore defaults" — shown only when the picker is customized (non-default).
-  // Resets to the live default (re-checks defaultVisible); doubles as an
-  // "overridden" cue.
+  // "Restore defaults" — shown only when customized.
   private renderRestoreDefaultsButton(
     customized: boolean,
     title: string,
@@ -748,14 +680,11 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     });
   }
 
-  // Picks the trace-metadata columns attached to every QUERY RESULT row (the
-  // sidecar). Distinct from traceColumnsState (the trace-list grid). Unchosen
-  // (null) attaches defaultVisible; uncheck all → [] = "attach nothing".
+  // Picks the trace-metadata columns attached to each result row. Unchosen
+  // (null) = defaultVisible; uncheck all → [] = nothing.
   private renderQueryColumnsPicker(
     schemaCols: ReadonlyArray<TraceColumnDescriptor>,
   ): m.Children {
-    // Unchosen (null) shows defaultVisible pre-checked; the first toggle writes
-    // a concrete list (uncheck the last → [] = "attach nothing").
     const chosen = effectiveQueryColumns(
       this.readTraceMetadataColumns(),
       schemaCols,
@@ -810,16 +739,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     );
   }
 
-  // Compact popup multi-select for the trace grid's visible columns.
-  // Each column = one checkable option in the popup; the button face
-  // shows "Shown columns (N selected)". Scales gracefully when Phase
-  // 2 introduces more metadata — no row-wrapping noise — and reuses
-  // the multiselect widget's built-in search + select-all.
-  //
-  // `description` from /trace_metadata_schema becomes the per-option
-  // tooltip (the multiselect widget surfaces `details` as the
-  // hover title), so users can still discover what each column
-  // means without leaving the popup.
+  // Popup multi-select for the trace grid's visible columns: one checkable
+  // option per column. Each /trace_metadata_schema `description` becomes the
+  // option's hover tooltip (the widget's `details`).
   private renderColumnPicker(
     schemaCols: ReadonlyArray<TraceColumnDescriptor>,
     chosen: ReadonlyArray<string>,
@@ -865,10 +787,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     );
   }
 
-  // Apply MultiSelect diffs to the persisted shown-columns set.
-  // Preserves the order users implicitly create by checking columns
-  // in sequence (newly-checked ones are appended; unchecked ones
-  // are removed in place).
+  // Apply MultiSelect diffs to the shown-columns set, preserving check order:
+  // newly-checked appended, unchecked removed in place.
   private applyColumnDiffs(
     chosen: ReadonlyArray<string>,
     diffs: ReadonlyArray<MultiSelectDiff>,
@@ -885,9 +805,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   }
 
   view({attrs}: m.Vnode<SettingsPageAttrs>) {
-    // Refresh bindings each render so callers can swap them out
-    // without remounting. The class only holds the reference for
-    // the duration of the render pass.
+    // Refresh bindings each render so callers can swap them without remounting.
     this.bindings = attrs.bindings;
     const embedded = this.bindings !== undefined;
     const endpointSetting = endpointStorage.get('bigtraceEndpoint');
@@ -895,10 +813,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     const query = this.searchQuery.toLowerCase();
     const categories = new Map<string, BigTraceSetting<unknown>[]>();
 
-    // Always show the General section so the endpoint is accessible
-    // on the standalone /settings route. In embedded mode the
-    // endpoint stays global (it's a connection, not a query) and
-    // doesn't belong in the per-tab snapshot UI.
+    // Show General (the endpoint) only on the standalone /settings route. The
+    // endpoint is a connection, not a query, so it stays global and out of the
+    // per-tab snapshot UI.
     if (endpointSetting && !embedded) {
       categories.set('General', []);
     }
@@ -919,8 +836,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       categories.get(categoryName)!.push(setting);
     }
 
-    // Show a "no matches" hint when search hides everything except
-    // the always-shown General card.
+    // "No matches" hint when search hides everything but the General card.
     const hasOtherMatches = settings.length > 0;
     const showNoMatchesHint =
       this.searchQuery !== '' &&
@@ -943,8 +859,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         const cards: m.Children[] = [];
         // Render the endpoint card inside "General".
         if (category === 'General' && endpointSetting) {
-          // Reset restores the default backend URL; like any endpoint edit it
-          // needs a reload — the existing "Reload to apply" then appears.
+          // Reset restores the default URL; applied via "Reload to apply".
           const endpointAtDefault =
             JSON.stringify(endpointSetting.get()) ===
             JSON.stringify(endpointSetting.defaultValue);
@@ -964,11 +879,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         for (const setting of catSettings) {
           cards.push(this.renderBigTraceSettingCard(setting));
         }
-        // Append the trace-list grid + the result-columns picker below the
-        // trace_directory / trace_limit cards. Two sibling cards: "Traces"
-        // picks WHICH traces; "Query Result Columns" picks WHAT metadata is
-        // attached to each row of query results. Both omitted while the user
-        // is searching the settings list.
+        // Below the trace_directory/trace_limit cards, two sibling cards:
+        // "Traces" picks WHICH traces, "Query Result Columns" picks WHAT
+        // metadata attaches to each result row. Both omitted while searching.
         if (category === TRACE_ADDRESS_DISPLAY && this.searchQuery === '') {
           const endpoint = getBigtraceEndpoint();
           cards.push(this.renderTraceListCard(endpoint));
@@ -982,8 +895,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
           categoryContent,
         );
       }),
-      // After the General card, so the callout's "Set the
-      // Endpoint above" copy points at a field above it.
+      // After the General card so the callout's "Set the Endpoint above" copy
+      // points at a field above it.
       bigTraceSettingsStorage.execConfigLoadError &&
         m(
           Callout,
@@ -1001,10 +914,9 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         }),
     ]);
 
-    // Embedded inside the Query page's "Bigtrace Settings" sub-tab:
-    // skip the SettingsShell chrome (page title + sticky search
-    // input). The pill row above already labels the surface, and a
-    // second "Settings" header in the page body would just be noise.
+    // Embedded in the Query page's "Bigtrace Settings" sub-tab: skip the
+    // SettingsShell chrome (title + sticky search). The pill row already labels
+    // the surface, so a second "Settings" header would be noise.
     if (embedded) {
       return m('.pf-bt-settings-embedded', body);
     }
@@ -1013,8 +925,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       {
         title: 'Settings',
         className: 'page',
-        // Reload-required affordance lives next to the endpoint
-        // input (renderEndpointControl), not in the header.
+        // Reload-required affordance lives next to the endpoint input, not
+        // here.
         stickyHeaderContent: m(
           Stack,
           {orientation: 'horizontal'},
@@ -1052,8 +964,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
           setting.set(target.value);
         },
       }),
-      // Endpoint is cached at module init; force a reload to apply
-      // changes.
+      // Endpoint is cached at module init, so changes need a reload.
       endpointStorage.isReloadRequired() &&
         m(Button, {
           label: 'Reload to apply',
@@ -1067,16 +978,14 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
 
   private renderBigTraceSettingCard(rawSetting: BigTraceSetting<unknown>) {
     const setting = this.boundSetting(rawSetting);
-    // Enable/disable goes through the bound setting: per-tab in the embedded
-    // "+ Add" modal (TabBoundSetting → the tab's own disabled set) and global
-    // on the standalone /settings page. So toggling in the modal no longer
-    // leaks to the global state.
+    // Enable/disable goes through the bound setting: per-tab when embedded,
+    // global on /settings — so a per-tab toggle doesn't leak to global state.
     const disabled = setting.isDisabled();
     const fullWidth =
       setting.type === 'string-array' ||
       (setting.type === 'string' && setting.format === 'sql');
-    // Flag enabled-but-empty filters upfront. Numeric settings are
-    // excluded because 0 is legit (= unlimited).
+    // Flag enabled-but-empty filters. Numeric settings excluded: 0 is valid
+    // (= unlimited).
     const needsValue =
       !disabled &&
       (setting.type === 'string' || setting.type === 'string-array');
@@ -1097,8 +1006,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         }
       }
     }
-    // "(unlimited)" hint on numeric settings whose description says
-    // "ignored if 0" — works for any setting following the convention.
+    // "(unlimited)" hint on a numeric setting at 0 whose description says
+    // "ignored if 0".
     let hint: string | undefined;
     if (
       !disabled &&
@@ -1138,14 +1047,12 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
             ),
           ]
         : setting.description;
-    // Boolean settings carry their on/off in the value control itself, so a
-    // second enable/disable Switch is just confusing — suppress it (disabled:
-    // undefined hides the Switch, like the endpoint card). Every other type
-    // gets the enable/disable Switch, on /settings and in the "+ Add" modal.
+    // Booleans carry on/off in the value control, so a second enable/disable
+    // Switch would confuse — suppress it (disabled: undefined hides it). Every
+    // other type gets the Switch.
     const showToggle = setting.type !== 'boolean';
-    // Reset shown only when the value differs from default. JSON compare so
-    // array-valued settings compare by contents (SettingImpl.isDefault uses ===,
-    // unsafe for arrays). reset() hits the right scope (global or per-tab).
+    // Reset shown only when value ≠ default. JSON compare because the setting's
+    // built-in default check uses === (unsafe for arrays).
     const atDefault =
       JSON.stringify(setting.get()) === JSON.stringify(setting.defaultValue);
     return m(BigTraceSettingsCard, {

@@ -34,10 +34,9 @@ type ModelWithColumns = DataSourceModel & {
   readonly columns?: ReadonlyArray<{readonly field: string}>;
 };
 
-// Only TRACE_ADDRESS (trace-source) settings change which traces exist, so the
-// grid refetches on those alone — editing a query-option or metadata setting
-// leaves the trace set unchanged and must not re-hit /trace_metadata. The full
-// settings array is still SENT on each fetch; this only narrows change
+// Only TRACE_ADDRESS settings change which traces exist, so the grid refetches
+// on those alone — editing another setting leaves the trace set unchanged. The
+// full settings array is still sent on each fetch; this only narrows change
 // detection.
 function traceSourceSettingsKey(
   settings: ReadonlyArray<SettingFilter>,
@@ -46,10 +45,9 @@ function traceSourceSettingsKey(
 }
 
 // DataSource adapter paging `/trace_metadata` into the DataGrid widget — the
-// sibling of `BigtraceAsyncDataSource`. Same sort / filter / pagination
-// interaction model, but pointed at the trace-metadata endpoint instead of a
-// query's materialized result table, and re-reading the current settings
-// (which carry the trace source) on every fetch.
+// sibling of `BigtraceAsyncDataSource`. Same sort / filter / pagination model,
+// but pointed at /trace_metadata instead of a query's results, and re-reading
+// the current settings (which carry the trace source) on every fetch.
 export class BigtraceTraceListDataSource implements DataSource {
   private loadedRows: Row[] = [];
   private isFetching = false;
@@ -66,8 +64,8 @@ export class BigtraceTraceListDataSource implements DataSource {
   private currentFilter: ReadonlyArray<Filter> = [];
   private currentFilterKey = '';
   private _filteredTotalRows: number | undefined;
-  // Settings serialization at the last fetch. A change (e.g. the user edits
-  // the trace directory) invalidates the previous result.
+  // Settings key at the last fetch. A change (e.g. editing the trace source)
+  // invalidates the previous result.
   private lastSettingsKey = '';
   // Visible-column projection at the last fetch — both a change trigger and
   // the `columns` field-mask shipped on the next request.
@@ -78,11 +76,11 @@ export class BigtraceTraceListDataSource implements DataSource {
     return this._filteredTotalRows;
   }
 
-  // `getSettings` is a thunk (not a value) so the Settings page can pass
+  // `getSettings` is a thunk so the Settings page can pass
   // `() => bigTraceSettingsStorage.buildSettingFilters()` and have us re-read
   // it on every render — mirrors `BigtraceAsyncDataSource.getTotalRows`.
-  // `onOrderByChange` fires when the grid sort changes, letting the owner
-  // persist the processing order (the snapshot's `trace_order_by`).
+  // `onOrderByChange` fires on grid sort change, letting the owner persist the
+  // processing order (the snapshot's `trace_order_by`).
   constructor(
     private readonly queryClient: BigtraceQueryClient,
     private readonly getSettings: () => ReadonlyArray<SettingFilter>,
@@ -99,7 +97,7 @@ export class BigtraceTraceListDataSource implements DataSource {
     const wantedSettings = this.getSettings();
     const wantedSettingsKey = traceSourceSettingsKey(wantedSettings);
     // Flat model carries the visible-column field-mask; pivot / tree models
-    // don't — in those modes we ship no projection (server returns defaults).
+    // don't — those ship no projection, so the server returns defaults.
     const wantedColumns =
       (model as ModelWithColumns).columns?.map((c) => c.field) ?? [];
     const wantedColumnsKey = JSON.stringify(wantedColumns);
@@ -127,8 +125,8 @@ export class BigtraceTraceListDataSource implements DataSource {
       !this.isFetching
     ) {
       this.currentOrderBy = wantedOrderBy;
-      // Persist the processing order on a real sort change (not the initial
-      // fetch, where wantedOrderBy is still '').
+      // Persist on a real sort change (not the initial fetch, where
+      // wantedOrderBy is still '').
       if (sortChanged) {
         this.onOrderByChange?.(wantedOrderBy);
       }
@@ -152,8 +150,8 @@ export class BigtraceTraceListDataSource implements DataSource {
     };
   }
 
-  // Trace-list columns aren't aliased — the grid binds `field === alias`, so
-  // no alias→field resolution (unlike BigtraceAsyncDataSource).
+  // Trace-list columns aren't aliased (grid binds `field === alias`), so no
+  // alias→field resolution (unlike BigtraceAsyncDataSource).
   private formatOrderBy(model: DataSourceModel): string {
     const sort = model.sort;
     if (!sort) return '';
@@ -161,8 +159,8 @@ export class BigtraceTraceListDataSource implements DataSource {
   }
 
   // Re-fetch the current window with the latest settings. Called by the
-  // Settings page when a setting edit doesn't change the grid model (so
-  // useRows change-detection alone wouldn't catch it).
+  // Settings page when a setting edit doesn't change the grid model, so
+  // useRows change-detection wouldn't catch it.
   async refresh(): Promise<void> {
     if (this.isFetching) return;
     const offset = this.loadedOffset;
@@ -208,9 +206,9 @@ export class BigtraceTraceListDataSource implements DataSource {
       this._filteredTotalRows = 0;
     } finally {
       // Flip the flag regardless of success/failure: the first fetch often
-      // lands while the trace source is still empty (so 400s). Flipping only
-      // on success would re-trigger that 400 every render and also gate out
-      // the settings-changed branch when the user finally sets the source.
+      // 400s while the trace source is still empty. Flipping only on success
+      // would re-trigger that 400 every render and gate out the
+      // settings-changed branch when the user finally sets the source.
       this.hasInitialFetchCompleted = true;
       this.isFetching = false;
       m.redraw();

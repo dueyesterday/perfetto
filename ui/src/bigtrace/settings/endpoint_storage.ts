@@ -33,8 +33,7 @@ endpointStorage.register({
 });
 
 // The configured BigTrace endpoint URL, or '' if unset. Centralizes the
-// endpointStorage lookup + null/empty handling several call sites would
-// otherwise re-inline (and which had drifted between `: ''` and `?? ''`).
+// null/empty handling call sites would otherwise re-inline.
 export function getBigtraceEndpoint(): string {
   const setting = endpointStorage.get('bigtraceEndpoint');
   return setting ? (setting.get() as string) ?? '' : '';

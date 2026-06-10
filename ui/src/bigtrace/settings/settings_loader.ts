@@ -18,8 +18,8 @@ import type {BigTraceSettingsStore} from './bigtrace_settings_storage';
 
 export type LoadingPhase = 'idle' | 'exec';
 
-// Handles the async fetch-and-register flow for backend settings.
-// Separated from the store so CRUD logic stays synchronous and testable.
+// Async fetch-and-register flow for execution settings.
+// Split from the store so its CRUD logic stays synchronous and testable.
 export class SettingsLoader {
   loadingPhase: LoadingPhase = 'idle';
   execConfigLoadError: string | undefined = undefined;

@@ -14,14 +14,10 @@
 
 import {LocalStorage} from '../../core/local_storage';
 
-// LocalStorage-backed holder for a single persisted field. The bigtrace
-// trace/result-selection states are all the same skeleton — one key, one field
-// inside it, a get() that parses + defaults, a set(), and a clear() back to a
-// default — differing only in the field's type and parse rule. This owns the
-// skeleton; each state supplies its key/field/parse/clear-default (and the
-// column states add an effective() in a subclass to reconcile against a live
-// schema). LocalStorage.save() JSON-serializes, so callers don't need to copy
-// arrays before set().
+// LocalStorage-backed holder for a single persisted field, shared by the
+// trace/result-selection states; each supplies its key/field/parse/clear-default
+// (column states add effective() in a subclass to reconcile against a live
+// schema). save() JSON-serializes, so callers needn't copy arrays before set().
 export class SingleFieldStorage<T> {
   private readonly storage: LocalStorage;
 
@@ -47,9 +43,9 @@ export class SingleFieldStorage<T> {
   }
 }
 
-// Shared parse for the nullable string[] column states: the persisted list
-// filtered to strings, or null for nothing-stored / malformed / an empty list
-// (a zero-column grid is never what the user wants — null means "use defaults").
+// Shared parse for the nullable string[] column states: persisted list filtered
+// to strings, or null for nothing-stored / malformed / empty (null = use
+// defaults, since a zero-column grid is never what the user wants).
 export function parseNullableStringArray(
   raw: unknown,
 ): readonly string[] | null {

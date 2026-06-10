@@ -14,10 +14,9 @@
 
 import type {Filter} from '../../components/widgets/datagrid/model';
 
-// Coerce one scalar `value` to its always-strings wire form. JSON null
-// stays null; strings pass through; numbers / bigints / booleans coerce
-// losslessly via `String(...)` (preserves int64 precision past
-// Number.MAX_SAFE_INTEGER; DuckDB's binder coerces back at execute time).
+// Coerce one scalar to its always-strings wire form: null stays null, strings
+// pass through, number/bigint/boolean via String(...) to preserve int64
+// precision past Number.MAX_SAFE_INTEGER.
 function coerceScalar(v: unknown): unknown {
   if (v === null || typeof v === 'string') return v;
   if (
@@ -30,9 +29,8 @@ function coerceScalar(v: unknown): unknown {
   return v;
 }
 
-// Returns a fresh `Filter[]` with every scalar value coerced to the
-// always-strings wire form. Used by the HTTP client to ship filters in
-// JSON request bodies under the strict-native body contract (`/trace_metadata`
+// Returns a fresh `Filter[]` with every scalar coerced to the always-strings
+// wire form. Used to ship filters in request bodies (`/trace_metadata`
 // `filters`, `/execute_*` `trace_filters`).
 export function coerceFiltersForWire(filters: ReadonlyArray<Filter>): Filter[] {
   return filters.map((f) => {
@@ -45,12 +43,10 @@ export function coerceFiltersForWire(filters: ReadonlyArray<Filter>): Filter[] {
   });
 }
 
-// Stable canonical-key JSON form of `filters`, used by the HTTP client
-// (`:fetch_results?filter=...`) and `BigtraceAsyncDataSource` (which compares
-// the encoded string for change-detection — drift would silently break
-// equality). Value coercion is shared with the body-shipping path via
-// `coerceFiltersForWire` so the two stay in lockstep; keys are sorted so
-// equivalent filters hash to the same string regardless of construction order.
+// Stable canonical-key JSON form of `filters`. Used by the data sources as a
+// change-detection key, so keys are sorted to make equivalent filters hash
+// identically regardless of construction order. Shares value coercion with the
+// body-shipping path via `coerceFiltersForWire`.
 export function encodeFilters(filters: ReadonlyArray<Filter>): string {
   return JSON.stringify(coerceFiltersForWire(filters), (_key, value) => {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {

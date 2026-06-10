@@ -140,7 +140,7 @@ export function renderResultsPanel(
 }
 
 // ---------------------------------------------------------------------------
-// Tabs (Error / Table / Chart) and grid rendering.
+// Error / Table / Chart tabs.
 // ---------------------------------------------------------------------------
 
 function renderErrorTab(tab: BigTraceEditorTab): m.Children {

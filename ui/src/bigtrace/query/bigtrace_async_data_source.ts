@@ -41,7 +41,7 @@ export class BigtraceAsyncDataSource implements DataSource {
   // Window in `loadedRows`, for range-change detection.
   private loadedOffset = 0;
   private loadedLimit = 0;
-  // AIP-132 §Ordering. Empty = materialization order.
+  // AIP-132 §Ordering. Empty = default order.
   private currentOrderBy = '';
   // Aliases pre-resolved to field names. `currentFilterKey` is the JSON
   // form for cheap equality checks.
@@ -50,20 +50,20 @@ export class BigtraceAsyncDataSource implements DataSource {
   // `useRows` falls back to `getTotalRows()` when undefined.
   private _filteredTotalRows: number | undefined;
   // Field-mask shipped as `:fetch_results` `columns`. Tracks the visible
-  // columns on the results grid so a column toggle refetches a narrower page
-  // (and pulls in a sidecar metadata column when the user just enabled it).
+  // results-grid columns so a column toggle refetches a narrower page (and
+  // pulls in a metadata column when the user just enabled it).
   private currentColumns: readonly string[] = [];
   private currentColumnsKey = '';
-  // Full union (result + sidecar) the backend declared on the last fetch — the
-  // results-page column picker reads this to know what's selectable.
+  // availableColumnNames from the last fetch — the results-page column picker
+  // reads this to know what's selectable.
   private _availableColumnNames: ReadonlyArray<string> | undefined;
 
   get filteredTotalRows(): number | undefined {
     return this._filteredTotalRows;
   }
 
-  // Result-table columns + sidecar metadata columns from the last successful
-  // fetch. Used by the results page to populate its column picker.
+  // availableColumnNames from the last successful fetch. Used by the results
+  // page to populate its column picker.
   get availableColumnNames(): ReadonlyArray<string> | undefined {
     return this._availableColumnNames;
   }
@@ -83,9 +83,8 @@ export class BigtraceAsyncDataSource implements DataSource {
     const wantedFilterKey = encodeFilters(wantedFilter);
     const wantedOffset = model.pagination?.offset ?? 0;
     const wantedLimit = model.pagination?.limit ?? 0;
-    // The columns the grid is currently displaying; shipped as the
-    // `:fetch_results` `columns` field-mask so a column toggle refetches a
-    // narrower page (and pulls in sidecar metadata when newly enabled).
+    // Columns the grid is currently displaying; shipped as the `:fetch_results`
+    // `columns` field-mask.
     const wantedColumns = (model.columns ?? []).map((c) => c.field);
     const wantedColumnsKey = JSON.stringify(wantedColumns);
 
@@ -145,7 +144,7 @@ export class BigtraceAsyncDataSource implements DataSource {
     };
   }
 
-  // Resolve widget alias → SELECT field (backend whitelists fields).
+  // Resolve widget alias → backend field name for the order_by wire string.
   private formatOrderBy(model: ModelWithColumns): string {
     const sort = model.sort;
     if (!sort) return '';

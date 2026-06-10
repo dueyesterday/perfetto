@@ -13,18 +13,18 @@
 // limitations under the License.
 
 import {beforeEach, describe, expect, test} from 'vitest';
-import {traceFilterState} from './trace_filter_state';
-import {traceColumnsState} from './trace_columns_state';
-import {traceOrderByState} from './trace_order_by_state';
 import {
+  traceFilterState,
+  traceColumnsState,
+  traceOrderByState,
   traceQueryColumnsState,
   effectiveQueryColumns,
-} from './trace_query_columns_state';
-import {resolveResultColumns} from './result_columns';
+} from './trace_selection_state';
 import {
   linkColumnFirst,
   linkNameFirst,
   groupResultColumns,
+  resolveResultColumns,
 } from './column_order';
 import type {Filter} from '../../components/widgets/datagrid/model';
 
@@ -144,8 +144,8 @@ describe('traceQueryColumnsState', () => {
   });
 
   test('preserves an explicit empty list as "attach nothing" (not null)', () => {
-    // Unlike traceColumnsState, [] must NOT collapse to null (else "attach
-    // nothing" is unexpressible).
+    // Unlike traceColumnsState, [] must NOT collapse to null, else "attach
+    // nothing" is unexpressible.
     traceQueryColumnsState.set([]);
     expect(traceQueryColumnsState.get()).toEqual([]);
   });
@@ -185,8 +185,8 @@ describe('effectiveQueryColumns', () => {
   });
 
   test('an explicit selection is intersected with the live schema', () => {
-    // 'gone' is stale (not in schema) and drops; order follows the selection;
-    // a non-defaultVisible column is honored because it was explicitly chosen.
+    // 'gone' is stale and drops; order follows the selection; device_name is
+    // kept though not defaultVisible because it was explicitly chosen.
     expect(
       effectiveQueryColumns(['device_name', 'gone', 'file_name'], schema),
     ).toEqual(['device_name', 'file_name']);

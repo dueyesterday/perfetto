@@ -29,12 +29,10 @@ export interface BigtraceSettingsBarAttrs {
   readonly bindings: SettingsBindings;
 }
 
-// Horizontal chip strip at the top of each editor tab. Replaces the
-// legacy collapsible drawer. Renders one chip per per-tab override
-// (settings, trace filters) plus an "+ Add" chip that opens the
-// kitchen-sink Settings modal; the × resets / removes the underlying
-// state. Trace-metadata columns are intentionally NOT surfaced here —
-// they're managed only in the "+ Add" modal's Query Result Columns card.
+// Chip strip atop each editor tab: one chip per per-tab override (settings,
+// trace filters) plus an "+ Add" chip opening the Settings modal. Trace-metadata
+// columns aren't shown here — they live only in the modal's Query Result Columns
+// card.
 export class BigtraceSettingsBar
   implements m.ClassComponent<BigtraceSettingsBarAttrs>
 {
@@ -67,11 +65,8 @@ export class BigtraceSettingsBar
 // Chip rendering
 // ---------------------------------------------------------------------------
 
-// Every setting the tab runs with (its effective settings), shown as a
-// read-only chip — uniform across categories, like the trace source.
-// getEffectiveSettings already applies per-tab overrides and drops per-tab-
-// disabled settings; editing happens in the "+ Add" modal, so the chips aren't
-// interactive.
+// One read-only chip per effective setting (getEffectiveSettings applies
+// per-tab overrides and drops disabled settings). Editing lives in the modal.
 function renderSettingChips(bindings: SettingsBindings): m.Children {
   return bindings.getEffectiveSettings().map((entry) => {
     const setting = bigTraceSettingsStorage.get(entry.settingId) as
@@ -86,7 +81,6 @@ function renderSettingChip(
   setting: BigTraceSetting<unknown>,
   values: ReadonlyArray<string>,
 ): m.Children {
-  // Read-only display, like the trace source — editing is in the "+ Add" modal.
   return m(Chip, {
     label: `${setting.name}: ${formatSettingValue(values)}`,
   });
@@ -107,9 +101,7 @@ function renderFilterChips(
         tabsState.markDirty();
         m.redraw();
       },
-      // Filter chips are display + remove only here (editable filter chips
-      // are intentionally excluded). Add/refine filters on the trace grid in
-      // the "+ Add" Settings modal.
+      // Display + remove only; add/refine filters via the modal's trace grid.
     }),
   );
 }
@@ -134,20 +126,18 @@ function formatFilterChipLabel(f: Filter): string {
     if (vals.length <= 3) return `${f.field} ${f.op} ${vals.join(', ')}`;
     return `${f.field} ${f.op} ${vals.slice(0, 2).join(', ')}, +${vals.length - 2} more`;
   }
-  // Remaining ops are scalar comparisons / patterns — OpFilter shape
-  // with a single SqlValue. TS doesn't always narrow the discriminant
-  // via prior early returns, so use `'value' in f` defensively.
+  // Remaining ops are scalar comparisons/patterns. TS doesn't always narrow the
+  // discriminant via the early returns, so guard defensively.
   if ('value' in f) return `${f.field} ${f.op} ${String(f.value)}`;
   return `${f.field} ${f.op}`;
 }
 
 // ---------------------------------------------------------------------------
-// Modal opener — the only clickable affordance on the bar.
+// Modal opener
 // ---------------------------------------------------------------------------
 
-// Kitchen-sink modal: hosts the SettingsPage in embedded (per-tab) mode. All
-// editing — settings, trace selection on the grid, metadata columns — happens
-// here; the chips are read-only display (with × to remove/revert).
+// Hosts the SettingsPage in embedded (per-tab) mode — the one place editing
+// (settings, trace-grid selection, metadata columns) happens.
 function openAddSettingsModal(bindings: SettingsBindings): void {
   void showModal({
     title: 'Bigtrace settings',
@@ -157,7 +147,3 @@ function openAddSettingsModal(bindings: SettingsBindings): void {
     buttons: [{text: 'Done', primary: true}],
   });
 }
-
-// (Editable filter chips intentionally excluded — no per-chip filter editor.
-// Filters are added / refined on the trace grid in the "+ Add" modal and
-// removed via the chip's ×.)

@@ -18,10 +18,8 @@ import {
   type SnapshotSettingEntry,
 } from './query_history_storage';
 
-// The submit-time settings snapshot is echoed on the response in the camelCase
-// wire shape (`settingId`), the same convention as every other response field.
-// Reading the wrong casing drops every entry, which empties the snapshot and
-// silently loses the reopened query's disabled settings.
+// The snapshot is echoed with camelCase `settingId`, like every wire field.
+// Reading the wrong casing drops every entry, losing the query's settings.
 describe('snapshotSettingsToFilters', () => {
   test('parses camelCase settingId into SettingFilter', () => {
     expect(

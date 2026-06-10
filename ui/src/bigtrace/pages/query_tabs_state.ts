@@ -21,9 +21,11 @@ import type {BigtraceQueryClient} from '../query/bigtrace_query_client';
 import {queryStore, type QueryExecution} from '../query/query_store';
 import type {SettingFilter} from '../settings/settings_types';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
-import {traceFilterState} from '../settings/trace_filter_state';
-import {traceOrderByState} from '../settings/trace_order_by_state';
-import {traceQueryColumnsState} from '../settings/trace_query_columns_state';
+import {
+  traceFilterState,
+  traceOrderByState,
+  traceQueryColumnsState,
+} from '../settings/trace_selection_state';
 
 const QUERY_TABS_STORAGE_KEY = 'bigtraceQueryTabs';
 const DEFAULT_SQL = '';
@@ -78,11 +80,10 @@ export function makeQueryResponse(
   };
 }
 
-// The settings a run on this tab actually uses: global defaults (including
-// ones the global has turned off) overridden by the tab's per-tab values,
-// minus the tab's per-tab-disabled settings. Shared by the trace-grid data
-// source (/trace_metadata) and the query runner (/execute_*) so the two can't
-// drift on what the tab runs with.
+// Settings a run on this tab uses: global defaults (even globally-off ones)
+// overridden by per-tab values, minus the tab's per-tab-disabled settings.
+// Shared by the trace-grid data source (/trace_metadata) and the query runner
+// (/execute_*) so the two agree on what the tab runs with.
 export function effectiveTabSettings(tab: BigTraceEditorTab): SettingFilter[] {
   const byId = new Map<string, SettingFilter>();
   for (const s of bigTraceSettingsStorage.buildSettingFilters({
@@ -95,13 +96,11 @@ export function effectiveTabSettings(tab: BigTraceEditorTab): SettingFilter[] {
   return [...byId.values()];
 }
 
-// Inverse of the disable step in effectiveTabSettings. A run's submit-time
-// snapshot lists exactly the settings that were ACTIVE (every categoried global
-// minus the tab's per-tab-disabled ones), so the disabled set is the complement
-// — every categoried setting the snapshot omits. Used when reopening a query
-// from history to restore which toggles were off. Callers treat an empty
-// snapshot as "legacy row / no snapshot" and skip the reconstruction, since an
-// all-active complement can't be told apart from a missing snapshot.
+// Inverse of effectiveTabSettings' disable step: the snapshot lists ACTIVE
+// settings, so disabled = the complement (every categoried setting it omits).
+// Used to restore which toggles were off when reopening a query from history.
+// Callers treat an empty snapshot as "no snapshot" and skip reconstruction,
+// since an all-active complement is indistinguishable from a missing snapshot.
 export function disabledSettingsFromSnapshot(
   activeSettingIds: ReadonlyArray<string>,
   allCategoriedSettingIds: ReadonlyArray<string>,
@@ -120,22 +119,19 @@ export interface BigTraceEditorTab {
   isLoading: boolean;
   dataSource?: DataSource;
   querySettings: SettingFilter[];
-  // Submit-time trace-selection snapshot — what the tab's last run used. Set
-  // by QueryRunner at run time and restored from history; powers the
-  // query-page "what did this run with?" view.
+  // Submit-time trace-selection snapshot — what the tab's last run used. Set by
+  // QueryRunner at run time, restored from history; powers the query-page "what
+  // did this run with?" view.
   traceFilters: readonly Filter[];
-  // Tri-state, resolved against the live schema at submit (effectiveQueryColumns):
-  // null = attach defaultVisible; [] = attach nothing; [...] = these.
+  // Tri-state (effectiveQueryColumns): null = defaultVisible; [] = nothing; [...] = these.
   traceMetadataColumns: readonly string[] | null;
   traceOrderBy: string;
-  // Per-tab results-grid layout (which columns are shown); a display pref, not
-  // part of the snapshot above. Persisted; null = show all (resolveResultColumns).
+  // Per-tab shown columns (display pref, persisted); null = show all.
   resultColumns: readonly string[] | null;
-  // Per-tab disabled setting IDs — independent of the global /settings state.
-  // Seeded from globals at creation, then toggled per-tab; excluded from the
-  // tab's effective settings.
+  // Per-tab disabled setting IDs, independent of global /settings. Seeded from
+  // globals at creation, then toggled per-tab; excluded from effective settings.
   disabledSettings: readonly string[];
-  // Tab-lifetime: every backend request plumbs `signal`; aborts on close.
+  // Tab-lifetime: every request plumbs `signal`; aborts on close.
   readonly lifecycle: AbortController;
   // Per-execute request: Cancel aborts this without tearing down the tab.
   activeRequest?: AbortController;
@@ -148,9 +144,9 @@ export interface BigTraceEditorTab {
   execution?: QueryExecution;
   // Stale-poll guard: bumped on each startPolling() call.
   pollGeneration: number;
-  // Active results tab (Table / Error / Chart). Undefined = auto-select:
-  // Error when the query failed with no rows, Table otherwise. Set once
-  // the user clicks a tab, so their choice sticks across redraws.
+  // Active results tab (Table / Error / Chart). Undefined = auto-select (Error
+  // on a no-row failure, else Table). Set on user click so it sticks across
+  // redraws.
   resultsTabKey?: string;
 }
 
@@ -228,14 +224,14 @@ export class QueryTabsState {
       }
     }
 
-    // Caller title wins; else derive from SQL so History opens have meaningful
+    // Caller title wins; else derive from SQL so History opens get meaningful
     // labels instead of "Query N". maybeAutoNameTab refines on first run.
     const derivedTitle =
       title ?? (initialQuery && deriveTitleFromQuery(initialQuery));
-    // Seed the per-tab trace-selection snapshot. Restored-from-storage tabs
-    // use the persisted snapshot; history-reopen tabs start empty (the runner
-    // rehydrates from the backend GET); fresh tabs copy the current /settings
-    // globals so a new tab reflects the user's current selection.
+    // Seed the per-tab trace-selection snapshot. Restored tabs use the
+    // persisted snapshot; history-reopen tabs start empty (runner rehydrates
+    // from /query_executions/{uuid}); fresh tabs copy the current /settings
+    // globals.
     const isFromStorage = stored !== undefined;
     const isFromHistory = queryUuid !== undefined && !isFromStorage;
     const querySettings: SettingFilter[] = isFromStorage
@@ -248,8 +244,7 @@ export class QueryTabsState {
       : isFromHistory
         ? []
         : [...traceFilterState.get()];
-    // Restored tabs keep their persisted tri-state; history-reopen starts null
-    // (runner rehydrates from the GET); fresh tabs copy the /settings global.
+    // Restored: persisted; history-reopen: null (runner rehydrates); fresh: global.
     const traceMetadataColumns: readonly string[] | null = isFromStorage
       ? stored?.traceMetadataColumns ?? null
       : isFromHistory
@@ -260,8 +255,7 @@ export class QueryTabsState {
       : isFromHistory
         ? ''
         : traceOrderByState.get();
-    // Display pref, not a query snapshot: restored tabs keep their layout; fresh
-    // and history-reopen tabs start at show-all (null).
+    // Restored tabs keep their layout; fresh/history start at show-all (null).
     const resultColumns: readonly string[] | null = isFromStorage
       ? stored?.resultColumns ?? null
       : null;
@@ -291,8 +285,7 @@ export class QueryTabsState {
       disabledSettings,
       lifecycle: new AbortController(),
       activeRequest: undefined,
-      // Default new queries to persistent; an explicit/restored value wins (??
-      // only falls through when unset). Toggle a tab to ephemeral in the editor.
+      // Default to persistent; ?? (not ||) keeps an explicit/restored ephemeral.
       materialize: materialize ?? true,
       lastProcessedRows: 0,
       queryUuid,

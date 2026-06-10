@@ -29,14 +29,14 @@
   pointer-events: none;
 }
 
-// Title row: Switch + title left, optional per-setting reset pushed right.
-// Flex only affects the row's own children (description sibling unaffected).
-.pf-settings-card__title {
+// Settings-card title row (bigtrace): Switch + title left, optional per-setting
+// reset pushed right. pf-bt classes — not the shared pf-settings-card BEM.
+.pf-bt-settings-card-title {
   display: flex;
   align-items: center;
 }
 
-.pf-settings-card__reset {
+.pf-bt-settings-card-reset {
   margin-left: auto;
 }
 

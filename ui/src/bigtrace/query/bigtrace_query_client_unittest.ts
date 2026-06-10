@@ -18,10 +18,8 @@ import {coerceFiltersForWire, encodeFilters} from './filter_encoding';
 import type {Filter} from '../../components/widgets/datagrid/model';
 import type {SettingFilter} from '../settings/settings_types';
 
-// The trace-selection grid ships its filter chips both as a native JSON array
-// (request bodies) and as a stable string (change-detection key). Both go
-// through `coerceFiltersForWire`, so the always-strings coercion is locked in
-// here once and shared.
+// Both the native-array body and the change-detection-key string route through
+// `coerceFiltersForWire`; lock the always-strings coercion in once here.
 describe('coerceFiltersForWire', () => {
   test('passes strings and JSON null through unchanged', () => {
     expect(
@@ -38,8 +36,8 @@ describe('coerceFiltersForWire', () => {
   });
 
   test('coerces numbers / bigints / booleans to strings (always-strings wire)', () => {
-    // int64 past Number.MAX_SAFE_INTEGER must survive as a string; the backend
-    // coerces back to the column type at bind time.
+    // int64 past Number.MAX_SAFE_INTEGER survives as a string (no precision
+    // loss).
     expect(
       coerceFiltersForWire([
         {field: 'count', op: '>=', value: 10},
@@ -60,7 +58,7 @@ describe('coerceFiltersForWire', () => {
   });
 
   test('preserves JSON null distinct from the literal "null" string', () => {
-    // null must NOT collapse to "null" — that would match VARCHAR rows.
+    // null must NOT collapse to the literal "null" text value.
     expect(coerceFiltersForWire([{field: 'a', op: '=', value: null}])).toEqual([
       {field: 'a', op: '=', value: null},
     ]);
@@ -74,8 +72,8 @@ describe('coerceFiltersForWire', () => {
   });
 });
 
-// encodeFilters is the string form used as the data-source change-detection
-// key; it must be canonical (key-sorted) so equivalent filters hash equal.
+// The change-detection key must be canonical (key-sorted) so equivalent
+// filters compare equal.
 describe('encodeFilters', () => {
   test('shares value coercion with coerceFiltersForWire', () => {
     expect(
@@ -144,7 +142,7 @@ describe('BigtraceQueryClient trace-metadata wire', () => {
     expect(urlFrom(fetchMock)).toBe('http://example//trace_metadata');
     expect(initFrom(fetchMock).method).toBe('POST');
     const body = bodyFrom(fetchMock);
-    // Settings are mapped from camelCase to the snake_case wire field.
+    // Settings map from camelCase to the snake_case wire fields.
     expect(body.settings).toEqual([
       {
         setting_id: 'trace_directory',
@@ -168,7 +166,7 @@ describe('BigtraceQueryClient trace-metadata wire', () => {
     const client = new BigtraceQueryClient('http://example/');
     const page = await client.listTraceMetadata([traceDir], 50, 0);
     expect(page.columns).toEqual(['file_name', 'size_bytes']);
-    // Big values survive as strings (no Number coercion).
+    // Big values survive as strings (no Number coercion, no precision loss).
     expect(page.rows).toEqual([
       {file_name: 'a.pftrace', size_bytes: '9007199254740993'},
     ]);
@@ -189,7 +187,7 @@ describe('BigtraceQueryClient trace-metadata wire', () => {
     );
     const body = bodyFrom(fetchMock);
     expect(body.order_by).toBe('size_bytes desc');
-    // Native JSON array (strict-native body contract), NOT a stringified blob.
+    // Native JSON array, not a stringified blob.
     expect(Array.isArray(body.filters)).toBe(true);
     expect(body.filters).toEqual([
       {field: 'size_bytes', op: '>', value: '100'},
@@ -260,7 +258,7 @@ describe('BigtraceQueryClient execute trace-selection snapshot', () => {
     return JSON.parse(init.body as string);
   }
 
-  test('omits every trace_* field when no options are passed (legacy shape)', async () => {
+  test('omits every trace_* field when no options are passed', async () => {
     const fetchMock = captureFetch();
     const client = new BigtraceQueryClient('http://example/');
     await client.executeAsync('select 1', 100, []);
@@ -421,8 +419,6 @@ describe('parseQueryResponse', () => {
       rows: [{values: ['NULL', null]}, {values: ['x', 'y']}],
     });
     expect(page.columns).toEqual(['name', 'note']);
-    // A genuine string value of "NULL" must NOT be coerced to SQL NULL; a
-    // real SQL NULL arrives as JSON null and stays null.
     expect(page.rows[0]).toEqual({name: 'NULL', note: null});
     expect(page.rows[1]).toEqual({name: 'x', note: 'y'});
   });

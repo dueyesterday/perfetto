@@ -25,7 +25,7 @@ import {Checkbox} from '../../widgets/checkbox';
 import {Editor} from '../../widgets/editor';
 
 interface DeferredCommitInputAttrs {
-  // The committed value to display when there's no pending local edit.
+  // Committed value, shown when there's no pending local edit.
   readonly initial: string;
   readonly type?: string;
   readonly placeholder?: string;
@@ -34,13 +34,11 @@ interface DeferredCommitInputAttrs {
   readonly commit: (value: string) => void;
 }
 
-// A text/number input that commits to its Setting only on blur / Enter, while
-// holding the in-progress text in its own state. The shared TextInput is
-// controlled (re-applies `value` on every redraw, with no focus guard), so
-// committing on blur with `value = setting.get()` would let an unrelated redraw
-// (e.g. the trace grid finishing a fetch) wipe the typed text. Rendering the
-// local buffer instead avoids that; we re-sync to the external value when it
-// changes and there's no pending edit (e.g. a reset elsewhere).
+// Text/number input that commits only on blur / Enter, holding the in-progress
+// text locally. The shared TextInput re-applies `value` on every redraw with no
+// focus guard, so binding it to setting.get() would let an unrelated redraw wipe
+// the typed text; rendering the local buffer avoids that. Re-syncs to the
+// external value when it changes and there's no pending edit (e.g. a reset).
 class DeferredCommitInput
   implements m.ClassComponent<DeferredCommitInputAttrs>
 {
@@ -49,8 +47,8 @@ class DeferredCommitInput
 
   view({attrs}: m.Vnode<DeferredCommitInputAttrs>) {
     if (attrs.initial !== this.syncedInitial) {
-      // First render, or the external value changed. Adopt it unless the user
-      // has an uncommitted edit in flight (local diverged from what we synced).
+      // First render or external value changed: adopt it, unless an
+      // uncommitted edit is in flight (local diverged from what we synced).
       if (
         this.syncedInitial === undefined ||
         this.local === this.syncedInitial
@@ -81,8 +79,7 @@ export function renderSetting(setting: Setting<unknown>): m.Children {
 
   switch (setting.type) {
     case 'number':
-      // Commit on blur / Enter; the local buffer keeps typing from being reset
-      // by redraws. parseFloat guards partial/empty input.
+      // parseFloat guards partial/empty input.
       return m(DeferredCommitInput, {
         type: 'number',
         initial: String(currentValue),
@@ -110,8 +107,6 @@ export function renderSetting(setting: Setting<unknown>): m.Children {
         initial: String(currentValue),
         placeholder: setting.placeholder,
         disabled,
-        // Commit on blur / Enter; the local buffer keeps a mid-typing redraw
-        // from resetting the field.
         commit: (value: string) => {
           setting.set(value);
         },

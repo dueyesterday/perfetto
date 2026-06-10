@@ -48,16 +48,16 @@ describe('renderSetting string input (deferred commit)', () => {
     const input = root.querySelector('input')!;
     expect(input.value).toBe('old');
 
-    // Type — updates the field but does NOT commit (deferred).
+    // Typing updates the field but doesn't commit yet.
     input.value = 'newpath';
     input.dispatchEvent(new Event('input', {bubbles: true}));
     expect(setSpy).not.toHaveBeenCalled();
 
-    // An unrelated redraw must NOT reset the field (the bug we fixed).
+    // Regression guard: an unrelated redraw must not reset the field.
     m.redraw.sync();
     expect(input.value).toBe('newpath');
 
-    // Blur / Enter commits the buffered value.
+    // Blur/Enter commits the buffered value.
     input.dispatchEvent(new Event('change', {bubbles: true}));
     expect(setSpy).toHaveBeenCalledWith('newpath');
 

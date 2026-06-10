@@ -37,9 +37,8 @@ export interface RawQueryExecution {
   readonly tableLink?: string;
   // Submit-time snapshot — what the query ran with. Echoed on the full GET
   // /query_executions/{uuid}; omitted from :status and the list response.
-  // `settings` arrives in the camelCase wire shape (setting id as
-  // `settingId`); convert with snapshotSettingsToFilters before handing it to
-  // the settings layer.
+  // `settings` uses the camelCase wire shape (`settingId`); convert with
+  // snapshotSettingsToFilters before handing to the settings layer.
   readonly settings?: ReadonlyArray<SnapshotSettingEntry>;
   readonly traceFilters?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
@@ -47,11 +46,10 @@ export interface RawQueryExecution {
   readonly traceLimit?: number;
 }
 
-// Snapshot settings as echoed on the wire. Responses are camelCase (the same
-// proto/JSON convention as every other response field — queryUuid, perfettoSql,
-// traceFilters, …), so the setting id arrives as `settingId`. `values` is
-// permissive (the backend stores exactly what the client sent). Caller code
-// converts to SettingFilter via snapshotSettingsToFilters.
+// Snapshot settings as echoed on the wire. Responses are camelCase (like every
+// other response field — queryUuid, perfettoSql, …), so the setting id arrives
+// as `settingId`. `values` is permissive — the wire echoes back whatever the
+// client sent. Convert to SettingFilter via snapshotSettingsToFilters.
 export interface SnapshotSettingEntry {
   readonly settingId: string;
   readonly values: ReadonlyArray<string | number | boolean | null>;

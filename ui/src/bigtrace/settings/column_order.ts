@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// `link` (the clickable open-trace column, rendered via linkify in both grids)
-// leads every grid/picker. These helpers reorder an already-ordered list.
+// `link` is the clickable open-trace column; it leads every grid/picker.
 
 export const LINK_COLUMN = 'link';
 
@@ -31,12 +30,24 @@ export function linkNameFirst(names: readonly string[]): string[] {
   return linkColumnFirst(names, (n) => n);
 }
 
-// Display order: `link`, then result columns, then `_`-prefixed metadata grouped
-// at the end (stable within groups) — clusters metadata into a visual block.
-// Nothing dropped.
+// Order: `link`, result columns, then `_`-prefixed metadata (stable, nothing dropped).
 export function groupResultColumns(names: readonly string[]): string[] {
   const link = names.filter((n) => n === LINK_COLUMN);
   const ordinary = names.filter((n) => n !== LINK_COLUMN && !n.startsWith('_'));
   const meta = names.filter((n) => n !== LINK_COLUMN && n.startsWith('_'));
   return [...link, ...ordinary, ...meta];
+}
+
+// Resolve a results-grid column selection against the available columns, then
+// group. null = show all; a list is intersected (all-stale → show all).
+export function resolveResultColumns(
+  chosen: readonly string[] | null,
+  available: ReadonlyArray<string>,
+): string[] {
+  if (chosen === null) {
+    return groupResultColumns([...available]);
+  }
+  const known = new Set(available);
+  const filtered = chosen.filter((c) => known.has(c));
+  return groupResultColumns(filtered.length === 0 ? [...available] : filtered);
 }

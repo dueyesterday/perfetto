@@ -47,8 +47,8 @@ export interface EditorTabViewAttrs {
   readonly useBigtraceBackend: boolean;
 }
 
-// Thin orchestrator: split pane with editor on top, results on bottom.
-// Heavy rendering lives in results_panel.ts and status_box.ts.
+// Split pane with editor on top, results on bottom.
+// Rendering lives in results_panel.ts and status_box.ts.
 export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
   view({attrs}: m.Vnode<EditorTabViewAttrs>): m.Children {
     const {tab, tabsState, runner, useBigtraceBackend} = attrs;
@@ -86,10 +86,9 @@ export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
 
 // ---------------------------------------------------------------------------
 // Per-tab bindings shared between the chip strip and any modal it opens.
-// Each getter returns a live view of the tab's snapshot; each setter mutates
-// the tab in place and flips the dirty flag. getEffectiveSettings merges
-// global defaults under per-tab overrides so /trace_metadata sees a complete
-// settings array even before the user edits anything from the strip.
+// Getters read live; setters mutate in place and mark dirty.
+// getEffectiveSettings layers per-tab overrides over global defaults so
+// /trace_metadata sees a complete settings array even before the user edits.
 // ---------------------------------------------------------------------------
 
 function buildTabBindings(
@@ -142,7 +141,7 @@ function buildTabBindings(
 }
 
 // ---------------------------------------------------------------------------
-// Editor panel: toolbar (Run/Cancel + limit + Materialize) and the editor.
+// Editor panel: toolbar (Run/Cancel + limit + Persistent) and the editor.
 // ---------------------------------------------------------------------------
 
 function renderEditorPanel(
@@ -239,7 +238,7 @@ function renderEditorPanel(
 }
 
 // ---------------------------------------------------------------------------
-// Lazily build the async data source for tabs restored from localStorage.
+// Lazily build the data source for tabs restored from localStorage.
 // ---------------------------------------------------------------------------
 
 function attachAsyncDataSource(
