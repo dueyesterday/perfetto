@@ -435,20 +435,20 @@ class AndroidMemory(TestSuite):
         """))
 
   def test_android_process_memory_intervals_per_parent_zygote(self):
-    # Two zygotes with DIFFERENT baselines, a child forked from each, a child
-    # whose memory is below its zygote's baseline (clamps to 0), and a native
-    # daemon forked from init. Each child subtracts only ITS forking zygote's
-    # baseline (not a pool of all zygotes, not the other zygote's); the daemon
-    # (no zygote parent) is not adjusted; the zygotes keep their raw values.
+    # Two PRIMARY zygotes (zygote, zygote64) with DIFFERENT baselines and a
+    # child forked from each: each child subtracts only ITS forking zygote's
+    # baseline (not a pool, not the other's). Also covers clamp-to-0
+    # (com.small.child, below its baseline) and a native daemon
+    # (surfaceflinger, no zygote parent).
     return DiffTestBlueprint(
         trace=TextProto(r"""
         packet {
           process_tree {
             processes { pid: 1 ppid: 0 cmdline: "init" }
             processes { pid: 800 ppid: 1 cmdline: "zygote64" }
-            processes { pid: 700 ppid: 1 cmdline: "webview_zygote" }
+            processes { pid: 700 ppid: 1 cmdline: "zygote" }
             processes { pid: 900 ppid: 800 cmdline: "com.app.child" }
-            processes { pid: 600 ppid: 700 cmdline: "com.webview.child" }
+            processes { pid: 600 ppid: 700 cmdline: "com.app32.child" }
             processes { pid: 950 ppid: 800 cmdline: "com.small.child" }
             processes { pid: 500 ppid: 1 cmdline: "surfaceflinger" }
           }
@@ -492,14 +492,14 @@ class AndroidMemory(TestSuite):
         "process_name","memory_track_name","value","zygote_adjusted_value"
         "com.app.child","mem.rss.anon",30720000,20480000
         "com.app.child","mem.rss.file",51200000,30720000
+        "com.app32.child","mem.rss.anon",61440000,10240000
+        "com.app32.child","mem.rss.file",10240000,5120000
         "com.small.child","mem.rss.anon",5120000,0
         "com.small.child","mem.rss.file",30720000,10240000
-        "com.webview.child","mem.rss.anon",61440000,10240000
-        "com.webview.child","mem.rss.file",10240000,5120000
         "surfaceflinger","mem.rss.anon",40960000,40960000
         "surfaceflinger","mem.rss.file",61440000,61440000
-        "webview_zygote","mem.rss.anon",51200000,51200000
-        "webview_zygote","mem.rss.file",5120000,5120000
+        "zygote","mem.rss.anon",51200000,51200000
+        "zygote","mem.rss.file",5120000,5120000
         "zygote64","mem.rss.anon",10240000,10240000
         "zygote64","mem.rss.file",20480000,20480000
       """))

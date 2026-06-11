@@ -125,12 +125,10 @@ WITH
   -- copy-on-write) only from the specific zygote that forked it, so the
   -- baseline is kept per-zygote and attributed by parent, rather than pooled
   -- across all zygotes and subtracted from every process.
-  -- TODO: improve zygote process detection
+  -- Only the primary zygotes. Secondary zygotes (webview_zygote, per-app
+  -- '<package>_zygote') are intentionally treated as ordinary processes.
   zygote_processes AS (
-    SELECT upid
-    FROM process
-    WHERE
-      name IN ('zygote', 'zygote64', 'webview_zygote')
+    SELECT upid FROM process WHERE name IN ('zygote', 'zygote64')
   ),
   -- Average memory of each zygote, per adjustable track, keyed by the zygote's
   -- own upid.
@@ -183,7 +181,7 @@ SELECT
   d.value,
   CASE
     WHEN NOT (p.upid IS NULL)
-    AND NOT (p.name IN ('zygote', 'zygote64', 'webview_zygote')) THEN max(
+    AND d.upid NOT IN (SELECT upid FROM zygote_processes) THEN max(
       0,
       cast_int!(d.value) - cast_int!(COALESCE(d.zygote_baseline_value, 0))
     )
