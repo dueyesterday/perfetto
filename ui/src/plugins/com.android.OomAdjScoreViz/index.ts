@@ -163,6 +163,7 @@ export default class OomAdjScoreViz implements PerfettoPlugin {
     ctx.tracks.registerTrack({
       uri,
       renderer,
+      description: `This track shows the OOM adjustment score of process '${processName}' (${pid}) over time.`,
     });
     return new TrackNode({
       name,
