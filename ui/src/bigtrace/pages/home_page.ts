@@ -41,7 +41,7 @@ GROUP BY p.name
 ORDER BY cpu_sec DESC
 LIMIT 10`;
 
-// Landing-page action button: icon, label, and click handler.
+// Landing-page action button.
 function homeButton(
   label: string,
   icon: string,

@@ -725,7 +725,7 @@ pre.pf-bt-history-item-query--standalone {
 
 // ---------- Settings page ----------
 
-.pf-settings-page {
+.pf-bt-settings-page {
   &__plugin-section {
     margin-bottom: 32px;
 
@@ -850,7 +850,7 @@ pre.pf-bt-history-item-query--standalone {
   box-sizing: border-box;
   padding: 16px 20px 24px;
 
-  .pf-settings-page {
+  .pf-bt-settings-page {
     margin: 0;
   }
 }

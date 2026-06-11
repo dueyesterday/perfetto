@@ -79,8 +79,7 @@ export class QueryPage implements m.ClassComponent<QueryPageAttrs> {
     const editorTabs: TabsTab[] = this.tabsState.tabs.map((tab) => ({
       key: tab.id,
       title: tab.title,
-      // Spinner on tabs with a query in flight so tab-switching doesn't
-      // make the running query "disappear".
+      // Spinner on in-flight tabs so switching away doesn't hide the run.
       leftIcon: tab.isLoading ? 'progress_activity' : 'code',
       closeButton: this.tabsState.tabs.length > 1,
       content: m(EditorTabView, {

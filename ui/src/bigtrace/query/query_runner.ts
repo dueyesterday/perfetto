@@ -252,7 +252,7 @@ export class QueryRunner {
     if (details.limit !== undefined) tab.limit = details.limit;
     // Restore the submit-time snapshot so the settings bar reflects what this
     // query ran with (only the full GET echoes it; the list endpoint omits it).
-    // `settings` arrives snake_case; convert back to SettingFilter[].
+    // `settings` arrives camelCase (settingId); convert to SettingFilter[].
     const snapshotSettings = snapshotSettingsToFilters(details.settings);
     tab.querySettings = snapshotSettings;
     // Reconstruct the per-tab disabled set: the snapshot lists exactly the

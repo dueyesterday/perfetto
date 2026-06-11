@@ -422,9 +422,8 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       });
   }
 
-  // Build the controlled-mode `columns` array, splicing the sort state onto its
-  // column so the DataGrid's header sort indicator survives redraws (else
-  // controlled-mode reset wipes it).
+  // Splice the sort state onto its column so the header sort indicator survives
+  // controlled-mode redraws.
   private buildTraceListColumns(names: ReadonlyArray<string>): Column[] {
     return names.map((n) => {
       const base: Column = {id: n, field: n};
@@ -843,7 +842,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       !hasOtherMatches &&
       !bigTraceSettingsStorage.execConfigLoadError;
 
-    const body = m('.pf-settings-page', [
+    const body = m('.pf-bt-settings-page', [
       bigTraceSettingsStorage.isExecConfigLoading &&
         m(EmptyState, {
           title: 'Loading settings...',
@@ -852,7 +851,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         }),
       Array.from(categories.entries()).map(([category, catSettings]) => {
         const categoryHeader: m.Children = m(
-          'h2.pf-settings-page__plugin-title',
+          'h2.pf-bt-settings-page__plugin-title',
           category,
         );
 
@@ -890,7 +889,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
         const categoryContent = m(CardStack, cards);
 
         return m(
-          '.pf-settings-page__plugin-section',
+          '.pf-bt-settings-page__plugin-section',
           categoryHeader,
           categoryContent,
         );

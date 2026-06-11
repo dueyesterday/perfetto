@@ -15,8 +15,8 @@
 import {LocalStorage} from '../../core/local_storage';
 
 // LocalStorage-backed holder for a single persisted field, shared by the
-// trace/result-selection states; each supplies its key/field/parse/clear-default
-// (column states add effective() in a subclass to reconcile against a live
+// trace-selection states; each supplies its key/field/parse/clear-default
+// (traceColumnsState adds effective() in a subclass to reconcile against a live
 // schema). save() JSON-serializes, so callers needn't copy arrays before set().
 export class SingleFieldStorage<T> {
   private readonly storage: LocalStorage;

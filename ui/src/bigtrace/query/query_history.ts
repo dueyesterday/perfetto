@@ -27,7 +27,6 @@ interface QueryHistoryComponentAttrs {
   readonly refreshSignal?: number;
 }
 
-// Re-export for consumers.
 export {setHistoryActiveTab} from './history_store';
 
 export class QueryHistoryComponent

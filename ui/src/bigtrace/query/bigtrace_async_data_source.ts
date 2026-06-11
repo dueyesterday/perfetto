@@ -62,8 +62,6 @@ export class BigtraceAsyncDataSource implements DataSource {
     return this._filteredTotalRows;
   }
 
-  // availableColumnNames from the last successful fetch. Used by the results
-  // page to populate its column picker.
   get availableColumnNames(): ReadonlyArray<string> | undefined {
     return this._availableColumnNames;
   }
