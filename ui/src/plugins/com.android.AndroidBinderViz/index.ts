@@ -35,12 +35,16 @@ export default class implements PerfettoPlugin {
         'server',
         'client',
         'binder_txn_id',
+        'Server perspective: for each server process and AIDL interface and ' +
+          'method name, which client process/thread is calling it.',
       ),
       this.createBinderTransactionTrack(
         ctx,
         'client',
         'server',
         'binder_reply_id',
+        'Client perspective: for each client process and AIDL interface and ' +
+          'method name, which server process/thread is replying.',
       ),
     ]);
     ctx.defaultWorkspace.addChildInOrder(serverRoot);
@@ -51,11 +55,13 @@ export default class implements PerfettoPlugin {
     ctx: Trace,
     perspective: string,
     oppositePerspective: string,
-    sliceIdColumn?: string,
+    sliceIdColumn: string,
+    description: string,
   ): Promise<TrackNode> {
     const binderCounterBreakdowns = new BreakdownTracks({
       trace: ctx,
       trackTitle: `Binder ${perspective} Transaction Counts`,
+      description,
       modules: ['android.binder'],
       aggregationType: BreakdownTrackAggType.COUNT,
       aggregation: {
