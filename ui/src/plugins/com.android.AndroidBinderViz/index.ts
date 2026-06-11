@@ -18,7 +18,7 @@ import {
 } from '../../components/tracks/breakdown_tracks';
 import type {PerfettoPlugin} from '../../public/plugin';
 import type {Trace} from '../../public/trace';
-import type {TrackNode} from '../../public/workspace';
+import {TrackNode} from '../../public/workspace';
 import {BinderSliceDetailsPanel} from './details_panel';
 
 export default class implements PerfettoPlugin {
@@ -47,8 +47,10 @@ export default class implements PerfettoPlugin {
           'method name, which server process/thread is replying.',
       ),
     ]);
-    ctx.defaultWorkspace.addChildInOrder(serverRoot);
-    ctx.defaultWorkspace.addChildInOrder(clientRoot);
+    const binderGroup = new TrackNode({name: 'Binder', isSummary: true});
+    binderGroup.addChildInOrder(serverRoot);
+    binderGroup.addChildInOrder(clientRoot);
+    ctx.defaultWorkspace.addChildInOrder(binderGroup);
   }
 
   async createBinderTransactionTrack(
@@ -58,9 +60,11 @@ export default class implements PerfettoPlugin {
     sliceIdColumn: string,
     description: string,
   ): Promise<TrackNode> {
+    // The titles live under a "Binder" group, so drop the redundant prefix.
+    const sideName = perspective[0].toUpperCase() + perspective.slice(1);
     const binderCounterBreakdowns = new BreakdownTracks({
       trace: ctx,
-      trackTitle: `Binder ${perspective} Transaction Counts`,
+      trackTitle: `${sideName} Transaction Counts`,
       description,
       modules: ['android.binder'],
       aggregationType: BreakdownTrackAggType.COUNT,
