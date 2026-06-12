@@ -102,26 +102,29 @@
     --pf-color-track-summary-expanded-text: #e8eaed;
     --pf-color-timeline-overlay: black;
 
-    // In light mode, the sidebar has a custom distinct blue color scheme.
-    --pf-sidebar-surface: #222b38;
-    --pf-sidebar-surface-secondary: #171f29;
-    --pf-sidebar-on-surface: #ccd2d9;
-    --pf-sidebar-on-surface-muted: #97a1ac;
-    --pf-sidebar-border: #46505e;
-    --pf-sidebar-border-secondary: #39424e;
+    // Light mode runs a light sidebar: a soft off-white rail with hairline
+    // borders (the old dark-navy block read as a 2016 admin panel).
+    --pf-sidebar-surface: #f8f9fb;
+    --pf-sidebar-surface-secondary: #edf0f4;
+    --pf-sidebar-on-surface: #313640;
+    --pf-sidebar-on-surface-muted: #69707a;
+    --pf-sidebar-border: #e4e7ec;
+    --pf-sidebar-border-secondary: #eceff3;
   }
 
   &--dark {
-    --pf-color-void: #131418;
-    --pf-color-background: #1a1c20;
-    --pf-color-background-secondary: #25282d;
-    --pf-color-background-tertiary: #32363c;
+    // Deep near-black canvas with clearly stepped elevated surfaces — the
+    // old uniform dark gray read flat; depth comes from surface contrast.
+    --pf-color-void: #0e0f12;
+    --pf-color-background: #15171b;
+    --pf-color-background-secondary: #1d2025;
+    --pf-color-background-tertiary: #282c33;
     --pf-color-interactive-base: white;
     --pf-color-text: #e2e5e9;
     --pf-color-text-muted: #9da3ab;
     --pf-color-text-disabled: #6f747b;
-    --pf-color-border: #3c4148;
-    --pf-color-border-secondary: #2e3237;
+    --pf-color-border: #31363e;
+    --pf-color-border-secondary: #262a30;
     --pf-color-text-hint: #9aa0a6;
     --pf-color-box-shadow: rgba(0, 0, 0, 0.5);
     --pf-color-neutral: #7d838c;
@@ -162,8 +165,8 @@
     // Foreground color for text/icons drawn on top of any --pf-chart-color-*.
     --pf-chart-color-on: #1a1a1a;
 
-    --pf-color-track-summary-collapsed: #2b3034;
-    --pf-color-track-summary-expanded: #474f58;
+    --pf-color-track-summary-collapsed: #23272c;
+    --pf-color-track-summary-expanded: #3f464e;
     --pf-color-track-summary-expanded-text: #e8eaed;
     --pf-color-timeline-overlay: white;
 

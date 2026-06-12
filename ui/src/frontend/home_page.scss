@@ -23,6 +23,12 @@
   grid-template-rows: 1fr auto;
   grid-template-areas: "center" "footer";
   font-family: var(--pf-font-compact);
+  // Soft accent glow behind the hero.
+  background: radial-gradient(
+    1100px 480px at 50% -8%,
+    color-mix(in srgb, var(--pf-color-accent) 9%, transparent),
+    transparent 70%
+  );
 
   .pf-home-page__center {
     grid-area: center;
@@ -42,16 +48,21 @@
       flex-direction: row;
       align-items: center;
       justify-content: center;
-      font-size: 60px;
+      font-size: 48px;
       margin: 25px;
       text-align: center;
-      font-weight: 300;
+      font-weight: 600;
+      letter-spacing: -0.02em;
     }
 
     .pf-home-page__hints {
+      // Cards sit side by side under the hero.
       display: flex;
-      flex-direction: column;
-      gap: 24px;
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: stretch;
+      gap: 16px;
       margin-bottom: 32px;
 
       .pf-hotkey {
@@ -79,10 +90,14 @@
     }
 
     .pf-home-page__section {
-      background: var(--pf-color-background-secondary);
+      // Real elevated cards on the gradient backdrop.
+      background: var(--pf-color-background);
+      border: 1px solid var(--pf-color-border-secondary);
+      box-shadow: $box-shadow-1;
       border-radius: $border-radius-large;
       padding: 20px 24px;
       flex: 1;
+      min-width: 280px;
       display: flex;
       flex-direction: column;
 

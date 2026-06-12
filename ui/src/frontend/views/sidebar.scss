@@ -41,6 +41,12 @@
 
   .pf-sidebar__brand {
     height: 36px;
+
+    // brand.png bakes the wordmark in white; swap in the dark-text variant
+    // on the light sidebar. (Chrome-only app, content:url on img is fine.)
+    @at-root .pf-theme-provider--light & {
+      content: url("assets/brand-on-light.png");
+    }
   }
 
   .pf-sidebar__branding-badge {
@@ -138,7 +144,10 @@ li.pf-sidebar__item {
   }
 
   &.pf-active a {
-    background: color-active-surface(transparent, currentColor);
+    // Accent-tinted pill marks the active destination.
+    background: color-mix(in srgb, var(--pf-color-accent) 12%, transparent);
+    color: var(--pf-color-accent);
+    font-weight: 500;
   }
 }
 

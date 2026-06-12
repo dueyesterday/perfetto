@@ -19,12 +19,12 @@
   position: relative;
   z-index: 3;
   overflow: visible;
-  background-color: var(--pf-color-background-secondary);
+  background-color: var(--pf-color-background);
   min-height: var(--topbar-height);
   display: flex;
   justify-content: center;
   align-items: center;
-  border-bottom: 1px solid var(--pf-color-border);
+  border-bottom: 1px solid var(--pf-color-border-secondary);
 
   &--hide-sidebar {
     .pf-omnibox--query-mode {
@@ -60,16 +60,26 @@
   display: grid;
   grid-template-areas: "icon input stepthrough";
   grid-template-columns: 34px auto max-content;
-  border-radius: $border-radius-large;
-  background-color: var(--pf-color-background);
-  border: solid 1px var(--pf-color-border-secondary);
+  // Filled pill search field; lifts to a bordered white field on focus.
+  border-radius: 100px;
+  background-color: var(--pf-color-background-secondary);
+  border: solid 1px transparent;
   line-height: 34px;
 
+  &:hover {
+    background-color: var(--pf-color-background-tertiary);
+  }
+
   &:focus-within {
+    background-color: var(--pf-color-background);
     border-color: var(--pf-color-accent);
     box-shadow:
       0 0 0 3px color-mix(in srgb, var(--pf-color-accent) 18%, transparent),
       $box-shadow-1;
+
+    &:hover {
+      background-color: var(--pf-color-background);
+    }
   }
 
   &:before {

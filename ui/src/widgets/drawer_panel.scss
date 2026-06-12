@@ -67,22 +67,17 @@
     font-family: var(--pf-font-compact);
     font-size: 14px;
 
-    padding: 5px; // Space around the tab content
-    margin-top: 2px; // Space between tab and top of handle
+    padding: 4px 6px;
+    margin-block: 3px; // Float inside the handle bar
     cursor: pointer; // Active tab is not clickable
 
-    border-radius: var(--pf-border-radius-small) var(--pf-border-radius-small)
-      0 0; // Rounded top corners only
+    border-radius: var(--pf-border-radius-small);
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    border-style: solid;
-    border-color: var(--pf-color-border-secondary);
-    border-width: 1px 1px 0 1px;
 
     &:not(:first-child) {
-      // Merge borders
-      margin-left: -1px;
+      margin-left: 2px;
     }
 
     &:hover {
@@ -90,10 +85,10 @@
     }
 
     &.pf-drawer-panel__tab--active {
+      // Accent pill, matching the sidebar's active treatment.
       cursor: default;
-      background-color: var(--pf-color-background);
-      box-shadow: var(--pf-color-box-shadow) 0px 0px 3px;
-      border-color: var(--pf-color-border);
+      background: color-mix(in srgb, var(--pf-color-accent) 12%, transparent);
+      color: var(--pf-color-accent);
       z-index: 1;
     }
   }
