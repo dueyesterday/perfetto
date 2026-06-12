@@ -34,7 +34,7 @@
   background: var(--pf-color-background);
   border: solid 1px var(--pf-color-border);
   border-radius: $border-radius;
-  box-shadow: 2px 2px 16px var(--pf-color-box-shadow);
+  box-shadow: $box-shadow-2;
   max-width: 350px; // Sensible default width for most popups
 
   .pf-popup-content {

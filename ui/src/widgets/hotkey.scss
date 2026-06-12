@@ -22,7 +22,7 @@ kbd.pf-keycap {
   background-color: var(--pf-color-background-secondary);
   border: 1px solid var(--pf-color-border);
   border-bottom-width: 2px;
-  border-radius: 3px;
+  border-radius: $border-radius-small;
   color: var(--pf-color-text-muted);
   display: inline-block;
   vertical-align: baseline;

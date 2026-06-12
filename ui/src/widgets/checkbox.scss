@@ -70,7 +70,7 @@ $switch-slide-distance: 0.75em;
   // 'Check' style checkbox
   &__box--check {
     aspect-ratio: 1;
-    border-radius: $border-radius;
+    border-radius: $border-radius-small;
     border: solid 1px currentColor;
     background: none;
     position: relative;

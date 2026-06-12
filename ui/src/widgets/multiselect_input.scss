@@ -24,6 +24,9 @@
   background: var(--pf-color-void);
   border: solid 1px var(--pf-color-border-secondary);
   border-radius: $border-radius;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 
   input {
     outline: none;
@@ -55,7 +58,7 @@
   &__option-row {
     overflow: hidden;
     cursor: pointer;
-    border-radius: 2px;
+    border-radius: $border-radius-small;
 
     &--selected {
       background: color_active(transparent);
@@ -68,6 +71,8 @@
   }
 
   &:focus-within {
-    border-color: var(--pf-color-primary);
+    border-color: var(--pf-color-accent);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--pf-color-accent) 20%, transparent);
   }
 }

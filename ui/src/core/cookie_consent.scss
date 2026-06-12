@@ -18,10 +18,11 @@
   left: 10px;
   bottom: 10px;
   width: 550px;
-  background-color: #19212b;
+  background-color: var(--pf-sidebar-surface-secondary);
   font-size: var(--pf-font-size-m);
-  color: rgb(180, 183, 186);
-  border-radius: 5px;
+  color: var(--pf-sidebar-on-surface);
+  border-radius: var(--pf-border-radius-large);
+  box-shadow: var(--pf-shadow-2);
   padding: 20px;
 
   .buttons {
@@ -33,7 +34,7 @@
 
   button {
     padding: 10px;
-    border-radius: 3px;
+    border-radius: var(--pf-border-radius);
     color: #fff;
     margin-left: 5px;
     a {
@@ -42,7 +43,7 @@
     }
   }
   button:hover {
-    background-color: #373f4b;
+    background-color: color-mix(in srgb, currentColor 12%, transparent);
     cursor: pointer;
   }
 }

@@ -19,7 +19,7 @@
 .pf-timeline-toolbar__bulk {
   font-family: var(--pf-font-compact);
   background: var(--pf-color-accent);
-  color: var(--pf-color-text-on-primary);
+  color: var(--pf-color-text-on-accent);
   border-radius: 100px;
   padding: 1px 2px;
   align-items: baseline;
@@ -31,7 +31,7 @@
 
 .pf-timeline-toolbar__multiselect-pill {
   background: var(--pf-color-accent);
-  color: var(--pf-color-text-on-primary);
+  color: var(--pf-color-text-on-accent);
 }
 
 .pf-timeline-toolbar__bulk-callout {

@@ -28,8 +28,8 @@
     font-weight: 600;
     margin: 0 0 16px 0;
     padding: 8px 12px;
-    background: var(--pf-minimal-background);
-    border-radius: 4px;
+    background: var(--pf-color-background-secondary);
+    border-radius: $border-radius;
   }
 
   &__complex-error {

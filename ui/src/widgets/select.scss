@@ -27,6 +27,9 @@
   border-radius: $border-radius;
   padding: 2px;
   cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 
   // Very opinionated min width for a select input
   // ... any smaller and it stops looking like a select input!
@@ -37,7 +40,9 @@
   }
 
   &:focus {
-    border-color: var(--pf-color-primary);
+    border-color: var(--pf-color-accent);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--pf-color-accent) 20%, transparent);
   }
 
   &[disabled] {

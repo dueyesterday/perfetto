@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+@import "../assets/theme";
+
 .pf-tab-strip {
   display: flex;
   align-items: baseline;
@@ -34,6 +36,8 @@
     display: flex;
     align-items: baseline;
     gap: 2px;
+
+    border-radius: $border-radius-small $border-radius-small 0 0;
 
     &:hover {
       background-color: color_hover(transparent);

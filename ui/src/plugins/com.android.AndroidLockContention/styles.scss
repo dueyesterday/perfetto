@@ -1,7 +1,7 @@
 .pf-lock-owner-panel {
   &__note {
     padding: 10px;
-    color: var(--pf-color-foreground-muted, #666);
+    color: var(--pf-color-text-muted);
     font-style: italic;
   }
 
@@ -9,8 +9,8 @@
     padding: 10px;
     display: flex;
     gap: 20px;
-    background-color: var(--pf-color-background-alt, rgba(0, 0, 0, 0.05));
-    border-bottom: 1px solid var(--pf-color-border, #ddd);
+    background-color: var(--pf-color-background-secondary);
+    border-bottom: 1px solid var(--pf-color-border);
   }
 
   &__checkbox-label {
@@ -27,16 +27,20 @@
     margin-bottom: 10px;
     font-size: 1.2rem;
     font-weight: 500;
-    color: var(--pf-color-foreground);
+    color: var(--pf-color-text);
   }
 
   &__selected-row {
-    background-color: var(--pf-color-selection, rgba(0, 0, 255, 0.1));
+    background-color: color-mix(
+      in srgb,
+      var(--pf-color-accent) 12%,
+      transparent
+    );
   }
 
   &__unknown-text {
-    color: var(--pf-color-foreground-muted, #888);
-    border-bottom: 1px dotted var(--pf-color-foreground-muted, #888);
+    color: var(--pf-color-text-muted);
+    border-bottom: 1px dotted var(--pf-color-text-muted);
     cursor: help;
   }
 
@@ -63,17 +67,17 @@
   }
 
   &__muted {
-    color: var(--pf-color-foreground-muted, #666);
+    color: var(--pf-color-text-muted);
   }
 
   &__action-text {
-    color: var(--pf-color-primary, #007acc);
+    color: var(--pf-color-primary);
     font-weight: bold;
   }
 
   &__card-content {
     margin-top: 15px;
-    border-top: 1px solid var(--pf-color-border, #eee);
+    border-top: 1px solid var(--pf-color-border-secondary);
     padding: 12px;
   }
 

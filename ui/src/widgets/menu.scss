@@ -60,6 +60,8 @@
   user-select: none;
   text-align: left;
   padding: 6px 10px;
+  margin-inline: 4px;
+  border-radius: $border-radius-small;
   white-space: nowrap;
   min-width: max-content;
   line-height: 1;

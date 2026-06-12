@@ -36,12 +36,12 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px;
-    background: var(--pf-minimal-background);
-    border: 1px solid var(--pf-border);
-    border-radius: 4px;
+    background: var(--pf-color-background-secondary);
+    border: 1px solid var(--pf-color-border-secondary);
+    border-radius: $border-radius;
 
     &:hover {
-      background: var(--pf-minimal-hover-background);
+      background: color-hover-surface(var(--pf-color-background-secondary));
     }
   }
 
@@ -59,8 +59,8 @@
   }
 
   &__item-info {
-    font-size: 12px;
-    color: var(--pf-text-secondary);
+    font-size: var(--pf-font-size-s);
+    color: var(--pf-color-text-muted);
     margin-top: 4px;
   }
 

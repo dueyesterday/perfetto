@@ -125,6 +125,11 @@ li.pf-sidebar__item {
       background: color-active-surface(transparent, currentColor);
     }
 
+    &:focus-visible {
+      @include focus;
+      outline-offset: -2px;
+    }
+
     &[disabled] {
       text-decoration: line-through;
       opacity: 0.5;

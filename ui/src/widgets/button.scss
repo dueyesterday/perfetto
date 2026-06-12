@@ -57,6 +57,9 @@
   white-space: nowrap;
   min-width: max-content;
   position: relative;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 
   &--loading {
     // The button is unclickable when loading

@@ -23,7 +23,7 @@
   padding: 4px 0;
   font-family: var(--pf-font-compact);
   font-size: var(--pf-font-size-s);
-  color: var(--pf-color-on-surface);
+  color: var(--pf-sidebar-on-surface);
   cursor: default;
   user-select: none;
 
@@ -62,6 +62,6 @@
   &__elapsed {
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
-    color: var(--pf-color-on-surface-muted);
+    color: var(--pf-sidebar-on-surface-muted);
   }
 }

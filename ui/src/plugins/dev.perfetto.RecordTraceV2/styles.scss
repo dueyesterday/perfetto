@@ -807,9 +807,10 @@
 
     .note {
       border: 1px dashed var(--pf-color-border);
-      background: #f9eeba;
+      background: color-mix(in srgb, var(--pf-color-warning) 12%, transparent);
       margin: var(--record-section-padding);
       padding: 10px;
+      border-radius: $border-radius;
       font-size: var(--pf-font-size-m);
       line-height: 20px;
     }
@@ -1143,7 +1144,8 @@
     }
 
     &:focus-visible:not(&--selected) {
-      box-shadow: 0 0 0 2px rgba(var(--pf-color-primary-rgb), 0.3);
+      box-shadow: 0 0 0 3px
+        color-mix(in srgb, var(--pf-color-accent) 30%, transparent);
     }
 
     &--selected {
@@ -1164,7 +1166,11 @@
 
     &--highlight {
       border-color: var(--pf-color-primary);
-      background-color: rgba(var(--pf-color-primary-rgb), 0.1);
+      background-color: color-mix(
+        in srgb,
+        var(--pf-color-primary) 10%,
+        transparent
+      );
 
       .pf-icon,
       .pf-preset-card__title {
@@ -1195,7 +1201,11 @@
 
   .note {
     border: 1px dashed var(--pf-color-border);
-    background-color: rgba(var(--pf-color-warning-rgb), 0.1);
+    background-color: color-mix(
+      in srgb,
+      var(--pf-color-warning) 10%,
+      transparent
+    );
     padding: 16px;
     border-radius: $border-radius-large;
     font-size: var(--pf-font-size-m);

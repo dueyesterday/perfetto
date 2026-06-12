@@ -37,7 +37,7 @@
     margin-bottom: -1px; // Overlap the border
     cursor: pointer;
 
-    border-radius: 3px 3px 0 0;
+    border-radius: $border-radius-small $border-radius-small 0 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;

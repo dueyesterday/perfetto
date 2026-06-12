@@ -60,14 +60,16 @@
   display: grid;
   grid-template-areas: "icon input stepthrough";
   grid-template-columns: 34px auto max-content;
-  border-radius: $border-radius;
+  border-radius: $border-radius-large;
   background-color: var(--pf-color-background);
-  border: solid 1px transparent;
+  border: solid 1px var(--pf-color-border-secondary);
   line-height: 34px;
 
   &:focus-within {
-    border-color: var(--pf-color-primary);
-    box-shadow: $box-shadow-1;
+    border-color: var(--pf-color-accent);
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--pf-color-accent) 18%, transparent),
+      $box-shadow-1;
   }
 
   &:before {

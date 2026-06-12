@@ -42,9 +42,9 @@
 }
 
 .pf-search-benchmark-summary {
-  background: var(--pf-color-surface-1);
+  background: var(--pf-color-background-secondary);
   padding: 15px;
-  border-radius: 4px;
+  border-radius: var(--pf-border-radius);
   margin-bottom: 20px;
 
   p {
@@ -58,22 +58,22 @@
   table {
     width: 100%;
     border-collapse: collapse;
-    background: var(--pf-color-surface-0);
+    background: var(--pf-color-background);
 
     th,
     td {
       padding: 12px;
       text-align: left;
-      border-bottom: 1px solid var(--pf-color-divider);
+      border-bottom: 1px solid var(--pf-color-border-secondary);
     }
 
     th {
-      background: var(--pf-color-surface-1);
+      background: var(--pf-color-background-secondary);
       font-weight: 600;
     }
 
     tr:hover {
-      background: var(--pf-color-surface-1);
+      background: var(--pf-color-background-secondary);
     }
   }
 }
@@ -85,9 +85,9 @@
 }
 
 .pf-search-benchmark-method {
-  background: var(--pf-color-surface-0);
+  background: var(--pf-color-background);
   padding: 15px;
-  border-radius: 4px;
+  border-radius: var(--pf-border-radius);
 
   table {
     width: 100%;
@@ -98,16 +98,16 @@
     td {
       padding: 8px;
       text-align: left;
-      border-bottom: 1px solid var(--pf-color-divider);
+      border-bottom: 1px solid var(--pf-color-border-secondary);
     }
 
     th {
-      background: var(--pf-color-surface-1);
+      background: var(--pf-color-background-secondary);
       font-weight: 600;
     }
 
     tr:hover {
-      background: var(--pf-color-surface-1);
+      background: var(--pf-color-background-secondary);
     }
   }
 }
@@ -118,7 +118,7 @@
   .pf-diff-details {
     margin-top: 12px;
     padding-top: 12px;
-    border-top: 1px solid var(--line-color);
+    border-top: 1px solid var(--pf-color-border-secondary);
 
     h4 {
       margin: 12px 0 8px 0;
@@ -141,7 +141,7 @@
     p {
       margin: 8px 0;
       font-style: italic;
-      color: var(--subtle-foreground-color);
+      color: var(--pf-color-text-muted);
     }
   }
 }

@@ -25,7 +25,7 @@
   &__placeholder-chart {
     height: 220px;
     border: 1px dashed var(--pf-color-border);
-    border-radius: 4px;
+    border-radius: var(--pf-border-radius);
   }
 
   &__loading {
@@ -145,7 +145,7 @@
   align-items: center;
   gap: 6px;
   font-size: var(--pf-font-size-s);
-  color: var(--pf-color-foreground-muted);
+  color: var(--pf-color-text-muted);
   margin-bottom: 4px;
 }
 
@@ -156,7 +156,7 @@
   gap: 4px;
 
   &__icon {
-    color: var(--pf-color-foreground-muted);
+    color: var(--pf-color-text-muted);
     cursor: help;
     font-size: var(--pf-font-size-m);
   }

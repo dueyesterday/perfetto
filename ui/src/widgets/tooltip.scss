@@ -30,6 +30,6 @@
   padding: 2px 6px;
   border-radius: $border-radius;
   border: solid 1px var(--pf-color-border);
-  box-shadow: 2px 2px 16px var(--pf-color-box-shadow);
+  box-shadow: $box-shadow-2;
   pointer-events: none;
 }

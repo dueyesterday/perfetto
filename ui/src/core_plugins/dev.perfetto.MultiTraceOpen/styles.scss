@@ -34,7 +34,7 @@
       padding-top: 0;
       padding-bottom: 16px;
       font-size: 0.9em;
-      color: var(--pf-color-text-secondary);
+      color: var(--pf-color-text-muted);
       line-height: 1.4;
     }
   }
@@ -63,7 +63,7 @@
   &__size,
   &__status,
   &__format {
-    color: var(--pf-color-text-secondary);
+    color: var(--pf-color-text-muted);
     font-size: 0.9em;
   }
 
@@ -109,14 +109,14 @@
     background-color: var(--pf-color-background-secondary);
     cursor: pointer;
     padding: 8px;
-    color: var(--pf-color-text-secondary);
+    color: var(--pf-color-text-muted);
     font-family: var(--pf-font);
     font-size: 0.9em;
     font-weight: bold;
     align-items: center;
 
     &:hover {
-      background: color_hover(var(--pf-color-background-secondary));
+      background: color-hover-surface(var(--pf-color-background-secondary));
     }
   }
 

@@ -25,7 +25,7 @@
     background-color: var(--pf-color-background);
 
     &--stuck {
-      box-shadow: 0px 2px 5px var(--pf-color-box-shadow);
+      box-shadow: var(--pf-shadow-1);
     }
   }
 

@@ -24,32 +24,65 @@
   // Theme scroll bars across the entire app.
   scrollbar-color: var(--pf-color-border) var(--pf-color-background); /* thumb color track color */
 
+  // Geometry tokens (theme-independent). Exposed as CSS custom properties so
+  // they reach every stylesheet — including ones that don't @import theme —
+  // and stay overridable at runtime. The SCSS vars in assets/theme.scss alias
+  // these.
+  --pf-border-radius-small: 4px;
+  --pf-border-radius: 6px;
+  --pf-border-radius-large: 10px;
+  --pf-border-radius-xl: 14px;
+
+  // Spacing scale. (--pf-spacing-small was already referenced by datagrid.)
+  --pf-spacing-xsmall: 2px;
+  --pf-spacing-small: 4px;
+  --pf-spacing-medium: 8px;
+  --pf-spacing-large: 12px;
+  --pf-spacing-xlarge: 16px;
+
   &--light {
     --pf-color-void: white;
     --pf-color-background: white;
-    --pf-color-background-secondary: #edf0f1;
-    --pf-color-background-tertiary: #e3e9eb;
+    --pf-color-background-secondary: #f2f4f6;
+    --pf-color-background-tertiary: #e7ebee;
     --pf-color-interactive-base: rgb(4, 33, 56);
-    --pf-color-text: #333;
-    --pf-color-text-muted: #75797c;
-    --pf-color-text-disabled: gray;
-    --pf-color-border: #ccc;
-    --pf-color-border-secondary: #e0e0e0;
-    --pf-color-text-hint: #808080;
-    --pf-color-box-shadow: rgba(0, 0, 0, 0.2);
-    --pf-color-neutral: gray;
+    --pf-color-text: #1f2329;
+    --pf-color-text-muted: #6b7177;
+    --pf-color-text-disabled: #9aa0a6;
+    --pf-color-border: #d3d8dd;
+    --pf-color-border-secondary: #e4e8ec;
+    --pf-color-text-hint: #80868c;
+    --pf-color-box-shadow: rgba(16, 24, 40, 0.16);
+    --pf-color-neutral: #8a9099;
     --pf-color-accent: #2667e7;
     --pf-color-text-on-accent: white;
     --pf-color-highlight: #ffe263;
 
-    --pf-color-primary: #3d5688;
+    --pf-color-primary: #2f62d4;
     --pf-color-text-on-primary: white;
-    --pf-color-danger: rgb(202, 38, 38);
+    --pf-color-danger: #d33030;
     --pf-color-text-on-danger: white;
-    --pf-color-success: rgb(0, 128, 0);
+    --pf-color-success: #0f8c46;
     --pf-color-text-on-success: white;
-    --pf-color-warning: rgb(232, 158, 0);
+    --pf-color-warning: #e6970f;
     --pf-color-text-on-warning: var(--pf-color-text);
+
+    // Elevation. Layered ambient+key shadows; geometry is per-theme so dark
+    // mode can run deeper shadows than light.
+    --pf-shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06),
+      0 1px 3px rgba(16, 24, 40, 0.1);
+    --pf-shadow-2: 0 2px 4px rgba(16, 24, 40, 0.06),
+      0 6px 16px rgba(16, 24, 40, 0.12);
+    --pf-shadow-3: 0 8px 12px rgba(16, 24, 40, 0.08),
+      0 20px 40px rgba(16, 24, 40, 0.18);
+
+    // Scrim behind modal dialogs.
+    --pf-color-backdrop: rgba(15, 23, 42, 0.45);
+
+    // Images designed for light mode need no correction here; defined in both
+    // themes so composed `filter: ... var(--pf-img-filter)` declarations stay
+    // valid in light mode (CSS-wide invalid-at-computed-value-time otherwise).
+    --pf-img-filter: none;
 
     // Chart color palette for data visualization
     --pf-chart-color-1: #4285f4; // Google Blue
@@ -70,40 +103,51 @@
     --pf-color-timeline-overlay: black;
 
     // In light mode, the sidebar has a custom distinct blue color scheme.
-    --pf-sidebar-surface: #262f3c;
-    --pf-sidebar-surface-secondary: #19212b;
-    --pf-sidebar-on-surface: #c8c8c8;
-    --pf-sidebar-on-surface-muted: #a0a0a0;
-    --pf-sidebar-border: #4d5765;
-    --pf-sidebar-border-secondary: #404854;
+    --pf-sidebar-surface: #222b38;
+    --pf-sidebar-surface-secondary: #171f29;
+    --pf-sidebar-on-surface: #ccd2d9;
+    --pf-sidebar-on-surface-muted: #97a1ac;
+    --pf-sidebar-border: #46505e;
+    --pf-sidebar-border-secondary: #39424e;
   }
 
   &--dark {
-    --pf-color-void: #181818;
-    --pf-color-background: #202020;
-    --pf-color-background-secondary: #343434;
-    --pf-color-background-tertiary: #4a4a4a;
+    --pf-color-void: #131418;
+    --pf-color-background: #1a1c20;
+    --pf-color-background-secondary: #25282d;
+    --pf-color-background-tertiary: #32363c;
     --pf-color-interactive-base: white;
-    --pf-color-text: #dce0e2;
-    --pf-color-text-muted: #a0a2a5;
-    --pf-color-text-disabled: #8d8d8e;
-    --pf-color-border: #484848;
-    --pf-color-border-secondary: #383838;
+    --pf-color-text: #e2e5e9;
+    --pf-color-text-muted: #9da3ab;
+    --pf-color-text-disabled: #6f747b;
+    --pf-color-border: #3c4148;
+    --pf-color-border-secondary: #2e3237;
     --pf-color-text-hint: #9aa0a6;
-    --pf-color-box-shadow: rgba(0, 0, 0, 0.4);
-    --pf-color-neutral: gray;
-    --pf-color-accent: #2667e7;
-    --pf-color-text-on-accent: white;
-    --pf-color-highlight: #5f4d06;
+    --pf-color-box-shadow: rgba(0, 0, 0, 0.5);
+    --pf-color-neutral: #7d838c;
+    // Accent diverges from light mode: the light-mode blue is unreadably
+    // low-contrast against dark surfaces (focus rings, selections).
+    --pf-color-accent: #5c8df0;
+    --pf-color-text-on-accent: #16181c;
+    --pf-color-highlight: #6b5a10;
 
-    --pf-color-primary: #598bed;
-    --pf-color-text-on-primary: #333;
-    --pf-color-danger: rgb(230, 90, 90);
-    --pf-color-text-on-danger: #333;
-    --pf-color-success: rgb(99, 192, 99);
-    --pf-color-text-on-success: #333;
-    --pf-color-warning: rgb(244, 188, 67);
-    --pf-color-text-on-warning: #333;
+    --pf-color-primary: #639af2;
+    --pf-color-text-on-primary: #16181c;
+    --pf-color-danger: #eb6a6a;
+    --pf-color-text-on-danger: #16181c;
+    --pf-color-success: #6fc77f;
+    --pf-color-text-on-success: #16181c;
+    --pf-color-warning: #f4bc43;
+    --pf-color-text-on-warning: #16181c;
+
+    // Elevation: dark surfaces need deeper shadows to read.
+    --pf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+    --pf-shadow-2: 0 2px 4px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.55);
+    --pf-shadow-3: 0 8px 12px rgba(0, 0, 0, 0.45),
+      0 20px 40px rgba(0, 0, 0, 0.6);
+
+    // Scrim behind modal dialogs.
+    --pf-color-backdrop: rgba(0, 0, 0, 0.6);
 
     // Chart color palette for data visualization (brighter for dark mode)
     --pf-chart-color-1: #5e97f6; // Lighter Blue
@@ -118,8 +162,8 @@
     // Foreground color for text/icons drawn on top of any --pf-chart-color-*.
     --pf-chart-color-on: #1a1a1a;
 
-    --pf-color-track-summary-collapsed: #2f3437;
-    --pf-color-track-summary-expanded: #454d55;
+    --pf-color-track-summary-collapsed: #2b3034;
+    --pf-color-track-summary-expanded: #474f58;
     --pf-color-track-summary-expanded-text: #e8eaed;
     --pf-color-timeline-overlay: white;
 

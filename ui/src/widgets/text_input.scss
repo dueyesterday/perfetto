@@ -25,6 +25,9 @@
   background: var(--pf-color-void);
   border: solid 1px var(--pf-color-border-secondary);
   border-radius: $border-radius;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 
   &__input {
     appearance: none;
@@ -55,7 +58,9 @@
   }
 
   &:has(.pf-text-input__input:focus) {
-    border-color: var(--pf-color-primary);
+    border-color: var(--pf-color-accent);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--pf-color-accent) 20%, transparent);
   }
 
   &:has(.pf-text-input__input[disabled]) {

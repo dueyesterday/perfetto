@@ -41,7 +41,7 @@
 .pf-modal-backdrop {
   position: absolute;
   z-index: 99;
-  background-color: rgba(0, 0, 0, 0.6);
+  background-color: var(--pf-color-backdrop);
   top: 0;
   left: 0;
   right: 0;
@@ -66,7 +66,8 @@
   padding: 30px;
   max-width: 90vw;
   max-height: 90vh;
-  border-radius: $border-radius;
+  border-radius: $border-radius-xl;
+  box-shadow: $box-shadow-3;
   overflow-y: auto;
   top: 50%;
   left: 50%;
@@ -139,7 +140,7 @@
   white-space: pre-wrap;
   border: 1px solid var(--pf-color-border);
   padding: 10px;
-  border-radius: 3px;
+  border-radius: $border-radius-small;
   font-size: var(--pf-font-size-xs);
   background: var(--pf-color-background-secondary);
   font-family: var(--pf-font-monospace);
@@ -160,7 +161,7 @@
 .pf-modal-textarea {
   display: block;
   padding: 10px;
-  border-radius: 3px;
+  border-radius: $border-radius-small;
   margin-top: 10px;
   margin-bottom: 10px;
   width: 100%;

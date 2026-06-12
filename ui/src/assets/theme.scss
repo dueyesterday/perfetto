@@ -14,13 +14,21 @@
 
 @import "./typefaces";
 
-$border-radius: 2px;
-$border-radius-large: 4px;
+// Geometry tokens. These alias CSS custom properties defined on
+// .pf-theme-provider (frontend/theme_provider.scss) so that values can vary
+// per theme and reach stylesheets that don't import this file. Prefer the
+// var(--pf-*) forms directly in new code.
+$border-radius-small: var(--pf-border-radius-small);
+$border-radius: var(--pf-border-radius);
+$border-radius-large: var(--pf-border-radius-large);
+$border-radius-xl: var(--pf-border-radius-xl);
 $anim-timing: 150ms cubic-bezier(0.4, 0, 0.2, 1);
 
-$box-shadow-1: 0px 2px 6px var(--pf-color-box-shadow);
-$box-shadow-2: 0px 4px 12px var(--pf-color-box-shadow);
-$box-shadow-3: 0px 8px 16px var(--pf-color-box-shadow);
+// Layered elevation shadows; geometry+color are theme-dependent (see
+// theme_provider.scss).
+$box-shadow-1: var(--pf-shadow-1);
+$box-shadow-2: var(--pf-shadow-2);
+$box-shadow-3: var(--pf-shadow-3);
 
 // This function is used to compute the hove color for interactive surfaces such
 // as buttons or or menu items. The idea is you give it the surface color and
@@ -76,6 +84,7 @@ $box-shadow-3: 0px 8px 16px var(--pf-color-box-shadow);
 
 @mixin focus {
   outline: 2px solid var(--pf-color-accent);
+  outline-offset: 1px;
 }
 
 @mixin transition($time: 0.1s) {

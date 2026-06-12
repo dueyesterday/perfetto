@@ -71,7 +71,8 @@
     margin-top: 2px; // Space between tab and top of handle
     cursor: pointer; // Active tab is not clickable
 
-    border-radius: 3px 3px 0 0; // Rounded top corners only
+    border-radius: var(--pf-border-radius-small) var(--pf-border-radius-small)
+      0 0; // Rounded top corners only
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
