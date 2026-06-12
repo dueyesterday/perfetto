@@ -1109,7 +1109,9 @@ class Database:
       cur_traces, cur_rows = row[1], row[2]
 
       # Lazy table creation. Subsequent merges check column
-      # compatibility against the existing table schema.
+      # compatibility against the existing table schema. `_row_id`
+      # numbers rows 1..processed_rows in merge order — a stable
+      # per-row identifier clients can rely on across pages.
       existing_table = self._conn.execute(
           """
                 SELECT 1 FROM information_schema.tables
@@ -1120,10 +1122,10 @@ class Database:
       if not existing_table:
         col_decls = ', '.join(
             f'"{n}" {t}' for n, t in zip(user_columns, col_types))
-        self._conn.execute(
-            f'CREATE TABLE {tbl} (trace_id VARCHAR, {col_decls})')
+        self._conn.execute(f'CREATE TABLE {tbl} '
+                           f'(_row_id BIGINT, trace_id VARCHAR, {col_decls})')
       else:
-        # Compare existing schema (skip trace_id at position 0).
+        # Compare existing schema (skip _row_id / trace_id at 0 / 1).
         existing_cols = [
             r[0] for r in self._conn.execute(
                 """
@@ -1134,7 +1136,7 @@ class Database:
                 [tbl],
             ).fetchall()
         ]
-        if existing_cols[1:] != list(user_columns):
+        if existing_cols[2:] != list(user_columns):
           new_traces = cur_traces + 1
           self._conn.execute(
               'UPDATE query_executions SET processed_traces = ? '
@@ -1156,9 +1158,12 @@ class Database:
         # ~10min via executemany(). DuckDB casts each Arrow
         # column to the destination column type. Names are
         # placeholders — insert_into binds positionally.
+        # `_row_id` continues from the table's current row count.
+        n_rows = len(rows_to_insert)
         n_cols = len(rows_to_insert[0])
-        cols_data = list(zip(*rows_to_insert))
-        arr = pa.table({f'c{i}': list(cols_data[i]) for i in range(n_cols)})
+        cols_data = [range(cur_rows + 1, cur_rows + n_rows + 1)]
+        cols_data.extend(zip(*rows_to_insert))
+        arr = pa.table({f'c{i}': list(col) for i, col in enumerate(cols_data)})
         self._conn.from_arrow(arr).insert_into(tbl)
 
       new_traces = cur_traces + 1

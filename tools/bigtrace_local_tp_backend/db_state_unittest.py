@@ -790,9 +790,9 @@ class FetchPaginatedTest(_DbCase):
   def _seed_table(self, uuid: str = 'u1', n_rows: int = 10) -> None:
     """Create a materialized table with `n_rows` rows.
 
-        Schema: trace_id (VARCHAR, prepended), value (BIGINT),
-        name (VARCHAR). Rows are deterministic so tests can assert
-        exact orderings.
+        Schema: _row_id (BIGINT, added by merge), trace_id (VARCHAR,
+        prepended), value (BIGINT), name (VARCHAR). Rows are
+        deterministic so tests can assert exact orderings.
         """
     self.db.insert_qe_in_progress(
         uuid, 'SELECT *', query_limit=0, materialized=True)
@@ -808,15 +808,15 @@ class FetchPaginatedTest(_DbCase):
 
   def test_basic_page_fetch(self):
     self._seed_table(n_rows=10)
-    cols, rows, total = self.db.fetch_paginated('u1', limit=5, offset=0)
-    self.assertEqual(cols, ['trace_id', 'value', 'name'])
+    cols, rows, total, _ = self.db.fetch_paginated('u1', limit=5, offset=0)
+    self.assertEqual(cols, ['_row_id', 'trace_id', 'value', 'name'])
     self.assertEqual(len(rows), 5)
     self.assertEqual(total, 10)
 
   def test_offset_skips_rows(self):
     self._seed_table(n_rows=10)
-    _cols, page1, _ = self.db.fetch_paginated('u1', limit=5, offset=0)
-    _cols, page2, _ = self.db.fetch_paginated('u1', limit=5, offset=5)
+    _cols, page1, _, _ = self.db.fetch_paginated('u1', limit=5, offset=0)
+    _cols, page2, _, _ = self.db.fetch_paginated('u1', limit=5, offset=5)
     # Pages are disjoint (no overlap).
     page1_values = {tuple(r) for r in page1}
     page2_values = {tuple(r) for r in page2}
@@ -826,16 +826,16 @@ class FetchPaginatedTest(_DbCase):
 
   def test_order_by_ascending(self):
     self._seed_table(n_rows=5)
-    _cols, rows, _ = self.db.fetch_paginated(
+    _cols, rows, _, _ = self.db.fetch_paginated(
         'u1', limit=10, offset=0, order_by='value asc')
-    values = [r[1] for r in rows]
+    values = [r[2] for r in rows]
     self.assertEqual(values, [0, 1, 2, 3, 4])
 
   def test_order_by_descending(self):
     self._seed_table(n_rows=5)
-    _cols, rows, _ = self.db.fetch_paginated(
+    _cols, rows, _, _ = self.db.fetch_paginated(
         'u1', limit=10, offset=0, order_by='value desc')
-    values = [r[1] for r in rows]
+    values = [r[2] for r in rows]
     self.assertEqual(values, [4, 3, 2, 1, 0])
 
   def test_order_by_unknown_column_raises_value_error(self):
@@ -848,17 +848,17 @@ class FetchPaginatedTest(_DbCase):
   def test_filter_eq_returns_matching_row(self):
     self._seed_table(n_rows=10)
     filter_str = '[{"field":"value","op":"=","value":"3"}]'
-    _cols, rows, total = self.db.fetch_paginated(
+    _cols, rows, total, _ = self.db.fetch_paginated(
         'u1', limit=10, offset=0, filter_str=filter_str)
     self.assertEqual(len(rows), 1)
-    self.assertEqual(rows[0][1], 3)
+    self.assertEqual(rows[0][2], 3)
     self.assertEqual(total, 1)  # totalFilteredRows = post-filter count
 
   def test_filter_glob_uses_pattern_match(self):
     self._seed_table(n_rows=10)
     # Match "name_0?" → name_00..name_09 (which is all 10 rows).
     filter_str = '[{"field":"name","op":"glob","value":"name_0?"}]'
-    _cols, rows, total = self.db.fetch_paginated(
+    _cols, rows, total, _ = self.db.fetch_paginated(
         'u1', limit=20, offset=0, filter_str=filter_str)
     self.assertEqual(total, 10)
     self.assertEqual(len(rows), 10)
@@ -866,10 +866,10 @@ class FetchPaginatedTest(_DbCase):
   def test_filter_in_with_multi_value(self):
     self._seed_table(n_rows=10)
     filter_str = '[{"field":"value","op":"in","value":["1","3","5"]}]'
-    _cols, rows, total = self.db.fetch_paginated(
+    _cols, rows, total, _ = self.db.fetch_paginated(
         'u1', limit=20, offset=0, filter_str=filter_str)
     self.assertEqual(total, 3)
-    values = sorted(r[1] for r in rows)
+    values = sorted(r[2] for r in rows)
     self.assertEqual(values, [1, 3, 5])
 
   def test_filter_unknown_column_raises_value_error(self):
@@ -881,7 +881,7 @@ class FetchPaginatedTest(_DbCase):
 
   def test_total_filtered_rows_matches_full_table_when_no_filter(self):
     self._seed_table(n_rows=7)
-    _cols, _rows, total = self.db.fetch_paginated('u1', limit=2, offset=0)
+    _cols, _rows, total, _ = self.db.fetch_paginated('u1', limit=2, offset=0)
     # Page is 2 rows, but totalFilteredRows is the full materialized count.
     self.assertEqual(total, 7)
 
@@ -889,7 +889,7 @@ class FetchPaginatedTest(_DbCase):
     self._seed_table(n_rows=10)
     # value > 6 (matches 7, 8, 9) ordered DESC → [9, 8, 7].
     filter_str = '[{"field":"value","op":">","value":"6"}]'
-    _cols, rows, total = self.db.fetch_paginated(
+    _cols, rows, total, _ = self.db.fetch_paginated(
         'u1',
         limit=10,
         offset=0,
@@ -897,7 +897,7 @@ class FetchPaginatedTest(_DbCase):
         filter_str=filter_str,
     )
     self.assertEqual(total, 3)
-    self.assertEqual([r[1] for r in rows], [9, 8, 7])
+    self.assertEqual([r[2] for r in rows], [9, 8, 7])
 
   def test_missing_table_raises_catalog_exception(self):
     # The handler maps CatalogException to 404 NOT_FOUND.

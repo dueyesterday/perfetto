@@ -744,14 +744,29 @@ class MetadataSidecarTest(unittest.TestCase):
     # Response columns = result table columns only.
     cols, rows, total, available = self._db.fetch_paginated(
         self._uuid, limit=100, offset=0)
-    self.assertEqual(cols, ['trace_id', 'name', 'dur'])
+    self.assertEqual(cols, ['_row_id', 'trace_id', 'name', 'dur'])
     self.assertEqual(total, 3)
     self.assertEqual(len(rows), 3)
     # availableColumnNames lists the union — result + sidecar — so the
     # UI can offer sidecar cols even when the current projection
     # doesn't include them.
     self.assertEqual(
-        set(available), {'trace_id', 'name', 'dur', 'file_name', 'size_bytes'})
+        set(available),
+        {'_row_id', 'trace_id', 'name', 'dur', 'file_name', 'size_bytes'})
+
+  def test_row_id_numbers_rows_across_merges(self):
+    # `_row_id` continues across merges: trace 'a' contributed rows
+    # 1-2, trace 'b' row 3, regardless of page order.
+    cols, rows, _, _ = self._db.fetch_paginated(
+        self._uuid,
+        limit=100,
+        offset=0,
+        order_by='_row_id asc',
+        projected_columns=['_row_id', 'name'],
+    )
+    self.assertEqual(cols, ['_row_id', 'name'])
+    self.assertEqual([list(r) for r in rows],
+                     [[1, 'evt1'], [2, 'evt2'], [3, 'evt3']])
 
   def test_projection_to_result_columns_only(self):
     cols, rows, _, _ = self._db.fetch_paginated(
