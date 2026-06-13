@@ -23,7 +23,7 @@ import {initLiveReload} from '../core/live_reload';
 import {settingsStorage} from './settings/settings_storage';
 import {ThemeProvider} from '../frontend/theme_provider';
 import {OverlayContainer} from '../widgets/overlay_container';
-import {BigtraceWorkspace} from './pages/workspace_tree';
+import {BigtraceWorkspace, openBigtraceSettings} from './pages/workspace_tree';
 import {bigTraceSettingsStorage} from './settings/bigtrace_settings_storage';
 import {Topbar} from './layout/topbar';
 import {BigTraceApp as BigTraceAppSingleton} from './bigtrace_app';
@@ -191,6 +191,18 @@ function registerCommands() {
     name: 'Open command palette',
     callback: () => app.omnibox.setMode(OmniboxMode.Command),
     defaultHotkey: '!Mod+Shift+P',
+  });
+
+  app.commands.registerCommand({
+    id: 'bigtrace.GeneralSettings',
+    name: 'General settings',
+    callback: () => openBigtraceSettings('general'),
+  });
+
+  app.commands.registerCommand({
+    id: 'bigtrace.DefaultTraceSettings',
+    name: 'Default trace settings',
+    callback: () => openBigtraceSettings('trace'),
   });
 
   app.commands.registerCommand({

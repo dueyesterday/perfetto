@@ -1244,12 +1244,14 @@ pre.pf-bt-history-item-query--standalone {
   }
 }
 
-// ---------- Single-page workspace (tree + content pane) ----------
-// A persistent expandable connector-line tree on the left over a command-deck
-// backdrop; a solid content pane on the right. Single page, left -> right.
+// ---------- Workflow graph (single page) ----------
+// The query workflow as a left-to-right flow of connected stage nodes:
+//   History ─▶ Trace selection ─▶ SQL editor ─▶ Results
+// over a command-deck backdrop. History + Trace selection collapse to a slim
+// node; editor + results stay open and flex to fill.
 
-// Full-bleed: the workspace owns its backdrop (drop the floating-card chrome).
-.pf-ui-main__page-container:has(.pf-bt-workspace) {
+// Full-bleed: the workspace owns its backdrop.
+.pf-ui-main__page-container:has(.pf-bt-flow) {
   margin: 0;
   border: none;
   border-radius: 0;
@@ -1257,322 +1259,235 @@ pre.pf-bt-history-item-query--standalone {
   background: transparent;
 }
 
-.pf-bt-workspace {
+.pf-bt-flow {
+  display: flex;
+  align-items: stretch;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  // Command-deck: a faint accent aurora rising from the top-left.
+  padding: 12px;
+  gap: 0;
+  box-sizing: border-box;
   background:
     radial-gradient(
-      1200px 620px at 15% -12%,
-      color-mix(in srgb, var(--pf-color-accent) 16%, transparent),
+      1300px 640px at 12% -12%,
+      color-mix(in srgb, var(--pf-color-accent) 15%, transparent),
       transparent 60%
     ),
     var(--pf-color-desktop);
 }
 
-// ----- Tree (left) -----
+// ----- Stage node -----
 
-.pf-bt-tree {
-  height: 100%;
-  overflow-y: auto;
-  padding: 12px 10px 18px;
-  box-sizing: border-box;
+.pf-bt-flownode {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--pf-border-radius-large);
+  border: 1px solid var(--pf-glass-border);
+  background: var(--pf-glass-bg);
+  backdrop-filter: blur(var(--pf-glass-blur)) saturate(var(--pf-glass-saturate));
+  box-shadow: var(--pf-shadow-1);
 }
 
-.pf-bt-tree__node {
-  position: relative;
+// History + Trace selection: fixed-ish, content-sized. Editor + Results grow.
+.pf-bt-flownode--history {
+  flex: 0 0 300px;
+}
+.pf-bt-flownode--scope {
+  flex: 0 0 300px;
+}
+.pf-bt-flownode--editor {
+  flex: 1 1 0;
+  min-width: 360px;
+  // Data surface: solid for legibility.
+  background: var(--pf-color-background);
+  backdrop-filter: none;
+}
+.pf-bt-flownode--results {
+  flex: 1.25 1 0;
+  min-width: 380px;
+  background: var(--pf-color-background);
+  backdrop-filter: none;
+}
+
+.pf-bt-flownode__header {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--pf-border-radius);
-  background: transparent;
-  color: var(--pf-color-text);
-  font: inherit;
-  font-size: var(--pf-font-size-m);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease,
-    box-shadow 0.12s ease;
-
-  &:hover {
-    background: color-mix(in srgb, var(--pf-color-accent) 9%, transparent);
-    border-color: color-mix(in srgb, var(--pf-color-accent) 22%, transparent);
-  }
-}
-
-// Selected leaf: accent glass fill + spine + outer glow.
-.pf-bt-tree__node--selected,
-.pf-bt-tree__node--selected:hover {
-  background: color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
-  border-color: color-mix(in srgb, var(--pf-color-accent) 45%, transparent);
-  box-shadow:
-    inset 3px 0 0 var(--pf-color-accent),
-    0 0 16px color-mix(in srgb, var(--pf-color-accent) 24%, transparent);
-}
-
-.pf-bt-tree__twisty {
-  color: var(--pf-color-text-muted);
-  flex-shrink: 0;
-  font-size: 18px;
-}
-
-// Keep leaf icons aligned with branch icons (which sit after a twisty).
-.pf-bt-tree__twisty-spacer {
-  width: 18px;
+  padding: 9px 10px 9px 13px;
+  border-bottom: 1px solid var(--pf-glass-border);
   flex-shrink: 0;
 }
 
-.pf-bt-tree__node-icon {
-  color: var(--pf-color-text-muted);
-  flex-shrink: 0;
-  transition: color 0.12s ease;
-}
-
-.pf-bt-tree__node--selected .pf-bt-tree__node-icon {
+.pf-bt-flownode__hicon {
   color: var(--pf-color-accent);
+  flex-shrink: 0;
   filter: drop-shadow(
-    0 0 6px color-mix(in srgb, var(--pf-color-accent) 60%, transparent)
+    0 0 6px color-mix(in srgb, var(--pf-color-accent) 45%, transparent)
   );
 }
 
-.pf-bt-tree__node-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pf-bt-tree__node--selected .pf-bt-tree__node-label {
-  color: color-mix(in srgb, var(--pf-color-accent) 88%, var(--pf-color-text));
-  text-shadow: 0 0 14px
-    color-mix(in srgb, var(--pf-color-accent) 35%, transparent);
-}
-
-.pf-bt-tree__badge {
-  font-size: var(--pf-font-size-xs);
-  font-variant-numeric: tabular-nums;
-  font-family: var(--pf-font-monospace);
-  color: var(--pf-color-text-muted);
-  background: color-mix(in srgb, var(--pf-color-accent) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--pf-color-accent) 24%, transparent);
-  border-radius: 100px;
-  padding: 1px 8px;
-  flex-shrink: 0;
-}
-
-.pf-bt-tree__node--selected .pf-bt-tree__badge {
-  color: color-mix(in srgb, var(--pf-color-accent) 92%, var(--pf-color-text));
-  background: color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
-  border-color: color-mix(in srgb, var(--pf-color-accent) 50%, transparent);
-}
-
-// ----- Connector lines (what makes it read as a tree) -----
-
-.pf-bt-tree__children {
-  position: relative;
-  margin-left: 20px;
-  padding-left: 12px;
-}
-
-// Vertical rail; stops near the last child's center so it doesn't dangle.
-.pf-bt-tree__children::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: -3px;
-  bottom: 18px;
-  width: 1px;
-  background: color-mix(in srgb, var(--pf-color-accent) 38%, var(--pf-color-border));
-}
-
-// Horizontal tick from the rail to each child node.
-.pf-bt-tree__children > .pf-bt-tree__node::after {
-  content: '';
-  position: absolute;
-  left: -12px;
-  top: 50%;
-  width: 12px;
-  height: 1px;
-  background: color-mix(in srgb, var(--pf-color-accent) 38%, var(--pf-color-border));
-}
-
-// A selected child lights its tick + rail segment.
-.pf-bt-tree__children > .pf-bt-tree__node--selected::after {
-  background: var(--pf-color-accent);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--pf-color-accent) 60%, transparent);
-}
-
-// Run / status dot on a history node.
-.pf-bt-tree__run-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--pf-color-neutral);
-
-  &.pf-bt-status-success {
-    background: var(--pf-color-success);
-  }
-  &.pf-bt-status-failed {
-    background: var(--pf-color-danger);
-  }
-  &.pf-bt-status-in-progress,
-  &.pf-bt-status-unknown {
-    background: var(--pf-color-accent);
-    box-shadow: 0 0 8px
-      color-mix(in srgb, var(--pf-color-accent) 70%, transparent);
-    animation: pf-bt-live-pulse 1.4s ease-in-out infinite;
-  }
-}
-
-.pf-bt-tree__run-rows {
-  font-size: var(--pf-font-size-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--pf-color-text-muted);
-  flex-shrink: 0;
-}
-
-.pf-bt-tree__node--action {
-  color: var(--pf-color-text-muted);
-}
-
-.pf-bt-tree__search {
-  padding: 2px 2px 6px;
-}
-
-.pf-bt-tree__note {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  color: var(--pf-color-text-muted);
-  font-size: var(--pf-font-size-s);
-}
-
-.pf-bt-tree__node-close {
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.1s ease;
-}
-
-.pf-bt-tree__node:hover .pf-bt-tree__node-close,
-.pf-bt-tree__node--selected .pf-bt-tree__node-close {
-  opacity: 0.65;
-
-  &:hover {
-    opacity: 1;
-  }
-}
-
-// ----- Content pane (right) -----
-
-.pf-bt-workspace__content {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  background: var(--pf-color-background);
-  border-left: 1px solid var(--pf-glass-border);
-}
-
-.pf-bt-workspace__content--pad {
-  padding: 22px 26px;
-  overflow-y: auto;
-}
-
-.pf-bt-workspace__content--settings {
-  overflow: hidden;
-}
-
-.pf-bt-workspace__content--settings .pf-bt-settings-embedded {
-  flex: 1;
-  min-height: 0;
-  height: auto;
-}
-
-.pf-bt-content-header {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 16px;
-
-  h2 {
-    margin: 0;
-    font-size: var(--pf-font-size-xl);
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-}
-
-.pf-bt-content-header--settings {
-  padding: 18px 24px 0;
-  margin-bottom: 0;
-}
-
-.pf-bt-content-sub {
-  color: var(--pf-color-text-muted);
-  font-size: var(--pf-font-size-s);
-}
-
-.pf-bt-workspace__content .pf-bt-editor-tab {
-  height: 100%;
-}
-
-// ----- "Ran with" strip (in the query content) -----
-
-.pf-bt-ranwith {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 14px;
-  font-size: var(--pf-font-size-s);
-  color: var(--pf-color-text-muted);
-  border-bottom: 1px solid var(--pf-color-border-secondary);
-  background: color-mix(in srgb, var(--pf-color-accent) 5%, transparent);
-}
-
-.pf-bt-ranwith--clickable {
-  cursor: pointer;
-
-  &:hover {
-    background: color-mix(in srgb, var(--pf-color-accent) 10%, transparent);
-  }
-}
-
-.pf-bt-ranwith__key {
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
+.pf-bt-flownode__title {
   font-size: var(--pf-font-size-xs);
   font-weight: 700;
-  color: var(--pf-color-text-muted);
-}
-
-.pf-bt-ranwith__chip {
-  font-family: var(--pf-font-monospace);
-  font-size: var(--pf-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
   color: var(--pf-color-text);
-  background: var(--pf-color-background-secondary);
-  border: 1px solid var(--pf-color-border-secondary);
-  border-radius: 100px;
-  padding: 1px 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.pf-bt-ranwith__edit {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--pf-color-accent);
+.pf-bt-flownode__badge {
+  font-size: var(--pf-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--pf-font-monospace);
+  color: color-mix(in srgb, var(--pf-color-accent) 92%, var(--pf-color-text));
+  background: color-mix(in srgb, var(--pf-color-accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pf-color-accent) 32%, transparent);
+  border-radius: 100px;
+  padding: 1px 8px;
+}
 
-  .pf-icon {
-    font-size: 16px;
+.pf-bt-flownode__collapse {
+  margin-left: auto;
+}
+
+.pf-bt-flownode__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+// Collapsed slim node — a vertical strip you click to expand.
+.pf-bt-flownode--collapsed {
+  flex: 0 0 46px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 12px 0;
+  cursor: pointer;
+  background: var(--pf-glass-bg);
+  color: var(--pf-color-text-muted);
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease;
+
+  &:hover {
+    color: var(--pf-color-text);
+    border-color: color-mix(in srgb, var(--pf-color-accent) 40%, transparent);
   }
+}
+
+.pf-bt-flownode__cicon {
+  color: var(--pf-color-accent);
+  flex-shrink: 0;
+}
+
+.pf-bt-flownode__vtitle {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: var(--pf-font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.pf-bt-flownode__cbadge {
+  writing-mode: vertical-rl;
+  font-size: var(--pf-font-size-xs);
+  font-family: var(--pf-font-monospace);
+  color: var(--pf-color-accent);
+}
+
+// ----- Connector edge between nodes -----
+
+.pf-bt-flow__edge {
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  svg {
+    overflow: visible;
+  }
+}
+
+.pf-bt-flow__edge-line {
+  fill: none;
+  stroke: color-mix(in srgb, var(--pf-color-accent) 55%, var(--pf-color-border));
+  stroke-width: 1.5;
+}
+
+.pf-bt-flow__edge-arrow {
+  fill: none;
+  stroke: color-mix(in srgb, var(--pf-color-accent) 70%, var(--pf-color-border));
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.pf-bt-flow__edge--live .pf-bt-flow__edge-line,
+.pf-bt-flow__edge--live .pf-bt-flow__edge-arrow {
+  stroke: var(--pf-color-accent);
+  filter: drop-shadow(
+    0 0 5px color-mix(in srgb, var(--pf-color-accent) 60%, transparent)
+  );
+  animation: pf-bt-live-pulse 1.4s ease-in-out infinite;
+}
+
+// ----- Node bodies -----
+
+.pf-bt-flow__scope {
+  padding: 10px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pf-bt-flow__scope-more {
+  align-self: flex-start;
+}
+
+.pf-bt-flow__empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pf-color-text-muted);
+  font-size: var(--pf-font-size-s);
+  padding: 24px;
+  text-align: center;
+}
+
+// History node hosts the shared run-card list; make it fill.
+.pf-bt-flow__history {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+// Editor tabs + the editor/results panels fill their nodes.
+.pf-bt-flow__editor-tabs {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pf-bt-flownode--editor .pf-bt-query-page__editor-panel,
+.pf-bt-flownode--results .pf-bt-results-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+// The settings modal hosts the full SettingsPage.
+.pf-bt-settings-modal {
+  width: min(880px, 88vw);
+  max-height: 76vh;
+  overflow: auto;
 }

@@ -12,49 +12,63 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The whole BigTrace UI as a single page: a persistent expandable tree on the
-// left + a stable content pane on the right. The tree (Queries / History /
-// Scope / Schemas / Settings) is always visible and branches with connector
-// lines, so history and run-config stay reachable while you work on a query.
-// Selecting a leaf loads it into the content pane; expanding a branch reveals
-// its children inline (it does NOT swap the content).
+// The whole BigTrace UI as a single page: the query WORKFLOW drawn as a
+// left-to-right flow of connected nodes, each node a stage that holds its own
+// content —
+//
+//   History ──▶ Trace selection ──▶ SQL editor ──▶ Results
+//
+// History (left) is the log of past runs; clicking one reloads the pipeline.
+// Trace selection scopes which traces the query runs over. SQL editor holds the
+// query tabs + editor. Results streams the rows. History + Trace selection can
+// collapse to a slim node; editor + results stay open. General / default-trace
+// settings live on the topbar button + commands, not in the graph.
 
 import m from 'mithril';
 import {Button} from '../../widgets/button';
 import {Icon} from '../../widgets/icon';
 import {Spinner} from '../../widgets/spinner';
-import {EmptyState} from '../../widgets/empty_state';
-import {TextInput} from '../../widgets/text_input';
-import {SplitPanel} from '../../widgets/split_panel';
+import {Tabs, type TabsTab} from '../../widgets/tabs';
 import {showModal} from '../../widgets/modal';
 import {QueryRunner} from '../query/query_runner';
 import {QueryTabsState, effectiveTabSettings} from './query_tabs_state';
 import type {BigTraceEditorTab} from './query_tabs_state';
-import {EditorTabView, buildTabBindings} from './editor_tab_view';
+import {
+  buildTabBindings,
+  ensureTabWired,
+  renderEditorPanel,
+} from './editor_tab_view';
+import {renderResultsPanel} from './results_panel';
 import {BigtraceSettingsBar} from './bigtrace_settings_bar';
-import {TableList} from '../query/table_list';
-import {sqlTablesLoader} from '../query/sql_tables';
+import {QueryHistoryComponent} from '../query/query_history';
 import {scopeCount} from '../query/scope_count';
 import {queryState} from '../query/query_state';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {SettingsPage} from './settings_page';
 import {historyStore} from '../query/history_store';
-import {formatCompact, statusDisplayLabel} from '../query/query_store';
-import type {QueryExecution} from '../query/query_store';
 
 interface WorkspaceAttrs {
   useBigtraceBackend?: boolean;
 }
 
-// The content pane shows exactly one of these at a time.
-type ContentKind = 'query' | 'scope' | 'schemas' | 'settings';
+// Opens the global settings (general + default trace settings) as a modal —
+// invoked from the topbar button and the ⌘K commands. `focus` only retitles;
+// the page shows every section.
+export function openBigtraceSettings(focus?: 'general' | 'trace'): void {
+  const title =
+    focus === 'trace'
+      ? 'Default trace settings'
+      : focus === 'general'
+        ? 'General settings'
+        : 'BigTrace settings';
+  showModal({
+    title,
+    content: () => m('.pf-bt-settings-modal', m(SettingsPage)),
+    buttons: [{text: 'Done'}],
+  });
+}
 
-// Lets the topbar connection badge open the global Settings in the content
-// pane (single-page: there's no Settings route to navigate to anymore).
-export let openBigtraceSettings: (() => void) | undefined;
-
-// How many recent runs to surface inline under the History branch.
-const HISTORY_PREVIEW = 12;
+type CollapsibleId = 'history' | 'scope';
 
 export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
   private useBigtraceBackend = false;
@@ -68,14 +82,12 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
     markDirty: () => this.tabsState.markDirty(),
   });
 
-  // Which branches are expanded in the tree.
-  private expanded: Record<'queries' | 'history', boolean> = {
-    queries: true,
+  // History starts slim (browse on demand); Trace selection starts open since
+  // its scope summary is useful at a glance.
+  private collapsed: Record<CollapsibleId, boolean> = {
     history: true,
+    scope: false,
   };
-  // What the content pane shows.
-  private content: {kind: ContentKind; queryId?: string} = {kind: 'query'};
-  private historySearch = '';
 
   private readonly openQuery = async (
     query: string,
@@ -94,8 +106,6 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
       forceNew,
     );
     this.tabsState.activeTabId = tab.id;
-    this.content = {kind: 'query', queryId: tab.id};
-    this.expanded.queries = true;
     this.tabsState.markDirty();
     if (startTime !== undefined && tab.execution) {
       tab.execution.startTime = startTime;
@@ -108,327 +118,138 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
     if (this.useBigtraceBackend) {
       bigTraceSettingsStorage.loadSettings();
     }
-    sqlTablesLoader.load();
     historyStore.requestRefresh(this.historyRefreshSignal);
-    openBigtraceSettings = () => {
-      this.content = {kind: 'settings'};
-      m.redraw();
-    };
-  }
-
-  onremove() {
-    openBigtraceSettings = undefined;
   }
 
   view(): m.Children {
     this.consumeInitialQuery();
-    // Keep the Scope badge / panel live off the active query's filter.
-    const activeTab = this.currentQueryTab();
-    if (activeTab) {
-      scopeCount.request(effectiveTabSettings(activeTab), activeTab.traceFilters);
+    const tab = this.tabsState.getActiveTab();
+    if (tab) {
+      ensureTabWired(tab, this.runner);
+      scopeCount.request(effectiveTabSettings(tab), tab.traceFilters);
     }
 
-    return m(
-      '.pf-bt-workspace',
-      m(SplitPanel, {
-        direction: 'horizontal',
-        initialSplit: {percent: 23},
-        controlledPanel: 'first',
-        minSize: 260,
-        firstPanel: this.renderTree(),
-        secondPanel: this.renderContent(),
-      }),
-    );
-  }
-
-  // ----- Tree (left) -----
-
-  private renderTree(): m.Children {
-    return m('.pf-bt-tree', [
-      this.renderBranch(
-        'queries',
-        'Queries',
-        'code',
-        String(this.tabsState.tabs.length),
-        () => this.renderQueryChildren(),
-      ),
-      this.renderBranch('history', 'History', 'history', undefined, () =>
-        this.renderHistoryChildren(),
-      ),
-      this.renderLeaf('scope', 'Scope', 'tune', this.scopeBadge()),
-      this.renderLeaf('schemas', 'Schemas', 'schema', this.schemasBadge()),
-      this.renderLeaf('settings', 'Settings', 'settings', undefined),
+    return m('.pf-bt-flow', [
+      this.renderHistoryNode(),
+      this.edge(),
+      this.renderScopeNode(tab),
+      this.edge(),
+      this.renderEditorNode(),
+      this.edge(true),
+      this.renderResultsNode(tab),
     ]);
   }
 
-  private renderBranch(
-    key: 'queries' | 'history',
-    label: string,
-    icon: string,
-    badge: m.Children,
-    children: () => m.Children,
-  ): m.Children {
-    const open = this.expanded[key];
-    return m('.pf-bt-tree__branch', [
-      m(
-        'button.pf-bt-tree__node.pf-bt-tree__node--branch',
-        {
-          className: open ? 'pf-bt-tree__node--open' : '',
-          onclick: () => {
-            this.expanded[key] = !this.expanded[key];
-          },
-        },
-        m(Icon, {
-          className: 'pf-bt-tree__twisty',
-          icon: open ? 'expand_more' : 'chevron_right',
-        }),
-        m(Icon, {className: 'pf-bt-tree__node-icon', icon}),
-        m('span.pf-bt-tree__node-label', label),
-        badge !== undefined && m('span.pf-bt-tree__badge', badge),
-      ),
-      open && m('.pf-bt-tree__children', children()),
-    ]);
-  }
+  // ----- Flow scaffolding -----
 
-  private renderLeaf(
-    kind: ContentKind,
-    label: string,
-    icon: string,
-    badge: m.Children,
-  ): m.Children {
-    const selected = this.content.kind === kind;
+  // A connector between two stage nodes: a curved accent line + arrowhead,
+  // vertically centred. `live` adds the streaming pulse on the edge feeding
+  // Results.
+  private edge(live = false): m.Children {
     return m(
-      'button.pf-bt-tree__node.pf-bt-tree__node--leaf',
-      {
-        className: selected ? 'pf-bt-tree__node--selected' : '',
-        onclick: () => {
-          this.content = {kind};
-        },
-      },
-      m('span.pf-bt-tree__twisty-spacer'),
-      m(Icon, {className: 'pf-bt-tree__node-icon', icon}),
-      m('span.pf-bt-tree__node-label', label),
-      badge !== undefined && m('span.pf-bt-tree__badge', badge),
-    );
-  }
-
-  private renderQueryChildren(): m.Children {
-    const activeId =
-      this.content.kind === 'query' ? this.currentQueryTab()?.id : undefined;
-    return [
-      ...this.tabsState.tabs.map((tab) =>
-        this.renderQueryNode(tab, activeId),
-      ),
+      '.pf-bt-flow__edge',
+      {className: live ? 'pf-bt-flow__edge--live' : ''},
       m(
-        'button.pf-bt-tree__node.pf-bt-tree__node--child.pf-bt-tree__node--action',
-        {
-          onclick: () => {
-            const tab = this.tabsState.addNewTab();
-            this.content = {kind: 'query', queryId: tab.id};
-            this.tabsState.activeTabId = tab.id;
-          },
-        },
-        m(Icon, {className: 'pf-bt-tree__node-icon', icon: 'add'}),
-        m('span.pf-bt-tree__node-label', 'New query'),
-      ),
-    ];
-  }
-
-  private renderQueryNode(
-    tab: BigTraceEditorTab,
-    activeId: string | undefined,
-  ): m.Children {
-    const selected = tab.id === activeId;
-    return m(
-      'button.pf-bt-tree__node.pf-bt-tree__node--child',
-      {
-        className: selected ? 'pf-bt-tree__node--selected' : '',
-        onclick: () => {
-          this.content = {kind: 'query', queryId: tab.id};
-          this.tabsState.activeTabId = tab.id;
-          this.tabsState.markDirty();
-        },
-      },
-      m(Icon, {
-        className: 'pf-bt-tree__node-icon',
-        icon: tab.isLoading ? 'progress_activity' : 'code',
-      }),
-      m('span.pf-bt-tree__node-label', tab.title),
-      this.tabsState.tabs.length > 1 &&
-        m(Button, {
-          icon: 'close',
-          className: 'pf-bt-tree__node-close',
-          title: 'Close query',
-          onclick: (e: Event) => {
-            e.stopPropagation();
-            void this.closeQuery(tab);
-          },
+        'svg',
+        {width: 34, height: 22, viewBox: '0 0 34 22'},
+        m('path.pf-bt-flow__edge-line', {
+          d: 'M0,11 C12,11 20,11 31,11',
         }),
-    );
-  }
-
-  private renderHistoryChildren(): m.Children {
-    if (historyStore.isLoading && historyStore.history.length === 0) {
-      return m('.pf-bt-tree__note', m(Spinner), ' Loading runs…');
-    }
-    if (historyStore.error) {
-      return m('.pf-bt-tree__note', 'Failed to load runs');
-    }
-    const all = historyStore.history;
-    const q = this.historySearch.trim().toLowerCase();
-    const filtered = q
-      ? all.filter((h) => (h.perfettoSql || '').toLowerCase().includes(q))
-      : all;
-    if (all.length === 0) {
-      return m('.pf-bt-tree__note', 'No runs yet');
-    }
-    return [
-      m(
-        '.pf-bt-tree__search',
-        m(TextInput, {
-          leftIcon: 'search',
-          placeholder: 'Search runs…',
-          value: this.historySearch,
-          onInput: (v: string) => {
-            this.historySearch = v;
-          },
-        }),
-      ),
-      ...filtered.slice(0, HISTORY_PREVIEW).map((e) => this.renderRunNode(e)),
-      filtered.length > HISTORY_PREVIEW &&
-        m(
-          '.pf-bt-tree__note',
-          `+${filtered.length - HISTORY_PREVIEW} more — refine the search`,
-        ),
-    ];
-  }
-
-  private renderRunNode(entry: QueryExecution): m.Children {
-    const status = (entry.status ?? 'UNKNOWN').toLowerCase().replace(/_/g, '-');
-    const sql = (entry.perfettoSql || '(empty)').replace(/\s+/g, ' ').trim();
-    return m(
-      'button.pf-bt-tree__node.pf-bt-tree__node--child.pf-bt-tree__node--run',
-      {
-        title: `${statusDisplayLabel(entry.status ?? 'UNKNOWN')} · ${sql}`,
-        onclick: () => {
-          if (!entry.uuid) return;
-          void this.openQuery(
-            entry.perfettoSql || '',
-            entry.uuid,
-            Boolean(entry.materialized),
-            false,
-            entry.limit,
-            entry.startTime,
-          );
-        },
-      },
-      m('span.pf-bt-tree__run-dot', {
-        className: `pf-bt-status-${status}`,
-      }),
-      m('span.pf-bt-tree__node-label', sql),
-      m(
-        'span.pf-bt-tree__run-rows',
-        formatCompact(entry.processedRows ?? 0),
+        m('path.pf-bt-flow__edge-arrow', {d: 'M26,6 L33,11 L26,16'}),
       ),
     );
   }
 
-  private async closeQuery(tab: BigTraceEditorTab): Promise<void> {
-    if (this.tabsState.tabs.length <= 1) return;
-    if (tab.isLoading && !tab.materialize) {
-      let confirmed = false;
-      await showModal({
-        title: 'Close query?',
-        content: m(
-          'div',
-          'A query is still running. Closing it will lose the results.',
-        ),
-        buttons: [
-          {text: 'Keep open'},
-          {
-            text: 'Close',
-            primary: true,
-            action: () => {
-              confirmed = true;
-            },
-          },
-        ],
-      });
-      if (!confirmed) return;
-    }
-    this.tabsState.closeTab(tab.id);
-    const next = this.currentQueryTab();
-    this.content = {kind: 'query', queryId: next?.id};
-    m.redraw();
-  }
-
-  // ----- Content pane (right) -----
-
-  private renderContent(): m.Children {
-    switch (this.content.kind) {
-      case 'query':
-        return this.renderQueryContent();
-      case 'scope':
-        return this.renderScopeContent();
-      case 'schemas':
-        return this.renderSchemasContent();
-      case 'settings':
-        return m('.pf-bt-workspace__content.pf-bt-workspace__content--settings', [
-          m('.pf-bt-content-header', m('h2', 'Settings'), m(
-            'span.pf-bt-content-sub',
-            'Defaults applied to new queries.',
-          )),
-          m('.pf-bt-settings-embedded', m(SettingsPage)),
-        ]);
-    }
-  }
-
-  private renderQueryContent(): m.Children {
-    const tab = this.currentQueryTab();
-    if (!tab) {
+  private node(opts: {
+    id: CollapsibleId | 'editor' | 'results';
+    icon: string;
+    title: string;
+    badge?: m.Children;
+    collapsible?: boolean;
+    className?: string;
+    body: m.Children;
+  }): m.Children {
+    const collapsible = opts.collapsible ?? false;
+    const collapsed =
+      collapsible && this.collapsed[opts.id as CollapsibleId];
+    if (collapsed) {
       return m(
-        '.pf-bt-workspace__content',
-        m(EmptyState, {title: 'No query selected', icon: 'code'}),
+        'button.pf-bt-flownode.pf-bt-flownode--collapsed',
+        {
+          className: opts.className,
+          title: `Expand ${opts.title}`,
+          onclick: () => (this.collapsed[opts.id as CollapsibleId] = false),
+        },
+        m(Icon, {className: 'pf-bt-flownode__cicon', icon: opts.icon}),
+        m('span.pf-bt-flownode__vtitle', opts.title),
+        opts.badge !== undefined &&
+          m('span.pf-bt-flownode__cbadge', opts.badge),
       );
     }
     return m(
-      '.pf-bt-workspace__content',
-      m(EditorTabView, {
-        key: tab.id,
-        tab,
-        tabsState: this.tabsState,
-        runner: this.runner,
-        useBigtraceBackend: this.useBigtraceBackend,
-        onOpenScope: () => {
-          this.content = {kind: 'scope'};
-        },
-      }),
+      '.pf-bt-flownode',
+      {className: opts.className},
+      m(
+        '.pf-bt-flownode__header',
+        m(Icon, {className: 'pf-bt-flownode__hicon', icon: opts.icon}),
+        m('span.pf-bt-flownode__title', opts.title),
+        opts.badge !== undefined &&
+          m('span.pf-bt-flownode__badge', opts.badge),
+        collapsible &&
+          m(Button, {
+            icon: 'left_panel_close',
+            className: 'pf-bt-flownode__collapse',
+            title: `Collapse ${opts.title}`,
+            onclick: () => (this.collapsed[opts.id as CollapsibleId] = true),
+          }),
+      ),
+      m('.pf-bt-flownode__body', opts.body),
     );
   }
 
-  private renderScopeContent(): m.Children {
-    const tab = this.currentQueryTab();
-    return m(
-      '.pf-bt-workspace__content.pf-bt-workspace__content--pad',
-      m(
-        '.pf-bt-content-header',
-        m('h2', 'Scope'),
-        m(
-          'span.pf-bt-content-sub',
-          'Which traces the active query runs over.',
-        ),
-      ),
-      tab
-        ? [
+  // ----- Stage nodes -----
+
+  private renderHistoryNode(): m.Children {
+    return this.node({
+      id: 'history',
+      icon: 'history',
+      title: 'History',
+      collapsible: true,
+      className: 'pf-bt-flownode--history',
+      body: m(QueryHistoryComponent, {
+        className: 'pf-bt-flow__history',
+        refreshSignal: this.historyRefreshSignal,
+        openQuery: this.openQuery,
+      }),
+    });
+  }
+
+  private renderScopeNode(tab: BigTraceEditorTab | undefined): m.Children {
+    const badge = scopeCount.matched?.toLocaleString();
+    return this.node({
+      id: 'scope',
+      icon: 'tune',
+      title: 'Trace selection',
+      badge,
+      collapsible: true,
+      className: 'pf-bt-flownode--scope',
+      body: tab
+        ? m('.pf-bt-flow__scope', [
             this.renderScopeCount(tab),
             m(BigtraceSettingsBar, {
               tab,
               tabsState: this.tabsState,
               bindings: buildTabBindings(tab, this.tabsState),
             }),
-          ]
-        : m(EmptyState, {title: 'No active query', icon: 'tune'}),
-    );
+            m(Button, {
+              icon: 'open_in_full',
+              label: 'Default trace settings',
+              className: 'pf-bt-flow__scope-more',
+              onclick: () => openBigtraceSettings('trace'),
+            }),
+          ])
+        : m('.pf-bt-flow__empty', 'No active query'),
+    });
   }
 
   private renderScopeCount(tab: BigTraceEditorTab): m.Children {
@@ -459,54 +280,82 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
     );
   }
 
-  private renderSchemasContent(): m.Children {
-    let body: m.Children;
-    if (sqlTablesLoader.loadError) {
-      body = m(EmptyState, {
-        title: `Failed to load: ${sqlTablesLoader.loadError}`,
-        icon: 'error',
+  private renderEditorNode(): m.Children {
+    const editorTabs: TabsTab[] = this.tabsState.tabs.map((tab) => ({
+      key: tab.id,
+      title: tab.title,
+      leftIcon: tab.isLoading ? 'progress_activity' : 'code',
+      closeButton: this.tabsState.tabs.length > 1,
+      content: renderEditorPanel(
+        tab,
+        this.tabsState,
+        this.runner,
+        this.useBigtraceBackend,
+      ),
+    }));
+
+    return this.node({
+      id: 'editor',
+      icon: 'code',
+      title: 'SQL editor',
+      className: 'pf-bt-flownode--editor',
+      body: m(Tabs, {
+        className: 'pf-bt-flow__editor-tabs',
+        tabs: editorTabs,
+        activeTabKey: this.tabsState.activeTabId,
+        reorderable: true,
+        onTabChange: (key) => {
+          this.tabsState.activeTabId = key;
+          this.tabsState.markDirty();
+        },
+        onTabRename: (key, title) => this.tabsState.renameTab(key, title),
+        onTabClose: async (key) => this.closeTab(key),
+        onTabReorder: (dragged, before) =>
+          this.tabsState.reorderTab(dragged, before),
+        newTabContent: m(Button, {
+          icon: 'add',
+          className: 'pf-tabs__new-tab-btn',
+          title: 'New query',
+          onclick: () => this.tabsState.addNewTab(),
+        }),
+      }),
+    });
+  }
+
+  private renderResultsNode(tab: BigTraceEditorTab | undefined): m.Children {
+    return this.node({
+      id: 'results',
+      icon: 'table_chart',
+      title: 'Results',
+      className: 'pf-bt-flownode--results',
+      body: tab
+        ? renderResultsPanel(tab, this.tabsState)
+        : m('.pf-bt-flow__empty', 'Run a query to see results'),
+    });
+  }
+
+  // ----- helpers -----
+
+  private async closeTab(key: string): Promise<void> {
+    if (this.tabsState.tabs.length <= 1) return;
+    const tab = this.tabsState.tabs.find((t) => t.id === key);
+    if (tab?.isLoading && !tab.materialize) {
+      let confirmed = false;
+      await showModal({
+        title: 'Close query?',
+        content: m(
+          'div',
+          'A query is still running. Closing this tab will lose the results.',
+        ),
+        buttons: [
+          {text: 'Keep open'},
+          {text: 'Close', primary: true, action: () => (confirmed = true)},
+        ],
       });
-    } else {
-      const modules = sqlTablesLoader.modules;
-      if (sqlTablesLoader.isLoading || !modules) {
-        body = m(
-          EmptyState,
-          {title: 'Loading…', icon: 'hourglass_empty'},
-          m(Spinner),
-        );
-      } else {
-        body = m(TableList, {
-          sqlModules: modules,
-          onQueryTable: (tableName: string, query: string) => {
-            const tab = this.tabsState.addNewTab(tableName, query);
-            this.content = {kind: 'query', queryId: tab.id};
-            this.tabsState.activeTabId = tab.id;
-          },
-        });
-      }
+      if (!confirmed) return;
     }
-    return m('.pf-bt-workspace__content', body);
-  }
-
-  // ----- Badges / helpers -----
-
-  private scopeBadge(): m.Children {
-    const c = scopeCount.matched;
-    return c === undefined ? undefined : c.toLocaleString();
-  }
-
-  private schemasBadge(): m.Children {
-    const modules = sqlTablesLoader.modules;
-    if (!modules || sqlTablesLoader.isLoading) return undefined;
-    return String(modules.listTables().length);
-  }
-
-  private currentQueryTab(): BigTraceEditorTab | undefined {
-    const byId =
-      this.content.kind === 'query'
-        ? this.tabsState.tabs.find((t) => t.id === this.content.queryId)
-        : undefined;
-    return byId ?? this.tabsState.getActiveTab();
+    this.tabsState.closeTab(key);
+    m.redraw();
   }
 
   private consumeInitialQuery(): void {
@@ -517,10 +366,8 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
     if (activeTab && activeTab.editorText.trim() === '') {
       activeTab.editorText = initialQuery;
       this.tabsState.maybeAutoNameTab(activeTab.id, initialQuery);
-      this.content = {kind: 'query', queryId: activeTab.id};
     } else {
-      const tab = this.tabsState.addNewTab(undefined, initialQuery);
-      this.content = {kind: 'query', queryId: tab.id};
+      this.tabsState.addNewTab(undefined, initialQuery);
     }
     this.tabsState.markDirty();
   }
