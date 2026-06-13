@@ -607,7 +607,7 @@
   width: 140px;
   height: 6px;
   margin-left: 6px;
-  border-radius: 2px;
+  border-radius: var(--pf-border-radius-small);
   border: 1px solid var(--pf-color-border);
   // Theme-aware track; hardcoded white rgba vanished on the light theme.
   background-color: var(--pf-color-background-secondary);
@@ -841,7 +841,7 @@ pre.pf-bt-history-item-query--standalone {
   font-family: var(--pf-font-monospace, monospace);
   background: var(--pf-color-void);
   border: solid 1px var(--pf-color-border-secondary);
-  border-radius: 4px;
+  border-radius: var(--pf-border-radius);
   padding: 8px;
   margin: 0;
   white-space: pre-wrap;
@@ -922,7 +922,7 @@ pre.pf-bt-history-item-query--standalone {
   &__highlight {
     background-color: var(--pf-color-accent);
     color: var(--pf-color-text-on-accent);
-    border-radius: 2px;
+    border-radius: var(--pf-border-radius-small);
   }
 
   &__description {
@@ -973,7 +973,7 @@ pre.pf-bt-history-item-query--standalone {
     flex-direction: column;
     margin-top: 4px;
     border: 1px solid var(--pf-color-border-secondary);
-    border-radius: 4px;
+    border-radius: var(--pf-border-radius);
     overflow: hidden;
   }
 
@@ -1061,8 +1061,9 @@ pre.pf-bt-history-item-query--standalone {
     font-weight: 600;
     margin: 0 0 16px 0;
     padding: 8px 12px;
-    background: var(--pf-minimal-background);
-    border-radius: 4px;
+    background: var(--pf-color-background-secondary);
+    border-radius: var(--pf-border-radius);
+    border-left: 3px solid var(--pf-color-accent);
   }
 
   // The settings cards live in a CardStack, but BigTraceSettingsCard wraps
@@ -1081,7 +1082,7 @@ pre.pf-bt-history-item-query--standalone {
   .pf-card-stack > .pf-card,
   .pf-card-stack > div > .pf-card {
     border: solid 1px var(--pf-color-border);
-    border-radius: 4px;
+    border-radius: var(--pf-border-radius);
   }
 }
 
