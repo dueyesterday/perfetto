@@ -1491,3 +1491,143 @@ pre.pf-bt-history-item-query--standalone {
   max-height: 76vh;
   overflow: auto;
 }
+
+// ----- Active (loaded) run card in History -----
+
+.pf-bt-run-card--active {
+  border-color: color-mix(in srgb, var(--pf-color-accent) 60%, transparent);
+  box-shadow:
+    inset 3px 0 0 var(--pf-color-accent),
+    0 0 14px color-mix(in srgb, var(--pf-color-accent) 22%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--pf-color-accent) 8%,
+    var(--pf-color-background)
+  );
+}
+
+// ----- Trace preview (in the Trace selection node) -----
+
+.pf-bt-trace-preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 4px;
+}
+
+.pf-bt-trace-preview__title {
+  font-size: var(--pf-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--pf-color-text-muted);
+  padding: 2px 2px 0;
+}
+
+.pf-bt-trace-preview__list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  max-height: 340px;
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: var(--pf-border-radius);
+  background: var(--pf-color-background);
+}
+
+.pf-bt-trace-preview__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: var(--pf-font-size-s);
+  font-family: var(--pf-font-monospace);
+  white-space: nowrap;
+  overflow: hidden;
+
+  &:not(:last-child) {
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--pf-color-border-secondary) 50%, transparent);
+  }
+}
+
+.pf-bt-trace-preview__icon {
+  color: var(--pf-color-text-muted);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.pf-bt-trace-preview__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// ----- Results chart (bar) -----
+
+.pf-bt-chart {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+  overflow-y: auto;
+}
+
+.pf-bt-chart__head {
+  font-size: var(--pf-font-size-m);
+  color: var(--pf-color-text-muted);
+}
+
+.pf-bt-chart__metric {
+  color: var(--pf-color-accent);
+  font-weight: 600;
+}
+
+.pf-bt-chart__dim {
+  color: var(--pf-color-text);
+  font-weight: 600;
+}
+
+.pf-bt-chart__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pf-bt-chart__row {
+  display: grid;
+  grid-template-columns: minmax(80px, 200px) 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.pf-bt-chart__label {
+  font-size: var(--pf-font-size-s);
+  color: var(--pf-color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-bt-chart__track {
+  height: 16px;
+  background: var(--pf-color-background-secondary);
+  border-radius: var(--pf-border-radius-small);
+  overflow: hidden;
+}
+
+.pf-bt-chart__bar {
+  height: 100%;
+  min-width: 2px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--pf-color-accent) 65%, transparent),
+    var(--pf-color-accent)
+  );
+  box-shadow: 0 0 10px color-mix(in srgb, var(--pf-color-accent) 40%, transparent);
+  transition: width 0.3s ease-out;
+}
+
+.pf-bt-chart__value {
+  font-size: var(--pf-font-size-s);
+  font-variant-numeric: tabular-nums;
+  color: var(--pf-color-text-muted);
+}

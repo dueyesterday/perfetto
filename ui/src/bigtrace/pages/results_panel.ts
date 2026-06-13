@@ -20,6 +20,7 @@ import {TERMINAL_STATUSES} from '../query/query_store';
 import type {BigTraceEditorTab, QueryTabsState} from './query_tabs_state';
 import {renderStatusBox, formatDurationS} from './status_box';
 import {renderResultsGrid} from './results_grid';
+import {ChartTab} from './chart_tab';
 
 // Owns its own setInterval since sync queries don't drive periodic redraws.
 class RunningQuerySpinner implements m.ClassComponent<{startMs: number}> {
@@ -172,10 +173,7 @@ function renderResultsTabs(
     {
       key: 'chart',
       title: 'Chart',
-      content: m(EmptyState, {
-        title: 'Charts are coming soon',
-        icon: 'bar_chart',
-      }),
+      content: m(ChartTab, {tab}),
     },
   ];
 

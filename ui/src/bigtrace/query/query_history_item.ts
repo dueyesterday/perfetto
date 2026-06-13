@@ -265,6 +265,7 @@ export function renderHistoryItem(
 export function renderRunCard(
   entry: QueryExecution,
   openQuery?: OpenQueryFn,
+  activeUuid?: string,
 ): m.Children {
   const uuid = entry.uuid;
   const queryText = (entry.perfettoSql || '').replace(/\s+/g, ' ').trim();
@@ -281,11 +282,14 @@ export function renderRunCard(
     .toLowerCase()
     .replace(/_/g, '-')}`;
 
+  const isActive = uuid !== undefined && uuid === activeUuid;
+
   return m(
     '.pf-bt-run-card',
     {
       key: uuid,
-      title: 'Reopen this run',
+      className: isActive ? 'pf-bt-run-card--active' : '',
+      title: isActive ? 'Loaded in the editor' : 'Reopen this run',
       onclick: () => {
         if (openQuery && uuid) {
           openQuery(queryText, uuid, saved, false, entry.limit, startTime);

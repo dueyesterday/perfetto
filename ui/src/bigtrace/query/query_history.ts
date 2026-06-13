@@ -24,6 +24,8 @@ interface QueryHistoryComponentAttrs {
   readonly className?: string;
   openQuery: OpenQueryFn;
   readonly refreshSignal?: number;
+  // The run currently loaded in the editor — its card is highlighted.
+  readonly activeUuid?: string;
 }
 
 export {setHistoryActiveTab} from './history_store';
@@ -43,7 +45,7 @@ export class QueryHistoryComponent
   }
 
   view({attrs}: m.CVnode<QueryHistoryComponentAttrs>) {
-    const {openQuery, ...rest} = attrs;
+    const {openQuery, activeUuid, refreshSignal: _r, ...rest} = attrs;
 
     if (historyStore.isLoading && historyStore.history.length === 0) {
       return m(
@@ -102,7 +104,9 @@ export class QueryHistoryComponent
           )
         : m(
             '.pf-bt-runs__list',
-            filtered.map((entry) => renderRunCard(entry, openQuery)),
+            filtered.map((entry) =>
+              renderRunCard(entry, openQuery, activeUuid),
+            ),
           ),
     ]);
   }

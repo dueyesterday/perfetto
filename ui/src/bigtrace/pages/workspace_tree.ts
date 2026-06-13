@@ -220,6 +220,7 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
         className: 'pf-bt-flow__history',
         refreshSignal: this.historyRefreshSignal,
         openQuery: this.openQuery,
+        activeUuid: this.tabsState.getActiveTab()?.queryUuid,
       }),
     });
   }
@@ -241,6 +242,7 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
               tabsState: this.tabsState,
               bindings: buildTabBindings(tab, this.tabsState),
             }),
+            this.renderTracePreview(),
             m(Button, {
               icon: 'open_in_full',
               label: 'Default trace settings',
@@ -250,6 +252,46 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
           ])
         : m('.pf-bt-flow__empty', 'No active query'),
     });
+  }
+
+  // A live preview of the traces currently in scope (from the scope-count
+  // probe's sample page) so the node shows *what* it runs over, not just a
+  // count.
+  private renderTracePreview(): m.Children {
+    const sample = scopeCount.sample;
+    const cols = scopeCount.sampleColumns;
+    if (!sample || sample.length === 0) return undefined;
+    const nameCol =
+      cols?.find((c) => c === 'file_name') ??
+      cols?.find((c) => c === 'file_path') ??
+      cols?.[0];
+    if (nameCol === undefined) return undefined;
+    const matched = scopeCount.matched ?? sample.length;
+    const shown = Math.min(sample.length, matched);
+    return m('.pf-bt-trace-preview', [
+      m(
+        '.pf-bt-trace-preview__title',
+        matched > shown
+          ? `Matching traces · showing ${shown} of ${matched.toLocaleString()}`
+          : 'Matching traces',
+      ),
+      m(
+        '.pf-bt-trace-preview__list',
+        sample.map((row, i) => {
+          const full = String(row[nameCol] ?? '');
+          const name = full.split('/').pop() || full;
+          return m(
+            '.pf-bt-trace-preview__item',
+            {key: i, title: full},
+            m(Icon, {
+              className: 'pf-bt-trace-preview__icon',
+              icon: 'description',
+            }),
+            m('span.pf-bt-trace-preview__name', name),
+          );
+        }),
+      ),
+    ]);
   }
 
   private renderScopeCount(tab: BigTraceEditorTab): m.Children {

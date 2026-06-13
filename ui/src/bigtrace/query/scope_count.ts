@@ -24,9 +24,17 @@ import type {SettingFilter} from '../settings/settings_types';
 import {BigtraceQueryClient} from './bigtrace_query_client';
 import {getBigtraceEndpoint} from '../settings/endpoint_storage';
 
+// How many matching traces to pull back as a preview for the Trace selection
+// node (also yields the count from the same request).
+const SAMPLE_N = 60;
+
 class ScopeCountService {
   matched?: number; // traces matching the current filter
   total?: number; // traces available (filter ignored)
+  // A preview of the matching traces (first SAMPLE_N rows) + their columns, so
+  // the Trace selection node can list what's in scope, not just a count.
+  sample?: ReadonlyArray<Record<string, unknown>>;
+  sampleColumns?: ReadonlyArray<string>;
   loading = false;
   error = false;
 
@@ -59,10 +67,11 @@ class ScopeCountService {
     const signal = this.ac.signal;
     const client = new BigtraceQueryClient(getBigtraceEndpoint());
     try {
-      // limit 1: we only want the count (totalFilteredRows), not the rows.
+      // Pull a small preview page: gives us the count (totalFilteredRows) and
+      // a sample of the matching traces in one request.
       const matched = await client.listTraceMetadata(
         settings,
-        1,
+        SAMPLE_N,
         0,
         signal,
         undefined,
@@ -75,6 +84,8 @@ class ScopeCountService {
       if (key !== this.key) return; // a newer request superseded this one
       this.matched = matched.totalFilteredRows;
       this.total = total.totalFilteredRows;
+      this.sample = matched.rows;
+      this.sampleColumns = matched.columns;
       this.loading = false;
       this.error = false;
     } catch (e) {
