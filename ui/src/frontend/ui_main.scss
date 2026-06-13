@@ -26,9 +26,16 @@
   overflow: hidden;
   width: 100%;
   height: 100%;
-  // Tinted desktop: the chrome (sidebar, topbar, statusbar) is transparent
+  // Command-deck desktop: a faint accent-glow gradient rising from the top
+  // over the deep base. The chrome (sidebar, topbar, statusbar) is transparent
   // over this, and the working surface floats above it as a card.
-  background: var(--pf-color-desktop);
+  background:
+    radial-gradient(
+      1100px 520px at 50% -14%,
+      color-mix(in srgb, var(--pf-color-accent) 12%, transparent),
+      transparent 58%
+    ),
+    var(--pf-color-desktop);
   color: var(--pf-color-text);
 
   &__loading {

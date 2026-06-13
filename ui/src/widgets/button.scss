@@ -206,6 +206,11 @@
         var(--pf-color-primary),
         var(--pf-color-text-on-primary)
       );
+      // Subtle accent glow lift on hover for the primary CTA.
+      &:hover {
+        box-shadow: 0 0 14px
+          color-mix(in srgb, var(--pf-color-primary) 38%, transparent);
+      }
     }
 
     &.pf-intent-success {

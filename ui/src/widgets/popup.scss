@@ -31,8 +31,10 @@
 }
 
 .pf-popup {
-  background: var(--pf-color-background);
-  border: solid 1px var(--pf-color-border-secondary);
+  // Frosted-glass floating surface (menus, dropdowns, popovers).
+  background: var(--pf-glass-bg);
+  backdrop-filter: blur(var(--pf-glass-blur)) saturate(var(--pf-glass-saturate));
+  border: solid 1px var(--pf-glass-border);
   border-radius: $border-radius-large;
   box-shadow: $box-shadow-2;
   max-width: 350px; // Sensible default width for most popups

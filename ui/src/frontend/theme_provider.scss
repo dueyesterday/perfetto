@@ -62,6 +62,12 @@
   --pf-spacing-large: 12px;
   --pf-spacing-xlarge: 16px;
 
+  // Futuristic glass + glow. Per-theme values (--pf-glass-bg/-border,
+  // --pf-glow-accent) are set in the theme blocks below; the blur amount is
+  // shared.
+  --pf-glass-blur: 18px;
+  --pf-glass-saturate: 150%;
+
   &--light {
     --pf-color-void: white;
     // The backmost "desktop" layer the floating workspace card sits on.
@@ -103,6 +109,18 @@
     // Scrim behind modal dialogs.
     --pf-color-backdrop: rgba(15, 23, 42, 0.45);
 
+    // Glass (frosted) surfaces for floating chrome/overlays + a subtle accent
+    // glow for focus/active. Restrained on light.
+    --pf-glass-bg: color-mix(in srgb, white 72%, transparent);
+    --pf-glass-border: color-mix(
+      in srgb,
+      var(--pf-color-accent) 18%,
+      var(--pf-color-border-secondary)
+    );
+    --pf-glow-accent: 0 0 0 1px
+        color-mix(in srgb, var(--pf-color-accent) 26%, transparent),
+      0 6px 20px color-mix(in srgb, var(--pf-color-accent) 14%, transparent);
+
     // Images designed for light mode need no correction here; defined in both
     // themes so composed `filter: ... var(--pf-img-filter)` declarations stay
     // valid in light mode (CSS-wide invalid-at-computed-value-time otherwise).
@@ -139,12 +157,13 @@
   &--dark {
     // Deep near-black canvas with clearly stepped elevated surfaces — the
     // old uniform dark gray read flat; depth comes from surface contrast.
-    --pf-color-void: #0e0f12;
-    // The backmost "desktop" layer the floating workspace card sits on.
-    --pf-color-desktop: #08090b;
-    --pf-color-background: #15171b;
-    --pf-color-background-secondary: #1d2025;
-    --pf-color-background-tertiary: #282c33;
+    --pf-color-void: #0d1016;
+    // The backmost "desktop" layer — a deep blue-black command-deck base that
+    // the accent-glow gradient (see ui_main.scss) sits over.
+    --pf-color-desktop: #070a12;
+    --pf-color-background: #14161d;
+    --pf-color-background-secondary: #1c1f28;
+    --pf-color-background-tertiary: #272b36;
     --pf-color-interactive-base: white;
     --pf-color-text: #e2e5e9;
     --pf-color-text-muted: #9da3ab;
@@ -154,14 +173,14 @@
     --pf-color-text-hint: #9aa0a6;
     --pf-color-box-shadow: rgba(0, 0, 0, 0.5);
     --pf-color-neutral: #7d838c;
-    // Accent diverges from light mode: the light-mode blue is unreadably
-    // low-contrast against dark surfaces (focus rings, selections).
-    --pf-color-accent: #5c8df0;
-    --pf-color-text-on-accent: #16181c;
+    // Electric-azure accent — vivid but not neon; reads as "futuristic" on the
+    // deep blue-black surfaces while staying legible.
+    --pf-color-accent: #45b1ff;
+    --pf-color-text-on-accent: #04131f;
     --pf-color-highlight: #6b5a10;
 
-    --pf-color-primary: #639af2;
-    --pf-color-text-on-primary: #16181c;
+    --pf-color-primary: #45b1ff;
+    --pf-color-text-on-primary: #04131f;
     --pf-color-danger: #eb6a6a;
     --pf-color-text-on-danger: #16181c;
     --pf-color-success: #6fc77f;
@@ -176,7 +195,20 @@
       0 20px 40px rgba(0, 0, 0, 0.6);
 
     // Scrim behind modal dialogs.
-    --pf-color-backdrop: rgba(0, 0, 0, 0.6);
+    --pf-color-backdrop: rgba(4, 8, 16, 0.66);
+
+    // Glass (frosted) surfaces + accent glow. Dark is the showcase, but kept
+    // restrained — translucent (not see-through), hairline accent-tinted
+    // border, soft (not neon) glow.
+    --pf-glass-bg: color-mix(in srgb, var(--pf-color-background) 62%, transparent);
+    --pf-glass-border: color-mix(
+      in srgb,
+      var(--pf-color-accent) 16%,
+      var(--pf-color-border)
+    );
+    --pf-glow-accent: 0 0 0 1px
+        color-mix(in srgb, var(--pf-color-accent) 42%, transparent),
+      0 0 16px color-mix(in srgb, var(--pf-color-accent) 22%, transparent);
 
     // Chart color palette for data visualization (brighter for dark mode)
     --pf-chart-color-1: #5e97f6; // Lighter Blue

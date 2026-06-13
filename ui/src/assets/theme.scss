@@ -85,6 +85,9 @@ $box-shadow-3: var(--pf-shadow-3);
 @mixin focus {
   outline: 2px solid var(--pf-color-accent);
   outline-offset: 1px;
+  // Subtle accent glow so keyboard focus reads as a soft halo, not just a line.
+  box-shadow: 0 0 12px
+    color-mix(in srgb, var(--pf-color-accent) 22%, transparent);
 }
 
 @mixin transition($time: 0.1s) {

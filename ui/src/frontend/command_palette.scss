@@ -27,6 +27,12 @@
   > header {
     display: none;
   }
+
+  // Frosted-glass spotlight with a faint accent-glow edge.
+  background: var(--pf-glass-bg);
+  backdrop-filter: blur(var(--pf-glass-blur)) saturate(var(--pf-glass-saturate));
+  border: 1px solid var(--pf-glass-border);
+  box-shadow: var(--pf-glow-accent), var(--pf-shadow-3);
 }
 
 .pf-cmdp {
