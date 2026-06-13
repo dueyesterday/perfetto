@@ -19,7 +19,6 @@ import {Callout} from '../../widgets/callout';
 import {Intent} from '../../widgets/common';
 import {Editor} from '../../widgets/editor';
 import {HotkeyGlyphs} from '../../widgets/hotkey_glyphs';
-import {SplitPanel} from '../../widgets/split_panel';
 import {Stack, StackAuto} from '../../widgets/stack';
 import {Switch} from '../../widgets/switch';
 import {TextInput} from '../../widgets/text_input';
@@ -35,51 +34,13 @@ import {
   deriveTitleFromQuery,
   effectiveTabSettings,
 } from './query_tabs_state';
-import {renderResultsPanel} from './results_panel';
 import {scopeCount} from '../query/scope_count';
 import type {SettingCategory, SettingFilter} from '../settings/settings_types';
 import type {SettingsBindings} from '../settings/tab_bound_setting';
 
-export interface EditorTabViewAttrs {
-  readonly tab: BigTraceEditorTab;
-  readonly tabsState: QueryTabsState;
-  readonly runner: QueryRunner;
-  readonly useBigtraceBackend: boolean;
-}
-
-// Split pane with editor on top, results on bottom.
-// Rendering lives in results_panel.ts and status_box.ts.
-export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
-  view({attrs}: m.Vnode<EditorTabViewAttrs>): m.Children {
-    const {tab, tabsState, runner, useBigtraceBackend} = attrs;
-
-    // Tabs reopened from history wire up their dataSource on first render.
-    if (tab.queryUuid && !tab.dataSource) {
-      attachAsyncDataSource(tab, runner);
-    }
-
-    if (tab.dataSource && tab.queryResult && tab.materialize && tab.execution) {
-      tab.queryResult.totalRowCount = tab.execution.processedRows;
-    }
-
-    // Scope (trace selection + settings) now lives in the workspace rail, not
-    // inline above the editor.
-    return m('.pf-bt-editor-tab', [
-      m(SplitPanel, {
-        direction: 'vertical',
-        initialSplit: {percent: 22},
-        minSize: 100,
-        firstPanel: renderEditorPanel(
-          tab,
-          tabsState,
-          runner,
-          useBigtraceBackend,
-        ),
-        secondPanel: renderResultsPanel(tab, tabsState),
-      }),
-    ]);
-  }
-}
+// The editor + results were split into separate workflow-graph nodes; the
+// workspace renders renderEditorPanel() and renderResultsPanel() directly and
+// calls ensureTabWired() once for the active tab. (No combined view remains.)
 
 // ---------------------------------------------------------------------------
 // Per-tab bindings shared between the chip strip and any modal it opens.

@@ -31,7 +31,6 @@ import {OmniboxMode} from '../core/omnibox_manager';
 import {type HotkeyConfig, HotkeyContext} from '../widgets/hotkey_context';
 import {maybeRenderFullscreenModalDialog} from '../widgets/modal';
 import {initAssets} from '../base/assets';
-import {initRouter} from './router';
 import {toggleHelp} from './help_modal';
 
 function getRoot() {
@@ -216,7 +215,6 @@ function registerCommands() {
 
 function onCssLoaded() {
   document.body.innerHTML = '';
-  initRouter();
   m.mount(document.body, BigTraceRoot);
   initLiveReload();
   registerCommands();
