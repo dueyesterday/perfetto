@@ -17,6 +17,7 @@
 @mixin filled-color-scheme($intent-color, $text-color) {
   color: $text-color;
   background: $intent-color;
+  box-shadow: $box-shadow-1;
 
   &:hover {
     background: color_hover($intent-color);
@@ -59,7 +60,15 @@
   position: relative;
   transition:
     background-color 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
     color 0.12s ease;
+
+  // Subtle press feedback shared across variants.
+  &:active:not([disabled]),
+  &.pf-active:not([disabled]) {
+    transform: translateY(0.5px);
+  }
 
   &--loading {
     // The button is unclickable when loading
@@ -228,12 +237,12 @@
   &--minimal,
   &--outlined {
     &:hover {
-      background: color_hover(transparent);
+      background: color-hover-surface();
     }
 
     &:active,
     &.pf-active {
-      background: color_active(transparent);
+      background: color-active-surface();
     }
 
     &.pf-intent-primary {

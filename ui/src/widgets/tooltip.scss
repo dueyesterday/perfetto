@@ -27,9 +27,9 @@
   background: var(--pf-color-background);
 
   z-index: 10;
-  padding: 2px 6px;
+  padding: 4px 8px;
   border-radius: $border-radius;
-  border: solid 1px var(--pf-color-border);
+  border: solid 1px var(--pf-color-border-secondary);
   box-shadow: $box-shadow-2;
   pointer-events: none;
 }

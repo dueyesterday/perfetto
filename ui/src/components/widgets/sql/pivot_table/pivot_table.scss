@@ -16,11 +16,15 @@
 
 .pf-pivot-table {
   &__total-values {
-    font-weight: bolder;
+    font-weight: 600;
+    color: var(--pf-color-text);
   }
 
+  // Tree-style indentation spacer with a hairline guide so nested rows read as
+  // a hierarchy rather than free-floating indentation.
   &__cell--indent {
     display: inline-block;
     width: 24px;
+    box-shadow: inset 1px 0 0 var(--pf-color-border-secondary);
   }
 }

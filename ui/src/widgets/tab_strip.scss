@@ -26,7 +26,7 @@
 
   &__tab {
     color: var(--pf-color-text-muted);
-    padding: 4px;
+    padding: 6px 10px;
     margin-top: 3px;
     align-items: center;
     cursor: pointer;
@@ -38,9 +38,12 @@
     gap: 2px;
 
     border-radius: $border-radius-small $border-radius-small 0 0;
+    border-bottom: solid 2px transparent;
+    @include transition(0.12s);
 
     &:hover {
       background-color: color_hover(transparent);
+      color: var(--pf-color-text);
     }
 
     &[active] {

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+@import "../assets/theme";
+
 // Generic list with y-overflow, move me to a common file if we want to reuse.
 .pf-list {
   overflow-y: auto;
@@ -26,6 +28,7 @@
   flex-direction: column;
   align-items: stretch;
   width: 280px;
+  padding: 8px;
   & > .pf-search-bar {
     margin-bottom: 8px;
     display: flex;
@@ -35,19 +38,28 @@
   }
   .pf-multiselect-item {
     display: block; // Put each item on a new line
-    margin-top: 5px;
+    margin-top: 2px;
+    padding: 4px 8px;
+    border-radius: $border-radius-small;
+    transition: background-color 0.12s ease;
+
+    &:hover {
+      background: color-hover-surface();
+    }
   }
   .pf-multiselect-header {
     align-items: baseline;
     display: flex;
     position: sticky;
     top: 0;
-    font-size: 1em;
-    background-color: var(--pf-color-background);
+    background-color: var(--pf-color-background-secondary);
     z-index: 1;
-    font-size: 0.75em;
-    border-bottom: solid 1px var(--pf-color-border);
-    padding-bottom: 2px;
+    font-size: var(--pf-font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--pf-color-text-muted);
+    border-bottom: solid 1px var(--pf-color-border-secondary);
+    padding: 4px 8px;
     min-width: max-content;
     & > span {
       margin-right: auto;

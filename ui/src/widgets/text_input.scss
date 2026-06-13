@@ -20,13 +20,14 @@
   font-family: var(--pf-font-compact);
   font-size: inherit;
   outline: none; // Disable the default outline
-  padding: 2px 4px;
-  gap: 4px;
-  background: var(--pf-color-void);
+  padding: 6px 10px;
+  gap: 6px;
+  background: var(--pf-color-background-secondary);
   border: solid 1px var(--pf-color-border-secondary);
   border-radius: $border-radius;
   transition:
     border-color 0.12s ease,
+    background-color 0.12s ease,
     box-shadow 0.12s ease;
 
   &__input {
@@ -58,9 +59,10 @@
   }
 
   &:has(.pf-text-input__input:focus) {
+    background: var(--pf-color-void);
     border-color: var(--pf-color-accent);
     box-shadow: 0 0 0 3px
-      color-mix(in srgb, var(--pf-color-accent) 20%, transparent);
+      color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
   }
 
   &:has(.pf-text-input__input[disabled]) {

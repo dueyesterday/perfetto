@@ -18,15 +18,16 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10px;
+  padding: 24px 16px;
   user-select: none;
   margin: auto;
   justify-content: center;
   color: var(--pf-color-text-muted);
 
   &__main-icon {
-    font-size: 5em; // Size of the icon is relative to the font size.
-    margin-bottom: 12px;
+    font-size: 6em; // Size of the icon is relative to the font size.
+    margin-bottom: 16px;
+    opacity: 0.7;
   }
 
   // Limit width to the size of the container and use no wrap & elipsis to
@@ -42,8 +43,8 @@
 
   &__title {
     text-align: center;
-    font-weight: 500;
-    margin-bottom: 8px;
+    font-weight: 600;
+    margin-bottom: 12px;
   }
 
   &__content {

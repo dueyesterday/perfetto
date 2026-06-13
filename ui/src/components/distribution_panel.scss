@@ -24,8 +24,13 @@
 
   &__placeholder-chart {
     height: 220px;
-    border: 1px dashed var(--pf-color-border);
-    border-radius: var(--pf-border-radius);
+    border: 1px dashed var(--pf-color-border-secondary);
+    border-radius: var(--pf-border-radius-large);
+    background-color: color-mix(
+      in srgb,
+      var(--pf-color-background-secondary) 40%,
+      transparent
+    );
   }
 
   &__loading {

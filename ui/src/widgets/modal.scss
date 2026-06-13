@@ -138,14 +138,14 @@
 .pf-modal-logs,
 .pf-modal-bash {
   white-space: pre-wrap;
-  border: 1px solid var(--pf-color-border);
-  padding: 10px;
-  border-radius: $border-radius-small;
+  border: 1px solid var(--pf-color-border-secondary);
+  padding: 12px;
+  border-radius: $border-radius;
   font-size: var(--pf-font-size-xs);
   background: var(--pf-color-background-secondary);
   font-family: var(--pf-font-monospace);
-  margin-top: 10px;
-  margin-bottom: 10px;
+  margin-top: 12px;
+  margin-bottom: 12px;
   min-height: 50px;
   max-height: 40vh;
   overflow: auto;
@@ -160,13 +160,26 @@
 
 .pf-modal-textarea {
   display: block;
-  padding: 10px;
-  border-radius: $border-radius-small;
-  margin-top: 10px;
-  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: $border-radius;
+  margin-top: 12px;
+  margin-bottom: 12px;
   width: 100%;
-  background: inherit;
+  background: var(--pf-color-background-secondary);
   color: inherit;
+  transition:
+    border-color 0.12s ease,
+    background-color 0.12s ease,
+    box-shadow 0.12s ease;
+
+  &:focus {
+    outline: none;
+    background: var(--pf-color-background);
+    border-color: var(--pf-color-accent);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
+  }
 }
 
 .pf-modal-small {

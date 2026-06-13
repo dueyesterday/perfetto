@@ -18,6 +18,10 @@
   @mixin color-theme($base-color) {
     color: $base-color;
     background: color-mix(in srgb, $base-color 15%, transparent);
+
+    &:hover {
+      background: color-mix(in srgb, $base-color 24%, transparent);
+    }
   }
 
   display: inline-flex;
@@ -27,11 +31,19 @@
   line-height: 1;
   user-select: none;
   border-radius: $border-radius-small;
-  padding: 2px 4px;
+  padding: 4px 8px;
   white-space: nowrap;
   min-width: max-content;
   border: solid 1px color-mix(in srgb, currentColor, transparent 50%);
   overflow: hidden;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+
+  &:hover {
+    background: color-hover-surface();
+  }
 
   &__label {
     flex-shrink: 1;

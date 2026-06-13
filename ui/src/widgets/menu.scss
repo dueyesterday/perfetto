@@ -25,11 +25,11 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  margin: 4px 0;
+  margin: 6px 0;
 
   .pf-menu-divider {
-    border-bottom: solid 1px var(--pf-color-border);
-    margin: 5px 0 5px 0;
+    border-bottom: solid 1px var(--pf-color-border-secondary);
+    margin: 6px 8px;
   }
 
   // Remove duplicate dividers and dividers at the start or end of the menu
@@ -49,8 +49,9 @@
     font-weight: bolder;
     font-size: var(--pf-font-size-xs);
     text-transform: uppercase;
+    letter-spacing: 0.05em;
     color: var(--pf-color-text-muted);
-    padding: 6px 8px 3px 8px;
+    padding: 6px 12px 4px 12px;
     user-select: none;
   }
 }
@@ -59,13 +60,14 @@
   font-family: var(--pf-font-compact);
   user-select: none;
   text-align: left;
-  padding: 6px 10px;
-  margin-inline: 4px;
+  padding: 7px 12px;
+  margin-inline: 6px;
   border-radius: $border-radius-small;
   white-space: nowrap;
   min-width: max-content;
   line-height: 1;
   cursor: pointer;
+  @include transition(0.12s);
 
   display: grid;
   grid-template-columns: auto 1fr auto;

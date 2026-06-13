@@ -74,6 +74,9 @@ $switch-slide-distance: 0.75em;
     border: solid 1px currentColor;
     background: none;
     position: relative;
+    transition:
+      background-color 0.12s ease,
+      border-color 0.12s ease;
   }
 
   &__tick {

@@ -21,20 +21,27 @@
     display: flex;
     align-content: baseline;
     background-color: var(--pf-color-background-secondary);
-    font-size: var(--pf-font-size-l);
-    font-weight: 400;
-    padding: 4px 10px;
+    // Modern section header: small uppercase, muted, with tracking.
+    font-size: var(--pf-font-size-s);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--pf-color-text-muted);
+    padding: 8px 12px;
     vertical-align: middle;
-    border-bottom: 1px solid var(--pf-color-border);
+    border-bottom: 1px solid var(--pf-color-border-secondary);
     z-index: 1;
   }
 
   &__item {
     border-bottom: 1px solid var(--pf-color-border-secondary);
-    padding: 0.25em 0.5em;
+    padding: 6px 8px;
+    margin: 2px 4px;
+    border-radius: var(--pf-border-radius-small);
     max-height: 150px;
     overflow-y: auto;
     position: relative;
+    transition: background-color 0.12s ease;
 
     pre {
       font-size: var(--pf-font-size-s);
@@ -57,7 +64,11 @@
     }
 
     &:hover {
-      background-color: color_hover(transparent);
+      background-color: color-mix(
+        in srgb,
+        var(--pf-color-accent) 7%,
+        transparent
+      );
       .pf-query-history__item-buttons {
         visibility: visible;
       }

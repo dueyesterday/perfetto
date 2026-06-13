@@ -17,8 +17,14 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 12px 16px;
-  gap: 4px;
+  padding: 16px 16px;
+  gap: 8px;
+  box-sizing: border-box;
+  // Card surface: rounded, hairline border, subtle background + elevation.
+  background-color: var(--pf-color-background-secondary);
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: var(--pf-border-radius-large);
+  box-shadow: var(--pf-shadow-1);
 
   &--fill {
     width: 100%;
@@ -26,11 +32,11 @@
   }
 
   &__label {
-    font-size: 12px;
-    font-weight: 500;
+    font-size: var(--pf-font-size-s);
+    font-weight: 600;
     color: var(--pf-color-text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.03em;
     text-align: center;
     line-height: 1.2;
   }

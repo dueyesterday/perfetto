@@ -22,8 +22,8 @@
   &__tabs {
     display: flex;
     background-color: var(--pf-color-background-secondary);
-    border-bottom: 1px solid var(--pf-color-border);
-    padding-inline: 3px;
+    border-bottom: 1px solid var(--pf-color-border-secondary);
+    padding-inline: 4px;
     align-items: baseline;
   }
 
@@ -32,8 +32,8 @@
     align-items: baseline;
     gap: 2px;
     font-family: var(--pf-font-compact);
-    padding: 5px 7px;
-    margin-top: 2px;
+    padding: 6px 10px;
+    margin-top: 3px;
     margin-bottom: -1px; // Overlap the border
     cursor: pointer;
 
@@ -45,6 +45,7 @@
     border-color: transparent;
     border-width: 1px 1px 0 1px;
     color: var(--pf-color-text-muted);
+    @include transition(0.12s);
 
     &:hover {
       background: color_hover(transparent);

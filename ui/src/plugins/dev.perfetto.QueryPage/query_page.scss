@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+@import "../../assets/theme";
+
 .pf-query-page {
   height: 100%;
   font-family: var(--pf-font-compact);
@@ -77,7 +79,9 @@
   }
 
   &__toolbar {
-    border-bottom: 1px solid var(--pf-color-border);
+    border-bottom: 1px solid var(--pf-color-border-secondary);
+    background: var(--pf-color-background);
+    padding: 6px 12px;
   }
 
   &__sidebar {
@@ -103,8 +107,13 @@
   }
 
   &__query-error {
-    padding: 20px 10px;
+    margin: 12px;
+    padding: 12px 16px;
     color: var(--pf-color-danger);
+    background: color-mix(in srgb, var(--pf-color-danger) 8%, transparent);
+    border: 1px solid
+      color-mix(in srgb, var(--pf-color-danger) 30%, transparent);
+    border-radius: var(--pf-border-radius);
     font-family: var(--pf-font-monospace);
     font-size: var(--pf-font-size-s);
     font-weight: 300;
@@ -119,6 +128,29 @@
 
   &__search {
     margin: 8px;
+
+    .pf-text-input,
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 10px;
+      background: var(--pf-color-background-secondary);
+      border: 1px solid var(--pf-color-border-secondary);
+      border-radius: var(--pf-border-radius);
+      transition:
+        border-color 0.12s ease,
+        background-color 0.12s ease,
+        box-shadow 0.12s ease;
+
+      &:focus,
+      &:focus-within {
+        background: var(--pf-color-void);
+        border-color: var(--pf-color-accent);
+        box-shadow: 0 0 0 3px
+          color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
+        outline: none;
+      }
+    }
   }
 
   &__items {
@@ -135,7 +167,8 @@
   &__highlight {
     background-color: var(--pf-color-accent);
     color: var(--pf-color-text-on-accent);
-    border-radius: 2px;
+    border-radius: var(--pf-border-radius-small);
+    padding: 0 2px;
   }
 
   &__description {
@@ -164,6 +197,7 @@
     font-size: 11px;
     color: var(--pf-color-text-muted);
     text-transform: uppercase;
+    letter-spacing: 0.03em;
     min-width: 50px;
   }
 
@@ -186,7 +220,7 @@
     flex-direction: column;
     margin-top: 4px;
     border: 1px solid var(--pf-color-border-secondary);
-    border-radius: 4px;
+    border-radius: var(--pf-border-radius);
     overflow: hidden;
   }
 
@@ -194,15 +228,16 @@
     display: flex;
     align-items: flex-start;
     gap: 6px;
-    padding: 6px 8px;
+    padding: 6px 10px;
     border-bottom: 1px solid var(--pf-color-border-secondary);
+    transition: background-color 0.12s ease;
 
     &:last-child {
       border-bottom: none;
     }
 
     &:hover {
-      background: var(--pf-color-background-hover);
+      background: color-mix(in srgb, var(--pf-color-accent) 7%, transparent);
     }
   }
 

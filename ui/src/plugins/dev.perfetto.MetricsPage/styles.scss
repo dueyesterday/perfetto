@@ -54,14 +54,37 @@
   &__metric-filter {
     margin: 0.5rem 0;
 
-    .pf-text-input {
+    .pf-text-input,
+    .pf-text-input input,
+    input {
       width: 100%;
+      box-sizing: border-box;
+      padding: 6px 10px;
+      background: var(--pf-color-background-secondary);
+      border: 1px solid var(--pf-color-border-secondary);
+      border-radius: var(--pf-border-radius);
+      transition:
+        border-color 0.12s ease,
+        background-color 0.12s ease,
+        box-shadow 0.12s ease;
+
+      &:focus,
+      &:focus-within {
+        background: var(--pf-color-void);
+        border-color: var(--pf-color-accent);
+        box-shadow: 0 0 0 3px
+          color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
+        outline: none;
+      }
     }
   }
 
   &__editor {
     min-height: 300px;
     margin: 1rem 0;
+    border: 1px solid var(--pf-color-border-secondary);
+    border-radius: $border-radius-large;
+    overflow: hidden;
 
     .pf-editor {
       min-height: 300px;
@@ -79,8 +102,9 @@
   }
 
   &__tabs {
-    border: 1px solid var(--pf-color-border);
-    border-radius: 4px;
+    border: 1px solid var(--pf-color-border-secondary);
+    border-radius: $border-radius-large;
+    overflow: hidden;
   }
 
   &__bundle {

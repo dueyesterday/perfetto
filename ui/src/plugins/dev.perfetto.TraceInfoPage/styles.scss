@@ -26,15 +26,17 @@
     width: 95%;
     max-width: 1400px;
     background: var(--pf-color-background);
+    border: 1px solid var(--pf-color-border-secondary);
     border-radius: $border-radius-xl;
-    box-shadow: $box-shadow-1;
+    box-shadow: $box-shadow-2;
     overflow: hidden;
   }
 
   // Header section
   &__header {
     padding: 24px 28px 20px;
-    border-bottom: 1px solid var(--pf-color-border);
+    border-bottom: 1px solid var(--pf-color-border-secondary);
+    background: var(--pf-color-background);
   }
 
   &__header-title {
@@ -81,11 +83,13 @@
   // Cards (shared base styles)
   &__metric-card,
   &__status-card {
-    padding: 12px;
+    padding: 16px;
     min-height: 110px;
     display: flex;
     flex-direction: column;
     background: var(--pf-color-background-secondary);
+    border: 1px solid var(--pf-color-border-secondary);
+    border-radius: $border-radius-large;
   }
 
   &__metric-card--wide {
@@ -112,12 +116,14 @@
   &__status-card--clickable {
     cursor: pointer;
     transition:
-      transform 0.1s ease-in-out,
-      box-shadow 0.1s ease-in-out;
+      transform 0.12s ease,
+      border-color 0.12s ease,
+      box-shadow 0.12s ease;
 
     &:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+      border-color: var(--pf-color-accent);
+      box-shadow: $box-shadow-2;
     }
 
     &:active {
@@ -234,8 +240,9 @@
     display: flex;
     gap: 12px;
     padding: 12px;
-    background: var(--pf-color-background-hover);
-    border-radius: 4px;
+    background: color-mix(in srgb, var(--pf-color-danger) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--pf-color-danger) 24%, transparent);
+    border-radius: var(--pf-border-radius);
     border-left: 3px solid var(--pf-color-danger);
     font-family: var(--pf-font-monospace);
   }
@@ -262,12 +269,21 @@
   }
 
   &__stats-table-head-cell {
-    padding-bottom: 5px;
-    font-weight: 500;
+    padding-bottom: 6px;
+    font-size: var(--pf-font-size-s);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--pf-color-text-muted);
+    text-align: left;
   }
 
   &__stats-table-row:nth-child(odd) &__stats-table-cell {
-    background-color: color_hover(transparent);
+    background-color: var(--pf-color-background-secondary);
+  }
+
+  &__stats-table-row:hover &__stats-table-cell {
+    background-color: color-mix(in srgb, var(--pf-color-accent) 7%, transparent);
   }
 
   &__stats-table-cell {

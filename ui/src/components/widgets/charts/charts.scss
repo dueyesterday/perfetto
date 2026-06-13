@@ -20,11 +20,16 @@
 
 .pf-chart-popup {
   width: max-content;
-  font-size: 15px;
+  font-size: var(--pf-font-size-m);
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  padding: 8px 12px;
   row-gap: 4px;
+  // Tooltip/popover surface: rounded, hairline border, soft elevation.
+  background-color: var(--pf-color-background);
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: var(--pf-border-radius-large);
+  box-shadow: var(--pf-shadow-2);
 
   &__tooltip-text-line {
     cursor: text;
@@ -57,10 +62,13 @@
   &__loading,
   &__empty {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 8px;
     height: 100%;
+    padding: 24px;
     color: var(--pf-color-text-muted);
-    font-size: 14px;
+    font-size: var(--pf-font-size-m);
   }
 }

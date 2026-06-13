@@ -22,13 +22,14 @@
   font-size: inherit;
   outline: none; // Disable the default outline
   border: solid 1px var(--pf-color-border-secondary);
-  background: var(--pf-color-void);
+  background: var(--pf-color-background-secondary);
   color: inherit;
   border-radius: $border-radius;
-  padding: 2px;
+  padding: 6px 10px;
   cursor: pointer;
   transition:
     border-color 0.12s ease,
+    background-color 0.12s ease,
     box-shadow 0.12s ease;
 
   // Very opinionated min width for a select input
@@ -40,9 +41,10 @@
   }
 
   &:focus {
+    background: var(--pf-color-void);
     border-color: var(--pf-color-accent);
     box-shadow: 0 0 0 3px
-      color-mix(in srgb, var(--pf-color-accent) 20%, transparent);
+      color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
   }
 
   &[disabled] {

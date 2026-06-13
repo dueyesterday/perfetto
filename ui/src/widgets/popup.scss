@@ -32,8 +32,8 @@
 
 .pf-popup {
   background: var(--pf-color-background);
-  border: solid 1px var(--pf-color-border);
-  border-radius: $border-radius;
+  border: solid 1px var(--pf-color-border-secondary);
+  border-radius: $border-radius-large;
   box-shadow: $box-shadow-2;
   max-width: 350px; // Sensible default width for most popups
 
@@ -41,7 +41,7 @@
     // Ensures all content is rendered above the arrow
     position: relative;
     // Default padding set to some sensible value that works for most content
-    padding: 4px;
+    padding: 8px;
     overflow: hidden;
   }
 

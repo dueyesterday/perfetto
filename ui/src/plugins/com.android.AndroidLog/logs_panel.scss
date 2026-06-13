@@ -21,6 +21,12 @@
   font-family: var(--pf-font-monospace);
 
   &__row {
+    transition: background-color 0.12s ease;
+
+    &:hover {
+      background: color-mix(in srgb, var(--pf-color-accent) 7%, transparent);
+    }
+
     &--debug {
       color: log-level-color(var(--pf-chart-color-4), 30%);
     }

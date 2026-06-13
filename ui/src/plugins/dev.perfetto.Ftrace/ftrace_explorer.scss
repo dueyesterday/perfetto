@@ -26,7 +26,8 @@
       height: 10px;
       width: 10px;
       flex-shrink: 0;
-      margin-right: 4px;
+      margin-right: 6px;
+      border-radius: var(--pf-border-radius-small);
     }
   }
 }

@@ -20,13 +20,32 @@ $chevron-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' 
   border-collapse: collapse;
   text-align: left;
   th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     text-align: left;
-    padding: 2px 8px;
-    border-bottom: solid 1px var(--pf-color-border);
-    font-weight: bolder;
+    padding: 6px 10px;
+    background: var(--pf-color-background-secondary);
+    border-bottom: solid 1px var(--pf-color-border-secondary);
+    // Modern data-table header: small uppercase, muted, with tracking.
+    font-weight: 600;
+    font-size: var(--pf-font-size-s);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--pf-color-text-muted);
+  }
+  tbody tr {
+    transition: background-color 0.12s ease;
+    &:hover {
+      background-color: color-mix(
+        in srgb,
+        var(--pf-color-accent) 7%,
+        transparent
+      );
+    }
   }
   td {
-    padding: 2px 8px;
+    padding: 6px 10px;
     text-align: left;
     padding-left: calc(var(--indentation-level) * 12px + 4px);
     .pf-treetable-gutter {

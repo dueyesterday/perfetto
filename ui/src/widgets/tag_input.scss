@@ -23,13 +23,13 @@
   outline: none; // Disable the default outline
   border: solid 1px var(--pf-color-border-secondary);
   border-radius: $border-radius;
-  padding: 2px 4px;
-  background: var(--pf-color-void);
+  padding: 6px 10px;
+  background: var(--pf-color-background-secondary);
   transition:
-    border $anim-timing,
-    box-shadow $anim-timing,
-    background $anim-timing;
-  gap: 4px;
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.12s ease;
+  gap: 6px;
 
   &__left-icon {
     align-self: center;
@@ -53,10 +53,13 @@
 
   // The gentle hover effect indicates this component is interactive
   &:hover {
-    border: solid 1px var(--pf-color-border);
+    border-color: var(--pf-color-border);
   }
 
   &:focus-within {
-    border: solid 1px var(--pf-color-primary);
+    background: var(--pf-color-void);
+    border-color: var(--pf-color-accent);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
   }
 }

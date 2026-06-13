@@ -15,14 +15,18 @@
 @import "../assets/theme";
 
 .pf-section {
-  border-radius: $border-radius;
+  border-radius: $border-radius-large;
   border: 1px solid var(--pf-color-border-secondary);
+  box-shadow: $box-shadow-1;
+  overflow: hidden;
   header {
-    padding: 6px;
+    padding: 8px 12px;
+    font-weight: 600;
+    background: var(--pf-color-background-secondary);
     border-bottom: 1px solid var(--pf-color-border-secondary);
   }
   article {
-    padding: 6px;
+    padding: 12px;
     font-size: var(--pf-font-size-m);
   }
 }

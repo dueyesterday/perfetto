@@ -21,7 +21,7 @@
 }
 
 .pf-sql-table__column-filter {
-  margin: 2px 10px;
+  margin: 6px 10px;
 }
 
 .pf-sql-table {
@@ -34,8 +34,8 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 2px;
-  border-bottom: solid 1px var(--pf-color-border);
+  padding: 4px 8px;
+  border-bottom: solid 1px var(--pf-color-border-secondary);
 
   .pf-tabs {
     .pf-button {

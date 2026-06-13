@@ -32,6 +32,17 @@
     gap: 6px;
     justify-content: space-between;
     border-left: solid 3px transparent;
+    border-radius: var(--pf-border-radius);
+    padding: 4px 8px;
+    transition: background-color 0.12s ease;
+
+    &:hover {
+      background-color: color-mix(
+        in srgb,
+        var(--pf-color-accent) 7%,
+        transparent
+      );
+    }
   }
 
   &__controls {
@@ -58,7 +69,8 @@
     font-weight: 600;
     font-size: var(--pf-font-size-s);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.03em;
+    color: var(--pf-color-text-muted);
     margin-right: 4px;
   }
 

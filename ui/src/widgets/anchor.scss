@@ -16,11 +16,15 @@
 
 .pf-anchor {
   color: var(--pf-color-primary);
-  border-radius: $border-radius;
+  border-radius: $border-radius-small;
   cursor: pointer;
   text-decoration: underline;
   text-decoration-thickness: 1px;
-  text-decoration-color: var(--pf-color-primary);
+  text-decoration-color: color-mix(in srgb, var(--pf-color-primary) 50%, transparent);
+  text-underline-offset: 2px;
+  transition:
+    background-color 0.12s ease,
+    text-decoration-color 0.12s ease;
 
   &__icon--end {
     margin-left: 1px;
@@ -31,9 +35,11 @@
   }
 
   &:hover {
-    // Gently darken the background and thicken the underline.
-    background: color_hover(transparent);
+    // Gently tint the background, thicken the underline, and bring the
+    // underline up to full strength.
+    background: color-hover-surface();
     text-decoration-thickness: 2px;
+    text-decoration-color: var(--pf-color-primary);
   }
 
   &:focus-visible {

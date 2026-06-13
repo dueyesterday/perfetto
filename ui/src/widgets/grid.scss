@@ -14,11 +14,11 @@
 
 @import "../assets/theme";
 
-$border-1: 1px solid var(--pf-color-border);
+$border-1: 1px solid var(--pf-color-border-secondary);
 $border-2: 1px solid var(--pf-color-border-secondary);
 $border-3: 2px solid var(--pf-color-border);
-$inline-padding: 0.5em;
-$block-padding: 0.3em;
+$inline-padding: 10px;
+$block-padding: 6px;
 $indent-size: 16px;
 $indent-guide-offset: 12px;
 
@@ -208,8 +208,13 @@ $indent-guide-offset: 12px;
     position: sticky;
     top: 0;
     z-index: 1; // Ensure header is above body rows when scrolling.
-    background: var(--pf-color-background);
-    font-weight: 500;
+    background: var(--pf-color-background-secondary);
+    // Modern data-table header: small uppercase, muted, with tracking.
+    font-weight: 600;
+    font-size: var(--pf-font-size-s);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--pf-color-text-muted);
   }
 
   &__puck {
@@ -222,8 +227,14 @@ $indent-guide-offset: 12px;
     flex: 0 0 auto;
 
     .pf-grid__row {
+      transition: background-color 0.12s ease;
+
       &:hover {
-        background-color: color_hover(transparent);
+        background-color: color-mix(
+          in srgb,
+          var(--pf-color-accent) 7%,
+          transparent
+        );
       }
       border-bottom: $border-2;
     }
@@ -239,6 +250,7 @@ $indent-guide-offset: 12px;
     justify-content: flex-start;
     flex-direction: row;
     overflow: hidden;
+    min-height: 28px; // Comfortable body-row height.
 
     .pf-visible-on-row-hover {
       visibility: hidden;

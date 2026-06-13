@@ -576,15 +576,13 @@
 
     .spinner {
       @include transition();
-      // Undo default number input styles.
-      background: none;
       color: inherit;
 
       grid-area: label;
-      border: 1px solid var(--pf-color-background);
-      border-bottom: 2px solid var(--pf-color-border);
-      padding: 0 5px;
-      border-radius: 2px;
+      background: var(--pf-color-background-secondary);
+      border: 1px solid var(--pf-color-border-secondary);
+      padding: 0 8px;
+      border-radius: var(--pf-border-radius);
       font-size: var(--pf-font-size-l);
       font-weight: 100;
       height: 35px;
@@ -599,12 +597,14 @@
 
       &:hover,
       &:focus {
-        border-bottom-color: var(--pf-color-primary);
-        background-color: color_hover(transparent);
+        background-color: var(--pf-color-void);
+        border-color: var(--pf-color-accent);
+        box-shadow: 0 0 0 3px
+          color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
       }
 
       &:invalid {
-        border-bottom-color: var(--pf-color-danger);
+        border-color: var(--pf-color-danger);
       }
     }
 
@@ -693,8 +693,19 @@
 
   .dropdown {
     border: 1px solid var(--pf-color-border-secondary);
+    border-radius: var(--pf-border-radius);
+    background: var(--pf-color-background-secondary);
     outline: none;
     -webkit-appearance: none;
+    transition:
+      border-color 0.12s ease,
+      box-shadow 0.12s ease;
+
+    &:focus {
+      border-color: var(--pf-color-accent);
+      box-shadow: 0 0 0 3px
+        color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
+    }
 
     option,
     optgroup {
@@ -782,10 +793,24 @@
   textarea.extra-input {
     width: 100%;
     height: 60px;
+    padding: 6px 10px;
+    background: var(--pf-color-background-secondary);
     border: 1px solid var(--pf-color-border-secondary);
+    border-radius: var(--pf-border-radius);
     resize: none;
     outline: none;
     font-family: var(--pf-font-monospace);
+    transition:
+      border-color 0.12s ease,
+      background-color 0.12s ease,
+      box-shadow 0.12s ease;
+
+    &:focus {
+      background: var(--pf-color-void);
+      border-color: var(--pf-color-accent);
+      box-shadow: 0 0 0 3px
+        color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
+    }
 
     &::placeholder {
       color: var(--pf-color-text-hint);
@@ -818,13 +843,18 @@
     select {
       @include transition();
       margin-left: 10px;
-      border-radius: 0;
+      padding: 6px 10px;
+      border-radius: var(--pf-border-radius);
+      background: var(--pf-color-background-secondary);
       border: 1px solid var(--pf-color-border-secondary);
       outline: none;
 
       &:hover,
-      &:active {
-        box-shadow: 0 0 6px var(--pf-color-border);
+      &:active,
+      &:focus {
+        border-color: var(--pf-color-accent);
+        box-shadow: 0 0 0 3px
+          color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
       }
     }
     // Stop/cancel buttons
@@ -925,17 +955,25 @@
       user-select: none;
       padding: 8px 12px;
       white-space: nowrap;
-      border: 1px solid var(--pf-color-border);
-      background: var(--pf-color-background);
+      border: 1px solid var(--pf-color-border-secondary);
+      background: var(--pf-color-background-secondary);
       color: var(--pf-color-text);
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       gap: 4px;
       border-radius: $border-radius;
+      transition:
+        background-color 0.12s ease,
+        border-color 0.12s ease,
+        box-shadow 0.12s ease,
+        color 0.12s ease;
 
       &:hover:not(.selected) {
-        background: color_hover(transparent);
+        background: color-hover-surface(var(--pf-color-background-secondary));
+      }
+      &:active:not(.selected) {
+        background: color-active-surface(var(--pf-color-background-secondary));
       }
       &.selected {
         background: var(--pf-color-primary);
@@ -1049,6 +1087,8 @@
 
   .session-status {
     border: 1px solid var(--pf-color-border-secondary);
+    border-radius: $border-radius-large;
+    background: var(--pf-color-background-secondary);
     margin: 1em;
     padding: 1em;
     width: calc(100% - 2em);
@@ -1065,8 +1105,10 @@
     }
 
     .logs {
-      background-color: var(--pf-color-background-secondary);
+      background-color: var(--pf-color-void);
       border: 1px solid var(--pf-color-border-secondary);
+      border-radius: var(--pf-border-radius);
+      padding: 8px 10px;
       white-space: pre-wrap;
       margin: 0;
       font-size: var(--pf-font-size-s);
@@ -1105,6 +1147,9 @@
     text-align: center;
     cursor: pointer;
     outline: none;
+    background: var(--pf-color-background-secondary);
+    border: 1px solid var(--pf-color-border-secondary);
+    border-radius: $border-radius-large;
 
     .pf-icon {
       font-size: 24px;

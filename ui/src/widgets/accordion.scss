@@ -24,13 +24,14 @@
     list-style: none;
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 6px 8px;
+    gap: 6px;
+    padding: 8px 12px;
     cursor: pointer;
     background: var(--pf-color-background-secondary);
     position: sticky;
     top: 0;
     z-index: 1;
+    transition: background-color 0.12s ease;
 
     &:hover {
       background: color-hover-surface(var(--pf-color-background-secondary));

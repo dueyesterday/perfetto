@@ -22,12 +22,17 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px;
+  margin: 12px;
+  padding: 12px 16px;
+  color: var(--pf-color-danger);
+  background: color-mix(in srgb, var(--pf-color-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pf-color-danger) 30%, transparent);
+  border-radius: var(--pf-border-radius);
 
   pre {
     margin: 0;
     white-space: pre-wrap;
-    font-family: monospace;
+    font-family: var(--pf-font-monospace);
   }
 }
 
