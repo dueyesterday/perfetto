@@ -21,6 +21,7 @@ import m from 'mithril';
 import {EmptyState} from '../../widgets/empty_state';
 import {Spinner} from '../../widgets/spinner';
 import {QueryCancelledError} from '../query/bigtrace_query_client';
+import {TERMINAL_STATUSES} from '../query/query_store';
 import type {BigTraceEditorTab} from './query_tabs_state';
 
 const CHART_ROWS = 200; // how many rows to pull for the chart
@@ -34,6 +35,10 @@ const COMPACT = new Intl.NumberFormat('en', {
 });
 
 export class ChartTab implements m.ClassComponent<{tab: BigTraceEditorTab}> {
+  // This component instance is shared across all editor tabs (the Results node
+  // is rendered once for the active tab), so it must reset its per-query state
+  // when the active tab changes — tracked via tabId.
+  private tabId?: string;
   private rows: ChartRow[] = [];
   private columns: ReadonlyArray<string> = [];
   private loading = false;
@@ -63,20 +68,40 @@ export class ChartTab implements m.ClassComponent<{tab: BigTraceEditorTab}> {
 
   // Keep `rows`/`columns` current with the active query.
   private sync(tab: BigTraceEditorTab): void {
+    // Active tab changed under this shared instance — drop the prior query's
+    // rows/error/in-flight fetch so they can't leak into the new tab's chart.
+    if (tab.id !== this.tabId) {
+      this.ac?.abort();
+      this.tabId = tab.id;
+      this.rows = [];
+      this.columns = [];
+      this.error = undefined;
+      this.key = '';
+      this.loading = false;
+    }
+
     if (tab.materialize && tab.queryUuid) {
-      const k = `${tab.queryUuid}:${tab.execution?.processedRows ?? 0}`;
+      // Refetch once while running (partial) and once on terminal — NOT on
+      // every poll tick: the grid already streams, so per-tick chart fetches
+      // would just duplicate :fetch_results.
+      const terminal =
+        tab.execution?.status !== undefined &&
+        TERMINAL_STATUSES.has(tab.execution.status);
+      const k = `${tab.queryUuid}:${terminal ? 'final' : 'live'}`;
       if (k !== this.key) {
         this.key = k;
-        void this.fetch(tab);
+        void this.fetch(tab, k);
       }
       return;
     }
-    // Sync query: rows are inline.
+    // Sync query: rows are inline; clear any error carried from a prior async
+    // tab so valid sync results aren't masked.
+    this.error = undefined;
     this.rows = (tab.queryResult?.rows ?? []) as ChartRow[];
     this.columns = tab.queryResult?.columns ?? [];
   }
 
-  private async fetch(tab: BigTraceEditorTab): Promise<void> {
+  private async fetch(tab: BigTraceEditorTab, k: string): Promise<void> {
     if (!tab.queryUuid || !tab.queryClient) return;
     this.ac?.abort();
     this.ac = new AbortController();
@@ -89,14 +114,17 @@ export class ChartTab implements m.ClassComponent<{tab: BigTraceEditorTab}> {
         0,
         this.ac.signal,
       );
+      if (k !== this.key) return; // superseded by a newer sync()
       this.rows = page.rows as ChartRow[];
       this.columns = page.columns;
     } catch (e) {
-      if (e instanceof QueryCancelledError) return;
+      if (e instanceof QueryCancelledError || k !== this.key) return;
       this.error = 'Could not load chart data';
     } finally {
-      this.loading = false;
-      m.redraw();
+      if (k === this.key) {
+        this.loading = false;
+        m.redraw();
+      }
     }
   }
 

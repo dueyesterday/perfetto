@@ -148,10 +148,10 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
   private edge(live = false): m.Children {
     return m(
       '.pf-bt-flow__edge',
-      {className: live ? 'pf-bt-flow__edge--live' : ''},
+      {className: live ? 'pf-bt-flow__edge--live' : '', 'aria-hidden': 'true'},
       m(
         'svg',
-        {width: 34, height: 22, viewBox: '0 0 34 22'},
+        {width: 34, height: 22, viewBox: '0 0 34 22', focusable: 'false'},
         m('path.pf-bt-flow__edge-line', {
           d: 'M0,11 C12,11 20,11 31,11',
         }),
@@ -178,6 +178,8 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
         {
           className: opts.className,
           title: `Expand ${opts.title}`,
+          'aria-label': `Expand ${opts.title}`,
+          'aria-expanded': 'false',
           onclick: () => (this.collapsed[opts.id as CollapsibleId] = false),
         },
         m(Icon, {className: 'pf-bt-flownode__cicon', icon: opts.icon}),
@@ -200,6 +202,7 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
             icon: 'left_panel_close',
             className: 'pf-bt-flownode__collapse',
             title: `Collapse ${opts.title}`,
+            'aria-label': `Collapse ${opts.title}`,
             onclick: () => (this.collapsed[opts.id as CollapsibleId] = true),
           }),
       ),

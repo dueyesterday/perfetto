@@ -21,7 +21,7 @@
 import m from 'mithril';
 import type {Filter} from '../../components/widgets/datagrid/model';
 import type {SettingFilter} from '../settings/settings_types';
-import {BigtraceQueryClient} from './bigtrace_query_client';
+import {BigtraceQueryClient, QueryCancelledError} from './bigtrace_query_client';
 import {getBigtraceEndpoint} from '../settings/endpoint_storage';
 
 // How many matching traces to pull back as a preview for the Trace selection
@@ -50,6 +50,12 @@ class ScopeCountService {
     this.key = key;
     this.loading = true;
     this.error = false;
+    // Drop the previous (settings, filters) results so the new scope doesn't
+    // render the prior tab's count/sample during the debounce + fetch.
+    this.matched = undefined;
+    this.total = undefined;
+    this.sample = undefined;
+    this.sampleColumns = undefined;
     window.clearTimeout(this.timer);
     this.timer = window.setTimeout(
       () => void this.fetch(settings, filters, key),
@@ -77,19 +83,25 @@ class ScopeCountService {
         undefined,
         filters,
       );
+      // Don't fire the second (unfiltered total) request if we've already been
+      // superseded or aborted.
+      if (signal.aborted || key !== this.key) return;
       const total =
         filters.length > 0
           ? await client.listTraceMetadata(settings, 1, 0, signal, undefined, [])
           : matched;
       if (key !== this.key) return; // a newer request superseded this one
-      this.matched = matched.totalFilteredRows;
-      this.total = total.totalFilteredRows;
+      // totalFilteredRows is optional on the wire — fall back to the sample
+      // size so a backend that omits it doesn't spin forever.
+      this.matched = matched.totalFilteredRows ?? matched.rows.length;
+      this.total = total.totalFilteredRows ?? total.rows.length;
       this.sample = matched.rows;
       this.sampleColumns = matched.columns;
       this.loading = false;
       this.error = false;
     } catch (e) {
-      if (key !== this.key) return;
+      // A superseding request aborted this one — not an error.
+      if (e instanceof QueryCancelledError || key !== this.key) return;
       this.loading = false;
       this.error = true;
     }

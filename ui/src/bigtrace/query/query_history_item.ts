@@ -61,6 +61,12 @@ class ClampedQuery implements m.ClassComponent<ClampedQueryAttrs> {
         '(no query text)',
       );
     }
+    const toggle = () => {
+      this.expanded = !this.expanded;
+      if (this.expanded) {
+        onExpand?.();
+      }
+    };
     return m(
       'pre.pf-bt-history-item-query',
       {
@@ -68,10 +74,15 @@ class ClampedQuery implements m.ClassComponent<ClampedQueryAttrs> {
           this.expanded && 'pf-bt-history-item-query--expanded',
           standalone && 'pf-bt-history-item-query--standalone',
         ),
-        onclick: () => {
-          this.expanded = !this.expanded;
-          if (this.expanded) {
-            onExpand?.();
+        tabindex: 0,
+        role: 'button',
+        'aria-expanded': this.expanded ? 'true' : 'false',
+        'aria-label': 'Toggle full query text',
+        onclick: toggle,
+        onkeydown: (e: KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggle();
           }
         },
       },
@@ -283,16 +294,28 @@ export function renderRunCard(
     .replace(/_/g, '-')}`;
 
   const isActive = uuid !== undefined && uuid === activeUuid;
+  const reopen = () => {
+    if (openQuery && uuid) {
+      openQuery(queryText, uuid, saved, false, entry.limit, startTime);
+    }
+  };
 
   return m(
     '.pf-bt-run-card',
     {
       key: uuid,
       className: isActive ? 'pf-bt-run-card--active' : '',
+      tabindex: 0,
+      role: 'button',
+      'aria-label': `Reopen run: ${queryText.slice(0, 80) || '(no query)'}`,
       title: isActive ? 'Loaded in the editor' : 'Reopen this run',
-      onclick: () => {
-        if (openQuery && uuid) {
-          openQuery(queryText, uuid, saved, false, entry.limit, startTime);
+      onclick: reopen,
+      onkeydown: (e: KeyboardEvent) => {
+        // Don't hijack Enter/Space when focus is on a nested control (delete).
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          reopen();
         }
       },
     },

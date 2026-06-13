@@ -180,7 +180,10 @@ export class QueryRunner {
     tab.activeRequest?.abort();
     this.poller.stop(tab);
 
-    if (tab.execution && tab.execution.status === 'IN_PROGRESS') {
+    // Any non-terminal state, including the UNKNOWN window before the first
+    // :status poll lands — otherwise a cancel issued right after submit leaves
+    // the local execution stuck at UNKNOWN.
+    if (tab.execution && !TERMINAL_STATUSES.has(tab.execution.status)) {
       tab.execution.status = 'CANCELLED';
       tab.execution.endTime = Date.now();
     }
