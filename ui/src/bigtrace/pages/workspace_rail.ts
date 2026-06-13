@@ -27,7 +27,12 @@ import {buildTabBindings} from './editor_tab_view';
 import {QueryHistoryComponent} from '../query/query_history';
 import {TableList} from '../query/table_list';
 import {sqlTablesLoader} from '../query/sql_tables';
-import type {BigTraceEditorTab, QueryTabsState} from './query_tabs_state';
+import {scopeCount} from '../query/scope_count';
+import {
+  type BigTraceEditorTab,
+  type QueryTabsState,
+  effectiveTabSettings,
+} from './query_tabs_state';
 
 type OpenQueryFn = (
   query: string,
@@ -103,8 +108,10 @@ export class WorkspaceRail implements m.ClassComponent<WorkspaceRailAttrs> {
   private renderScopeBadge(attrs: WorkspaceRailAttrs): m.Children {
     const tab = attrs.activeTab;
     if (!tab) return undefined;
+    const c = scopeCount.matched;
+    if (c !== undefined) return `${c.toLocaleString()} traces`;
     const n = tab.traceFilters.length;
-    return n > 0 ? `${n} filter${n === 1 ? '' : 's'}` : 'all traces';
+    return n > 0 ? `${n} filter${n === 1 ? '' : 's'}` : undefined;
   }
 
   private renderScope(attrs: WorkspaceRailAttrs): m.Children {
@@ -112,13 +119,45 @@ export class WorkspaceRail implements m.ClassComponent<WorkspaceRailAttrs> {
     if (!tab) {
       return m(EmptyState, {title: 'No active query', icon: 'tune'});
     }
-    // Reuse the existing chip strip — it already renders the trace filter /
-    // limit / order chips and opens the full settings editor on click.
-    return m(BigtraceSettingsBar, {
-      tab,
-      tabsState: attrs.tabsState,
-      bindings: buildTabBindings(tab, attrs.tabsState),
-    });
+    // Live feedback: how many traces the current filter actually matches.
+    scopeCount.request(effectiveTabSettings(tab), tab.traceFilters);
+    return [
+      this.renderScopeCount(tab),
+      // The existing chip strip renders/edits the trace filter, limit & order.
+      m(BigtraceSettingsBar, {
+        tab,
+        tabsState: attrs.tabsState,
+        bindings: buildTabBindings(tab, attrs.tabsState),
+      }),
+    ];
+  }
+
+  private renderScopeCount(tab: BigTraceEditorTab): m.Children {
+    const {matched, total, error} = scopeCount;
+    const hasFilter = tab.traceFilters.length > 0;
+    let num: m.Children;
+    let label: string;
+    if (error) {
+      num = '—';
+      label = 'count unavailable';
+    } else if (matched === undefined) {
+      num = m(Spinner);
+      label = 'counting traces…';
+    } else {
+      num = matched.toLocaleString();
+      label =
+        hasFilter && total !== undefined && total !== matched
+          ? `of ${total.toLocaleString()} traces`
+          : matched === 1
+            ? 'trace'
+            : 'traces';
+    }
+    return m(
+      '.pf-bt-scope-count',
+      {className: scopeCount.loading ? 'pf-bt-scope-count--loading' : ''},
+      m('span.pf-bt-scope-count__num', num),
+      m('span.pf-bt-scope-count__label', label),
+    );
   }
 
   private renderRuns(attrs: WorkspaceRailAttrs): m.Children {

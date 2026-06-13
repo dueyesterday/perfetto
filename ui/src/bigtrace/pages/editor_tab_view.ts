@@ -36,6 +36,7 @@ import {
   effectiveTabSettings,
 } from './query_tabs_state';
 import {renderResultsPanel} from './results_panel';
+import {scopeCount} from '../query/scope_count';
 import type {SettingCategory, SettingFilter} from '../settings/settings_types';
 import type {SettingsBindings} from '../settings/tab_bound_setting';
 
@@ -174,6 +175,17 @@ function renderEditorPanel(
           m(
             'span.pf-bt-run-bar__hint.pf-bt-query-page__hotkeys',
             m(HotkeyGlyphs, {hotkey: 'Mod+Enter'}),
+          ),
+        // Run contract: state the scope this run executes against.
+        !tab.isLoading &&
+          useBigtraceBackend &&
+          scopeCount.matched !== undefined &&
+          m(
+            'span.pf-bt-run-bar__scope',
+            {title: 'Traces this query will run over (set in Scope)'},
+            `over ${scopeCount.matched.toLocaleString()} trace${
+              scopeCount.matched === 1 ? '' : 's'
+            }`,
           ),
         m(StackAuto),
         useBigtraceBackend && [
