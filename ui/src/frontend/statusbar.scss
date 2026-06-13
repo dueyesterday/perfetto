@@ -18,11 +18,11 @@
   display: flex;
   align-items: baseline;
 
-  background: var(--pf-sidebar-surface);
+  // Transparent over the desktop (inset layout).
+  background: transparent;
   padding: 0px 8px;
-  color: var(--pf-sidebar-on-surface);
+  color: var(--pf-sidebar-on-surface-muted);
   font-size: var(--pf-font-size-m);
-  border-top: solid 1px var(--pf-sidebar-border);
 
   > .pf-button {
     border-radius: unset;

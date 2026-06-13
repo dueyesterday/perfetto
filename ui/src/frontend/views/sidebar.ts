@@ -14,6 +14,7 @@
 
 import './sidebar.scss';
 import m from 'mithril';
+import {classNames} from '../../base/classnames';
 import {assetSrc} from '../../base/assets';
 import {AppImpl} from '../../core/app_impl';
 import {getCurrentChannel} from '../../core/channels';
@@ -55,7 +56,10 @@ export class Sidebar implements m.ClassComponent<SidebarAttrs> {
     return m(
       'nav.pf-sidebar',
       {
-        class: sidebar.visible ? undefined : 'pf-sidebar--hidden',
+        class: classNames(
+          !sidebar.visible && 'pf-sidebar--hidden',
+          sidebar.collapsed && 'pf-sidebar--collapsed',
+        ),
         // 150 here matches --sidebar-timing in the css.
         // TODO(hjd): Should link to the CSS variable.
         ontransitionstart: (e: TransitionEvent) => {
@@ -70,7 +74,24 @@ export class Sidebar implements m.ClassComponent<SidebarAttrs> {
       shouldShowHiringBanner(app) && m(HiringBanner),
       this.renderSidebarHeader(app),
       this.renderSidebarContent(app),
+      this.renderCollapseToggle(app),
       this.renderSidebarFooter(app),
+    );
+  }
+
+  private renderCollapseToggle(app: AppImpl) {
+    const sidebar = app.sidebar;
+    return m(
+      'button.pf-sidebar__collapse',
+      {
+        onclick: () => sidebar.toggleCollapsed(),
+        title: sidebar.collapsed ? 'Expand sidebar' : 'Collapse sidebar',
+      },
+      m(Icon, {
+        className: 'pf-sidebar__collapse-icon',
+        icon: sidebar.collapsed ? 'chevron_right' : 'chevron_left',
+      }),
+      m('span.pf-sidebar__collapse-label', 'Collapse'),
     );
   }
 

@@ -19,12 +19,12 @@
   position: relative;
   z-index: 3;
   overflow: visible;
-  background-color: var(--pf-color-background);
+  // Transparent toolbar floating on the desktop (no surface, no border).
+  background-color: transparent;
   min-height: var(--topbar-height);
   display: flex;
   justify-content: center;
   align-items: center;
-  border-bottom: 1px solid var(--pf-color-border-secondary);
 
   &--hide-sidebar {
     .pf-omnibox--query-mode {
@@ -60,26 +60,22 @@
   display: grid;
   grid-template-areas: "icon input stepthrough";
   grid-template-columns: 34px auto max-content;
-  // Filled pill search field; lifts to a bordered white field on focus.
+  // White pill search field floating on the desktop.
   border-radius: 100px;
-  background-color: var(--pf-color-background-secondary);
-  border: solid 1px transparent;
+  background-color: var(--pf-color-background);
+  border: solid 1px var(--pf-color-border-secondary);
+  box-shadow: $box-shadow-1;
   line-height: 34px;
 
   &:hover {
-    background-color: var(--pf-color-background-tertiary);
+    border-color: var(--pf-color-border);
   }
 
   &:focus-within {
-    background-color: var(--pf-color-background);
     border-color: var(--pf-color-accent);
     box-shadow:
       0 0 0 3px color-mix(in srgb, var(--pf-color-accent) 18%, transparent),
       $box-shadow-1;
-
-    &:hover {
-      background-color: var(--pf-color-background);
-    }
   }
 
   &:before {
@@ -177,6 +173,14 @@
 
 .pf-omnibox-dropdown {
   font-family: var(--pf-font-compact);
+  // Glass command-palette panel (Raycast/Spotlight style).
+  margin-top: 6px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--pf-color-background) 82%, transparent);
+  backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: $border-radius-large;
+  box-shadow: $box-shadow-3;
 
   ul {
     padding: 0;

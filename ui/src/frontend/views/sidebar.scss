@@ -22,10 +22,10 @@
   display: flex;
   flex-direction: column;
   color: var(--pf-sidebar-on-surface);
-  background-color: var(--pf-sidebar-surface);
+  // Transparent over the desktop so the chrome recedes (inset layout).
+  background-color: transparent;
   overflow: hidden;
   width: var(--sidebar-width);
-  border-right: 1px solid var(--pf-sidebar-border);
   transition:
     margin-left var(--anim-easing) var(--sidebar-timing),
     visibility linear var(--sidebar-timing);
@@ -331,6 +331,33 @@ li.pf-sidebar__item {
   display: none;
 }
 
+// Collapse / expand toggle, sits just above the footer.
+.pf-sidebar__collapse {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 4px;
+  padding: 6px 8px;
+  border-radius: $border-radius;
+  color: var(--pf-sidebar-on-surface-muted);
+  font: inherit;
+  font-size: var(--pf-font-size-s);
+  cursor: pointer;
+  background: none;
+  border: none;
+  text-align: left;
+
+  .pf-sidebar__collapse-icon {
+    font-size: 18px;
+  }
+
+  &:hover {
+    color: var(--pf-sidebar-on-surface);
+    background: color-hover-surface(transparent, currentColor);
+  }
+}
+
 .pf-sidebar__footer {
   padding: 6px;
   display: grid;
@@ -404,5 +431,70 @@ li.pf-sidebar__item {
   a {
     color: white;
     text-decoration: none;
+  }
+}
+
+// =============================================================================
+// Collapsed icon rail
+// =============================================================================
+// A narrow icon-only rail. Labels and section chrome are hidden; only the icon
+// glyphs remain (they carry an explicit font-size so the font-size:0 trick that
+// hides the raw text nodes doesn't shrink them).
+.pf-sidebar--collapsed {
+  --sidebar-width: 56px;
+  transition: width var(--anim-easing) var(--sidebar-timing);
+
+  .pf-sidebar__brand {
+    display: none;
+  }
+
+  .pf-sidebar__header {
+    justify-content: center;
+    padding: 0;
+  }
+
+  // Re-home the floating menu/hamburger button to the rail centre.
+  .pf-sidebar-button {
+    left: 12px;
+  }
+
+  // Section headers collapse to a hairline divider; force their content open so
+  // every item's icon is reachable without an expand affordance.
+  .pf-sidebar__section-header {
+    display: none;
+  }
+  .pf-sidebar__section-content {
+    display: block;
+  }
+  .pf-sidebar__section + .pf-sidebar__section {
+    border-top: 1px solid var(--pf-sidebar-border-secondary);
+  }
+
+  .pf-sidebar__item a,
+  .pf-sidebar__item button {
+    justify-content: center;
+    gap: 0;
+    padding: 8px 0;
+    font-size: 0; // Hides the raw text node; the icon keeps its own size.
+  }
+
+  .pf-sidebar__button-icon {
+    font-size: 20px;
+  }
+
+  .pf-sidebar__external-link-icon,
+  .pf-sidebar__trace-file-name,
+  .pf-sidebar__collapse-label {
+    display: none;
+  }
+
+  .pf-sidebar__collapse {
+    justify-content: center;
+    margin-inline: 4px;
+  }
+
+  // The debug badges + version footer don't fit a 56px rail.
+  .pf-sidebar__footer {
+    display: none;
   }
 }

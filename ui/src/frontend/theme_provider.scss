@@ -24,6 +24,28 @@
   // Theme scroll bars across the entire app.
   scrollbar-color: var(--pf-color-border) var(--pf-color-background); /* thumb color track color */
 
+  // Thin, modern, auto-hiding-feel scrollbars (webkit). The pill thumb floats
+  // on a transparent track via a padding-box border inset.
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--pf-color-border);
+    border-radius: 100px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+
+    &:hover {
+      background: var(--pf-color-neutral);
+      background-clip: padding-box;
+    }
+  }
+
   // Geometry tokens (theme-independent). Exposed as CSS custom properties so
   // they reach every stylesheet — including ones that don't @import theme —
   // and stay overridable at runtime. The SCSS vars in assets/theme.scss alias
@@ -42,6 +64,8 @@
 
   &--light {
     --pf-color-void: white;
+    // The backmost "desktop" layer the floating workspace card sits on.
+    --pf-color-desktop: #e6e9ef;
     --pf-color-background: white;
     --pf-color-background-secondary: #f2f4f6;
     --pf-color-background-tertiary: #e7ebee;
@@ -116,6 +140,8 @@
     // Deep near-black canvas with clearly stepped elevated surfaces — the
     // old uniform dark gray read flat; depth comes from surface contrast.
     --pf-color-void: #0e0f12;
+    // The backmost "desktop" layer the floating workspace card sits on.
+    --pf-color-desktop: #08090b;
     --pf-color-background: #15171b;
     --pf-color-background-secondary: #1d2025;
     --pf-color-background-tertiary: #282c33;
