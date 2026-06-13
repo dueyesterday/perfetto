@@ -607,20 +607,45 @@
   }
 }
 
-.pf-bt-status-bar-refresh {
-  position: relative;
-  display: inline-block;
+// Passive "results are streaming in" affordance. Replaces the old
+// click-to-refresh button: the poll loop auto-refreshes the grid on every
+// progress tick, so the user pulls nothing — this just signals it's live.
+.pf-bt-status-bar-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--pf-font-size-s);
+  font-family: var(--pf-font-monospace);
+  color: var(--pf-color-accent);
+  letter-spacing: 0.02em;
 }
 
-.pf-bt-status-bar-notif {
-  position: absolute;
-  top: -2px;
-  right: -2px;
+.pf-bt-status-bar-live-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: var(--pf-color-success);
-  z-index: 10;
+  background: var(--pf-color-accent);
+  flex-shrink: 0;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--pf-color-accent) 70%, transparent);
+  animation: pf-bt-live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pf-bt-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-bt-status-bar-live-dot {
+    animation: none;
+  }
 }
 
 .pf-bt-status-bar-stat {

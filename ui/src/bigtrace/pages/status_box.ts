@@ -14,14 +14,11 @@
 
 import m from 'mithril';
 import {Box} from '../../widgets/box';
-import {Button} from '../../widgets/button';
 import {PopupPosition} from '../../widgets/popup';
 import {Tooltip} from '../../widgets/tooltip';
 import {Duration} from '../../base/time';
-import {BigtraceAsyncDataSource} from '../query/bigtrace_async_data_source';
 import {
   formatCompact,
-  queryStore,
   statusDisplayLabel,
   TERMINAL_STATUSES,
 } from '../query/query_store';
@@ -40,7 +37,6 @@ export function renderStatusBox(tab: BigTraceEditorTab): m.Children {
     tab.execution?.status !== undefined &&
     TERMINAL_STATUSES.has(tab.execution.status);
   const processedRows = tab.execution?.processedRows ?? 0;
-  const hasNewData = !isTerminal && processedRows > tab.lastProcessedRows;
 
   let durationMs = 0;
   if (
@@ -67,24 +63,22 @@ export function renderStatusBox(tab: BigTraceEditorTab): m.Children {
   const leftGroup = m(
     '.pf-bt-status-bar-group',
     m(
-      'div.pf-bt-status-bar-refresh',
-      m(Button, {
-        icon: 'refresh',
-        title: hasNewData
-          ? 'New data available. Click to refresh.'
-          : 'Refresh data',
-        onclick: () => refreshAsyncStatus(tab),
-      }),
-      hasNewData &&
-        m('span.pf-bt-status-bar-notif', {
-          'aria-label': 'New data available',
-        }),
-    ),
-    m(
       'span.pf-bt-status-bar-pill',
       {className: `pf-bt-status-${status.toLowerCase().replace(/_/g, '-')}`},
       statusDisplayLabel(status),
     ),
+    // Results stream into the grid automatically as the backend produces them:
+    // the poll loop refreshes the data source on every progress tick (see
+    // PollingController.maybeAutoFetchProgress). This passive indicator replaces
+    // the old click-to-refresh button + "new data" dot — there is nothing for
+    // the user to pull; rows just appear.
+    !isTerminal &&
+      m(
+        'span.pf-bt-status-bar-live',
+        {title: 'Rows stream into the grid automatically as they are produced'},
+        m('span.pf-bt-status-bar-live-dot', {'aria-hidden': 'true'}),
+        'Streaming results',
+      ),
     m(
       'span.pf-bt-status-bar-duration',
       m('span.pf-bt-status-bar-duration-value', durationStr),
@@ -173,29 +167,4 @@ function renderInlineProgressBar(
       style: {width: `${pct}%`},
     }),
   );
-}
-
-async function refreshAsyncStatus(tab: BigTraceEditorTab): Promise<void> {
-  if (!tab.queryUuid) return;
-  try {
-    const status = await tab.queryClient?.getStatus(
-      tab.queryUuid,
-      tab.lifecycle.signal,
-    );
-    if (status) {
-      queryStore.update(tab.queryUuid, {
-        processedRows: status.processedRows ?? 0,
-        processedTraces: status.processedTraces ?? 0,
-        totalTraces: status.totalTraces ?? 0,
-        status: status.status ?? 'N/A',
-      });
-    }
-  } catch (e) {
-    console.error('Failed to fetch query status on refresh:', e);
-  }
-  if (tab.dataSource instanceof BigtraceAsyncDataSource) {
-    tab.dataSource.refresh();
-    tab.lastProcessedRows = tab.execution?.processedRows ?? 0;
-  }
-  m.redraw();
 }
