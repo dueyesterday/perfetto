@@ -1245,46 +1245,92 @@ pre.pf-bt-history-item-query--standalone {
 }
 
 // ---------- Miller-column workspace (single-page tree) ----------
-// The whole app: cascading columns that drill left -> right. Column 0 is the
-// root tree; each selection opens a column to its right; the rightmost column
-// is the content (editor + results, trace grid, history, schema, backend form).
+// The whole app: cascading columns that drill left -> right over a command-deck
+// backdrop. Column 0 is the root tree; each selection opens a column to its
+// right; the rightmost column is the content. Root + navigator columns are
+// frosted-glass panels floating over the deck; the content column is solid for
+// data legibility.
+
+// Full-bleed: drop the floating-card chrome so the workspace owns its backdrop.
+.pf-ui-main__page-container:has(.pf-bt-miller) {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
 
 .pf-bt-miller {
   display: flex;
+  gap: 10px;
+  padding: 10px;
+  box-sizing: border-box;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: var(--pf-color-background);
+  // Command-deck: a faint accent aurora rising from the top-left over the deep
+  // base, so the glass columns have something to refract.
+  background:
+    radial-gradient(
+      1200px 620px at 20% -12%,
+      color-mix(in srgb, var(--pf-color-accent) 16%, transparent),
+      transparent 60%
+    ),
+    var(--pf-color-desktop);
 }
 
 .pf-bt-miller__col {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border-right: 1px solid var(--pf-color-border-secondary);
   overflow: hidden;
+  border-radius: var(--pf-border-radius-large);
+  border: 1px solid var(--pf-glass-border);
+  background: var(--pf-glass-bg);
+  backdrop-filter: blur(var(--pf-glass-blur)) saturate(var(--pf-glass-saturate));
+  box-shadow: var(--pf-shadow-1);
+  // Each freshly-spawned column slides in from the left — the drill reads as a
+  // cascade moving rightward.
+  animation: pf-bt-col-in 0.18s ease-out;
 }
 
-// Column 0: the root tree. Narrow, tinted, always present.
+@keyframes pf-bt-col-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-bt-miller__col {
+    animation: none;
+  }
+}
+
+// Column 0: the root tree (the trunk). Narrow, slightly deeper tint.
 .pf-bt-miller__col--root {
-  flex: 0 0 192px;
-  background: var(--pf-color-background-secondary);
+  flex: 0 0 196px;
+  background: color-mix(in srgb, var(--pf-glass-bg) 78%, var(--pf-color-desktop));
 }
 
 // Column 1: an intermediate navigator (the open queries, etc.).
 .pf-bt-miller__col--nav {
-  flex: 0 0 248px;
-  background: var(--pf-color-background-secondary);
+  flex: 0 0 250px;
 }
 
-// Rightmost: the content. Takes all remaining width.
+// Rightmost: the content. Solid surface for dense data (editor, grids).
 .pf-bt-miller__col--content {
   flex: 1 1 auto;
-  border-right: none;
+  background: var(--pf-color-background);
+  backdrop-filter: none;
 }
 
 .pf-bt-miller__col--pad {
-  padding: 20px 24px;
+  padding: 22px 26px;
   overflow-y: auto;
 }
 
@@ -1293,33 +1339,34 @@ pre.pf-bt-history-item-query--standalone {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 8px 7px 14px;
-  border-bottom: 1px solid var(--pf-color-border-secondary);
+  padding: 9px 8px 9px 14px;
+  border-bottom: 1px solid var(--pf-glass-border);
 }
 
 .pf-bt-miller__col-title {
   font-size: var(--pf-font-size-xs);
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.12em;
   color: var(--pf-color-text-muted);
 }
 
 .pf-bt-miller__list {
   display: flex;
   flex-direction: column;
-  padding: 8px 6px;
-  gap: 2px;
+  padding: 8px 7px;
+  gap: 3px;
   overflow-y: auto;
 }
 
 .pf-bt-miller__node {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   width: 100%;
-  padding: 8px 10px;
-  border: none;
+  padding: 9px 11px;
+  border: 1px solid transparent;
   border-radius: var(--pf-border-radius);
   background: transparent;
   color: var(--pf-color-text);
@@ -1328,27 +1375,38 @@ pre.pf-bt-history-item-query--standalone {
   cursor: pointer;
   text-align: left;
   transition:
-    background 0.1s ease,
-    box-shadow 0.1s ease;
+    background 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 
   &:hover {
-    background: color-mix(in srgb, var(--pf-color-text) 7%, transparent);
+    background: color-mix(in srgb, var(--pf-color-accent) 9%, transparent);
+    border-color: color-mix(in srgb, var(--pf-color-accent) 22%, transparent);
   }
 }
 
+// Selected node: accent glass fill + an outer glow, plus an inset accent spine
+// on the left edge that "lights up" the branch.
 .pf-bt-miller__node--selected,
 .pf-bt-miller__node--selected:hover {
-  background: color-mix(in srgb, var(--pf-color-accent) 16%, transparent);
-  box-shadow: inset 2px 0 0 var(--pf-color-accent);
+  background: color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--pf-color-accent) 45%, transparent);
+  box-shadow:
+    inset 3px 0 0 var(--pf-color-accent),
+    0 0 18px color-mix(in srgb, var(--pf-color-accent) 26%, transparent);
 }
 
 .pf-bt-miller__node-icon {
   color: var(--pf-color-text-muted);
   flex-shrink: 0;
+  transition: color 0.12s ease;
 }
 
 .pf-bt-miller__node--selected .pf-bt-miller__node-icon {
   color: var(--pf-color-accent);
+  filter: drop-shadow(
+    0 0 6px color-mix(in srgb, var(--pf-color-accent) 60%, transparent)
+  );
 }
 
 .pf-bt-miller__node-label {
@@ -1359,21 +1417,43 @@ pre.pf-bt-history-item-query--standalone {
   white-space: nowrap;
 }
 
+.pf-bt-miller__node--selected .pf-bt-miller__node-label {
+  color: color-mix(in srgb, var(--pf-color-accent) 88%, var(--pf-color-text));
+  text-shadow: 0 0 14px
+    color-mix(in srgb, var(--pf-color-accent) 35%, transparent);
+}
+
 .pf-bt-miller__badge {
   font-size: var(--pf-font-size-xs);
   font-variant-numeric: tabular-nums;
+  font-family: var(--pf-font-monospace);
   color: var(--pf-color-text-muted);
-  background: var(--pf-color-background);
-  border: 1px solid var(--pf-color-border-secondary);
+  background: color-mix(in srgb, var(--pf-color-accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pf-color-accent) 24%, transparent);
   border-radius: 100px;
-  padding: 1px 7px;
+  padding: 1px 8px;
   flex-shrink: 0;
 }
 
+.pf-bt-miller__node--selected .pf-bt-miller__badge {
+  color: color-mix(in srgb, var(--pf-color-accent) 92%, var(--pf-color-text));
+  background: color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--pf-color-accent) 50%, transparent);
+}
+
+// The right-pointing caret "beams" toward the column it spawns.
 .pf-bt-miller__node-caret {
   color: var(--pf-color-text-muted);
   flex-shrink: 0;
   font-size: 18px;
+  transition: color 0.12s ease;
+}
+
+.pf-bt-miller__node--selected .pf-bt-miller__node-caret {
+  color: var(--pf-color-accent);
+  filter: drop-shadow(
+    0 0 6px color-mix(in srgb, var(--pf-color-accent) 70%, transparent)
+  );
 }
 
 // Close button on a query node — revealed on hover.
@@ -1397,6 +1477,7 @@ pre.pf-bt-history-item-query--standalone {
   margin: 0 0 4px;
   font-size: var(--pf-font-size-xl);
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .pf-bt-miller__hint {
