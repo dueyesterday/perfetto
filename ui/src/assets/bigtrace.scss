@@ -53,11 +53,16 @@
   resize: vertical;
   font-family: var(--pf-font-monospace);
   font-size: var(--pf-font-size-s);
-  padding: 6px 8px;
+  padding: 6px 10px;
   border: solid 1px var(--pf-color-border-secondary);
-  border-radius: 4px;
-  background: var(--pf-color-void);
+  border-radius: var(--pf-border-radius);
+  // Filled control, matching the modernized form controls app-wide.
+  background: var(--pf-color-background-secondary);
   color: inherit;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    box-shadow 0.12s ease;
 
   &:hover {
     border-color: var(--pf-color-border);
@@ -65,7 +70,10 @@
 
   &:focus {
     outline: none;
-    border-color: var(--pf-color-primary);
+    background: var(--pf-color-void);
+    border-color: var(--pf-color-accent);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--pf-color-accent) 18%, transparent);
   }
 }
 
@@ -95,6 +103,96 @@
 
 .pf-bt-endpoint-input {
   width: min(300px, 30vw);
+}
+
+// ---------- Workspace rail (Scope / Runs / Schemas) ----------
+
+.pf-bt-rail {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  // Frosted-glass console rail.
+  background: var(--pf-glass-bg);
+  backdrop-filter: blur(var(--pf-glass-blur)) saturate(var(--pf-glass-saturate));
+  border-right: 1px solid var(--pf-glass-border);
+
+  &__section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-bottom: 1px solid var(--pf-color-border-secondary);
+
+    // Scope is short (chips) — size to content; the list sections grow.
+    &--scope {
+      flex: 0 0 auto;
+    }
+    &--runs.pf-bt-rail__section--open,
+    &--schemas.pf-bt-rail__section--open {
+      flex: 1 1 auto;
+    }
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 9px 10px;
+    font: inherit;
+    font-size: var(--pf-font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--pf-color-text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    transition: color 0.12s ease, background-color 0.12s ease;
+
+    &:hover {
+      color: var(--pf-color-text);
+      background: color-mix(in srgb, currentColor 8%, transparent);
+    }
+  }
+
+  &__chevron {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  &__header-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+    // Accent the section glyphs — the futuristic console cue.
+    color: var(--pf-color-accent);
+  }
+  &__title {
+    flex: 1;
+  }
+  &__badge {
+    flex-shrink: 0;
+    font-size: var(--pf-font-size-xs);
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--pf-color-accent);
+    background: color-mix(in srgb, var(--pf-color-accent) 14%, transparent);
+    border-radius: 100px;
+    padding: 1px 8px;
+  }
+
+  &__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 2px 6px 8px;
+  }
+
+  &__history {
+    height: 100%;
+  }
 }
 
 // ---------- Layout ----------

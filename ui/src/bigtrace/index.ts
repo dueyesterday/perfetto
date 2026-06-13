@@ -62,6 +62,10 @@ function setupContentSecurityPolicy() {
       `'self'`,
       'https://autopush-brush-googleapis.corp.google.com',
       'https://brush-googleapis.corp.google.com',
+      // Allow pointing BigTrace at a local backend (the documented local TP
+      // backend, or a dev/mock server) — used by the connection picker.
+      'http://localhost:*',
+      'http://127.0.0.1:*',
     ],
     'img-src': [`'self'`, 'data:', 'blob:'],
     'style-src': [

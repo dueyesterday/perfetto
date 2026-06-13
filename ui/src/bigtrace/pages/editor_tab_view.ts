@@ -38,7 +38,6 @@ import {
 import {renderResultsPanel} from './results_panel';
 import type {SettingCategory, SettingFilter} from '../settings/settings_types';
 import type {SettingsBindings} from '../settings/tab_bound_setting';
-import {BigtraceSettingsBar} from './bigtrace_settings_bar';
 
 export interface EditorTabViewAttrs {
   readonly tab: BigTraceEditorTab;
@@ -62,12 +61,9 @@ export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
       tab.queryResult.totalRowCount = tab.execution.processedRows;
     }
 
+    // Scope (trace selection + settings) now lives in the workspace rail, not
+    // inline above the editor.
     return m('.pf-bt-editor-tab', [
-      m(BigtraceSettingsBar, {
-        tab,
-        tabsState,
-        bindings: buildTabBindings(tab, tabsState),
-      }),
       m(SplitPanel, {
         direction: 'vertical',
         initialSplit: {percent: 22},
@@ -91,7 +87,7 @@ export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
 // /trace_metadata sees a complete settings array even before the user edits.
 // ---------------------------------------------------------------------------
 
-function buildTabBindings(
+export function buildTabBindings(
   tab: BigTraceEditorTab,
   tabsState: QueryTabsState,
 ): SettingsBindings {
