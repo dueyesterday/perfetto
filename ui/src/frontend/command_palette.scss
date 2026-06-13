@@ -1,0 +1,147 @@
+// Copyright (C) 2026 The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// The command palette reuses the full-screen modal, but presents as a
+// top-anchored spotlight rather than a centred dialog.
+.pf-modal-dialog.pf-command-palette-modal {
+  width: 640px;
+  max-width: 92vw;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  top: 12vh;
+
+  // The modal's title/close header is unused here.
+  > header {
+    display: none;
+  }
+}
+
+.pf-cmdp {
+  display: flex;
+  flex-direction: column;
+  max-height: 62vh;
+
+  &__search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--pf-color-border-secondary);
+  }
+
+  &__search-icon {
+    color: var(--pf-color-text-muted);
+    font-size: 20px;
+  }
+
+  &__input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: var(--pf-font-size-l);
+
+    &::placeholder {
+      color: var(--pf-color-text-muted);
+    }
+  }
+
+  &__esc {
+    flex-shrink: 0;
+    font-size: var(--pf-font-size-xs);
+    font-family: var(--pf-font-compact);
+    color: var(--pf-color-text-muted);
+    border: 1px solid var(--pf-color-border);
+    border-radius: var(--pf-border-radius-small);
+    padding: 1px 5px;
+  }
+
+  &__results {
+    overflow-y: auto;
+    padding: 6px;
+  }
+
+  &__section + &__section {
+    margin-top: 2px;
+  }
+
+  &__section-label {
+    font-size: var(--pf-font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--pf-color-text-muted);
+    padding: 8px 10px 4px;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: var(--pf-border-radius);
+    cursor: pointer;
+
+    &:hover {
+      background: color-mix(in srgb, var(--pf-color-accent) 8%, transparent);
+    }
+
+    // Keyboard-selected row.
+    &--active {
+      background: color-mix(in srgb, var(--pf-color-accent) 14%, transparent);
+      box-shadow: inset 2px 0 0 var(--pf-color-accent);
+    }
+  }
+
+  &__row-icon {
+    flex-shrink: 0;
+    font-size: 18px;
+    color: var(--pf-color-text-muted);
+  }
+
+  &__row-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__row-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__row-sub {
+    font-size: var(--pf-font-size-xs);
+    color: var(--pf-color-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__match {
+    color: var(--pf-color-accent);
+    font-weight: 600;
+  }
+
+  &__empty {
+    padding: 28px;
+    text-align: center;
+    color: var(--pf-color-text-muted);
+  }
+}

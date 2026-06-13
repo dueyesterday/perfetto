@@ -46,6 +46,7 @@ import {showModal} from '../../widgets/modal';
 import {assertExists} from '../../base/assert';
 import type {Setting} from '../../public/settings';
 import {toggleHelp} from '../../frontend/help_modal';
+import {openCommandPalette} from '../../frontend/command_palette';
 import {legacyMacrosConfigSchema} from './legacy_macros_schema';
 
 const QUICKSAVE_LOCALSTORAGE_KEY = 'quicksave';
@@ -144,9 +145,19 @@ export default class CoreCommands implements PerfettoPlugin {
   static onActivate(ctx: AppImpl) {
     // Register global commands (commands that are required even without a trace
     // loaded).
+    // The unified command palette: fuzzy-jump to any command, page, or track
+    // from one keystroke. Supersedes the old omnibox-command-mode palette.
     ctx.commands.registerCommand({
       id: 'dev.perfetto.OpenCommandPalette',
       name: 'Open command palette',
+      callback: () => openCommandPalette(),
+      defaultHotkey: '!Mod+K',
+    });
+
+    // Keep the old VS Code-style shortcut as a fast path to command-only mode.
+    ctx.commands.registerCommand({
+      id: 'dev.perfetto.OpenOmniboxCommandMode',
+      name: 'Search commands (omnibox)',
       callback: () => ctx.omnibox.setMode(OmniboxMode.Command),
       defaultHotkey: '!Mod+Shift+P',
     });

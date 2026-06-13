@@ -22,6 +22,7 @@ import {Router} from '../core/router';
 import type {TraceImpl, TraceImplAttrs} from '../core/trace_impl';
 import type {SidePanelManagerImpl} from '../core/side_panel_manager';
 import {Button} from '../widgets/button';
+import {openCommandPalette} from './command_palette';
 import {Intent} from '../widgets/common';
 import {Popup, PopupPosition} from '../widgets/popup';
 import {Omnibox} from './omnibox';
@@ -114,6 +115,11 @@ export class Topbar implements m.ClassComponent<TopbarAttrs> {
       m(Omnibox, {trace}),
       m(
         '.pf-topbar__right',
+        m(Button, {
+          icon: 'bolt',
+          title: 'Command palette  (Ctrl/Cmd+K)',
+          onclick: () => openCommandPalette(),
+        }),
         trace && m(TraceErrorIcon, {trace}),
         renderSidePanelToggle(app.sidePanel),
       ),

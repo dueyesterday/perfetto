@@ -41,6 +41,13 @@ export class PageManagerImpl implements PageManager {
     return this.registry.register(pageHandler);
   }
 
+  // Enumerate all currently-registered pages. Used by the command palette to
+  // offer "jump to page" navigation. The set varies with trace state (some
+  // pages are registered via the trace and disappear when it unloads).
+  listPages(): ReadonlyArray<PageHandler> {
+    return this.registry.valuesAsArray();
+  }
+
   // Called by index.ts upon the main frame redraw callback.
   renderPageForCurrentRoute(): m.Children {
     const route = Router.parseFragment(location.hash);
