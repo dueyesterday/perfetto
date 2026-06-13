@@ -16,6 +16,7 @@ import m from 'mithril';
 import {classNames} from '../../base/classnames';
 import {Icons} from '../../base/semantic_icons';
 import {Button} from '../../widgets/button';
+import {Icon} from '../../widgets/icon';
 import {Intent} from '../../widgets/common';
 import {Stack} from '../../widgets/stack';
 import {queryHistoryStorage} from './query_history_storage';
@@ -253,4 +254,115 @@ export function renderHistoryItem(
       onExpand: makeFullSqlExpander(uuid, queryText),
     }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Run card — the modern unified history entry. One card per run: status pill,
+// quick/saved tag, time, a single-line SQL summary, row count + table chip.
+// The whole card reopens the run; the delete affordance stops propagation.
+// ---------------------------------------------------------------------------
+
+export function renderRunCard(
+  entry: QueryExecution,
+  openQuery?: OpenQueryFn,
+): m.Children {
+  const uuid = entry.uuid;
+  const queryText = (entry.perfettoSql || '').replace(/\s+/g, ' ').trim();
+  const rows = entry.processedRows;
+  const saved = Boolean(entry.materialized);
+  const startTime = entry.startTime;
+  const timeAgo =
+    startTime !== undefined ? formatCompactDate(new Date(startTime)) : '';
+  const utcString =
+    startTime !== undefined
+      ? formatDate(new Date(startTime), {printTimezone: false})
+      : 'N/A';
+  const statusClass = `pf-bt-status-${entry.status
+    .toLowerCase()
+    .replace(/_/g, '-')}`;
+
+  return m(
+    '.pf-bt-run-card',
+    {
+      key: uuid,
+      title: 'Reopen this run',
+      onclick: () => {
+        if (openQuery && uuid) {
+          openQuery(queryText, uuid, saved, false, entry.limit, startTime);
+        }
+      },
+    },
+    m('.pf-bt-run-card__head', [
+      m(
+        'span.pf-bt-run-card__status',
+        {className: statusClass},
+        statusDisplayLabel(entry.status),
+      ),
+      m(
+        'span.pf-bt-run-card__tag',
+        {
+          className: saved
+            ? 'pf-bt-run-card__tag--saved'
+            : 'pf-bt-run-card__tag--quick',
+        },
+        saved ? 'saved' : 'quick',
+      ),
+      m('span.pf-bt-run-card__time', {title: `UTC: ${utcString}`}, timeAgo),
+      m(
+        'button.pf-bt-run-card__delete',
+        {
+          title: 'Delete run',
+          onclick: (e: MouseEvent) => {
+            e.stopPropagation();
+            void confirmDeleteRun(entry, queryText);
+          },
+        },
+        m(Icon, {icon: 'delete'}),
+      ),
+    ]),
+    m(
+      'div.pf-bt-run-card__sql',
+      queryText !== '' ? queryText : '(no query text)',
+    ),
+    m('.pf-bt-run-card__meta', [
+      m('span', `${formatCompact(rows)} ${rows === 1 ? 'row' : 'rows'}`),
+      saved &&
+        entry.tableName &&
+        m('span.pf-bt-run-card__chip', {title: 'Result table'}, entry.tableName),
+    ]),
+  );
+}
+
+async function confirmDeleteRun(
+  entry: QueryExecution,
+  queryText: string,
+): Promise<void> {
+  const uuid = entry.uuid;
+  if (!uuid) return;
+  let confirmed = false;
+  await showModal({
+    title: 'Delete run from history?',
+    content: () =>
+      m(
+        'div',
+        m(ClampedQuery, {
+          queryText,
+          standalone: true,
+          onExpand: makeFullSqlExpander(uuid, queryText),
+        }),
+      ),
+    buttons: [
+      {text: 'Cancel'},
+      {
+        text: 'Delete',
+        primary: true,
+        action: () => {
+          confirmed = true;
+        },
+      },
+    ],
+  });
+  if (!confirmed) return;
+  await queryHistoryStorage.deleteQuery(uuid);
+  historyStore.refreshNow();
 }

@@ -182,6 +182,153 @@
   }
 }
 
+// ---------- Runs (unified history card list) ----------
+
+.pf-bt-runs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+
+  &__toolbar {
+    display: flex;
+    gap: 6px;
+    padding: 6px;
+  }
+  &__search {
+    flex: 1;
+  }
+  &__list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 2px 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+.pf-bt-run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: var(--pf-border-radius);
+  background: var(--pf-color-background);
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.06s ease;
+
+  &:hover {
+    border-color: color-mix(
+      in srgb,
+      var(--pf-color-accent) 45%,
+      var(--pf-color-border)
+    );
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--pf-color-accent) 22%, transparent),
+      var(--pf-shadow-1);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  // Status class (.pf-bt-status-*) supplies `color`; tint a pill from it.
+  &__status {
+    font-size: var(--pf-font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 1px 8px;
+    border-radius: 100px;
+    background: color-mix(in srgb, currentColor 14%, transparent);
+  }
+  &__tag {
+    font-size: var(--pf-font-size-xs);
+    padding: 0 7px;
+    border-radius: 100px;
+    border: 1px solid var(--pf-color-border-secondary);
+    color: var(--pf-color-text-muted);
+
+    &--saved {
+      color: var(--pf-color-accent);
+      border-color: color-mix(
+        in srgb,
+        var(--pf-color-accent) 35%,
+        transparent
+      );
+    }
+  }
+  &__time {
+    margin-left: auto;
+    font-size: var(--pf-font-size-xs);
+    color: var(--pf-color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  &__delete {
+    display: flex;
+    align-items: center;
+    padding: 2px;
+    background: none;
+    border: none;
+    border-radius: var(--pf-border-radius-small);
+    color: var(--pf-color-text-muted);
+    cursor: pointer;
+    opacity: 0;
+    transition:
+      opacity 0.12s ease,
+      color 0.12s ease,
+      background-color 0.12s ease;
+
+    .pf-icon {
+      font-size: 16px;
+    }
+    &:hover {
+      color: var(--pf-color-danger);
+      background: color-mix(in srgb, var(--pf-color-danger) 12%, transparent);
+    }
+  }
+  &:hover &__delete {
+    opacity: 1;
+  }
+
+  &__sql {
+    font-family: var(--pf-font-monospace);
+    font-size: var(--pf-font-size-s);
+    color: var(--pf-color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--pf-font-size-xs);
+    color: var(--pf-color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  &__chip {
+    max-width: 150px;
+    padding: 0 7px;
+    border-radius: 100px;
+    background: var(--pf-color-background-secondary);
+    border: 1px solid var(--pf-color-border-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 // ---------- Workspace rail (Scope / Runs / Schemas) ----------
 
 .pf-bt-rail {

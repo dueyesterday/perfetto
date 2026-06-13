@@ -13,13 +13,12 @@
 // limitations under the License.
 
 import m from 'mithril';
-import {Tabs, type TabsTab} from '../../widgets/tabs';
 import {Button} from '../../widgets/button';
 import {Spinner} from '../../widgets/spinner';
 import {EmptyState} from '../../widgets/empty_state';
-import type {QueryExecution} from './query_store';
+import {TextInput} from '../../widgets/text_input';
 import {historyStore} from './history_store';
-import {renderHistoryItem, type OpenQueryFn} from './query_history_item';
+import {renderRunCard, type OpenQueryFn} from './query_history_item';
 
 interface QueryHistoryComponentAttrs {
   readonly className?: string;
@@ -32,6 +31,8 @@ export {setHistoryActiveTab} from './history_store';
 export class QueryHistoryComponent
   implements m.ClassComponent<QueryHistoryComponentAttrs>
 {
+  private search = '';
+
   oninit(vnode: m.CVnode<QueryHistoryComponentAttrs>) {
     historyStore.requestRefresh(vnode.attrs.refreshSignal ?? 0);
   }
@@ -47,11 +48,7 @@ export class QueryHistoryComponent
     if (historyStore.isLoading && historyStore.history.length === 0) {
       return m(
         EmptyState,
-        {
-          title: 'Loading history...',
-          icon: 'hourglass_empty',
-          fillHeight: true,
-        },
+        {title: 'Loading runs…', icon: 'hourglass_empty', fillHeight: true},
         m(Spinner),
       );
     }
@@ -64,87 +61,49 @@ export class QueryHistoryComponent
       });
     }
 
-    const standardQueries = historyStore.history.filter((h) => !h.materialized);
-    const materializedQueries = historyStore.history.filter(
-      (h) => h.materialized,
-    );
+    // One unified, newest-first run list (no Ephemeral/Persistent tab split —
+    // each card carries a quick/saved tag). Full-text filter over the SQL.
+    const all = historyStore.history;
+    const q = this.search.trim().toLowerCase();
+    const filtered = q
+      ? all.filter((h) => (h.perfettoSql || '').toLowerCase().includes(q))
+      : all;
 
-    // Span-wrap titles so hover tooltips explain "Ephemeral"/"Persistent".
-    const tabs: TabsTab[] = [
-      {
-        key: 'standard',
-        title: m(
-          'span',
-          {
-            title:
-              'Queries run with Persistent OFF — results were shown ' +
-              'inline at run time and not saved. Reopen here to see the ' +
-              'SQL again or rerun.',
+    return m('.pf-bt-runs', rest, [
+      m('.pf-bt-runs__toolbar', [
+        m(TextInput, {
+          className: 'pf-bt-runs__search',
+          leftIcon: 'search',
+          placeholder: 'Search runs…',
+          value: this.search,
+          onInput: (v: string) => {
+            this.search = v;
           },
-          `Ephemeral (${standardQueries.length})`,
-        ),
-        content: this.renderHistoryList(standardQueries, false, openQuery),
-      },
-      {
-        key: 'materialized',
-        title: m(
-          'span',
-          {
-            title:
-              'Queries run with Persistent ON — results saved to a ' +
-              'temporary backend table you can reopen and browse here.',
-          },
-          `Persistent (${materializedQueries.length})`,
-        ),
-        content: this.renderHistoryList(materializedQueries, true, openQuery),
-      },
-    ];
-
-    return m(
-      '.pf-query-history',
-      rest,
-      m(Tabs, {
-        tabs: tabs,
-        activeTabKey: historyStore.activeTabKey,
-        onTabChange: (key) => {
-          historyStore.activeTabKey = key;
-          m.redraw();
-        },
-        rightContent: m(Button, {
+        }),
+        m(Button, {
           icon: 'refresh',
-          title: 'Refresh history',
+          title: 'Refresh runs',
           onclick: () => historyStore.refreshNow(),
         }),
-      }),
-    );
-  }
-
-  private renderHistoryList(
-    queries: QueryExecution[],
-    isMaterialized: boolean,
-    openQuery?: OpenQueryFn,
-  ): m.Children {
-    if (queries.length === 0) {
-      return m(
-        EmptyState,
-        {
-          title: isMaterialized
-            ? 'No persistent queries yet'
-            : 'No ephemeral queries yet',
-          icon: 'search',
-          fillHeight: true,
-        },
-        m(
-          'div.pf-bt-history-empty-hint',
-          isMaterialized
-            ? 'Run a query with Persistent on to see it here.'
-            : 'Run a query with Persistent off to see it here.',
-        ),
-      );
-    }
-
-    return queries.map((entry, index) =>
-      renderHistoryItem(entry, index, isMaterialized, openQuery),
-    );
+      ]),
+      filtered.length === 0
+        ? m(
+            EmptyState,
+            {
+              title: all.length === 0 ? 'No runs yet' : 'No matching runs',
+              icon: 'search',
+              fillHeight: true,
+            },
+            all.length === 0 &&
+              m(
+                'div.pf-bt-history-empty-hint',
+                'Run a query to see it here.',
+              ),
+          )
+        : m(
+            '.pf-bt-runs__list',
+            filtered.map((entry) => renderRunCard(entry, openQuery)),
+          ),
+    ]);
   }
 }
