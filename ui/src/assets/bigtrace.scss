@@ -105,6 +105,83 @@
   width: min(300px, 30vw);
 }
 
+// ---------- Connection status (topbar) ----------
+
+.pf-bt-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: var(--pf-font-size-s);
+  font-family: var(--pf-font-monospace);
+  color: var(--pf-color-text-muted);
+  background: var(--pf-color-background-secondary);
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: 100px;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease;
+
+  &:hover {
+    color: var(--pf-color-text);
+    border-color: var(--pf-color-border);
+  }
+
+  &__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--pf-color-neutral);
+    flex-shrink: 0;
+  }
+
+  &--connected &__dot {
+    background: var(--pf-color-success);
+    // Soft glow halo on a healthy connection.
+    box-shadow: 0 0 8px
+      color-mix(in srgb, var(--pf-color-success) 70%, transparent);
+  }
+  &--error &__dot {
+    background: var(--pf-color-danger);
+  }
+  &--checking &__dot {
+    background: var(--pf-color-warning);
+  }
+
+  &__label {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+// ---------- Run bar ----------
+
+.pf-bt-run-bar {
+  align-items: center;
+  gap: 8px;
+
+  &__hint {
+    opacity: 0.7;
+  }
+
+  &__limit {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--pf-font-size-s);
+    color: var(--pf-color-text-muted);
+
+    .pf-text-input {
+      width: 84px;
+    }
+  }
+}
+
 // ---------- Workspace rail (Scope / Runs / Schemas) ----------
 
 .pf-bt-rail {

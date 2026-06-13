@@ -148,7 +148,7 @@ function renderEditorPanel(
 ): m.Children {
   return m('.pf-bt-query-page__editor-panel', [
     m(Box, {className: 'pf-bt-query-page__toolbar'}, [
-      m(Stack, {orientation: 'horizontal'}, [
+      m(Stack, {orientation: 'horizontal', className: 'pf-bt-run-bar'}, [
         tab.isLoading
           ? m(Button, {
               label: 'Cancel',
@@ -158,7 +158,7 @@ function renderEditorPanel(
               onclick: () => runner.cancel(tab),
             })
           : m(Button, {
-              label: 'Run Query',
+              label: 'Run',
               icon: 'play_arrow',
               intent: Intent.Primary,
               variant: ButtonVariant.Filled,
@@ -169,19 +169,20 @@ function renderEditorPanel(
                 runner.run(tab, tab.editorText);
               },
             }),
-        m(
-          Stack,
-          {orientation: 'horizontal', className: 'pf-bt-query-page__hotkeys'},
-          'or press',
-          m(HotkeyGlyphs, {hotkey: 'Mod+Enter'}),
-        ),
+        // Keyboard hint as a compact keycap next to Run, not verbose prose.
+        !tab.isLoading &&
+          m(
+            'span.pf-bt-run-bar__hint.pf-bt-query-page__hotkeys',
+            m(HotkeyGlyphs, {hotkey: 'Mod+Enter'}),
+          ),
         m(StackAuto),
         useBigtraceBackend && [
+          // "Persistent" was opaque; this names the actual effect.
           m(Switch, {
-            label: 'Persistent',
+            label: 'Save to history',
             title:
-              'ON: results saved to History (Persistent tab) — reopen later. ' +
-              'OFF: results shown inline and discarded when the tab closes.',
+              'On: this run is saved to History and can be reopened later. ' +
+              'Off: results are shown inline and discarded when the tab closes.',
             checked: tab.materialize,
             disabled: tab.isLoading,
             onchange: (e: Event) => {
@@ -191,19 +192,22 @@ function renderEditorPanel(
             },
           }),
           m('span.pf-bt-toolbar-divider', {'aria-hidden': 'true'}),
-          m('span', 'Limit:'),
-          m(TextInput, {
-            type: 'number',
-            value: String(tab.limit),
-            placeholder: 'Limit',
-            disabled: tab.isLoading,
-            onInput: (value: string) => {
-              const newLimit = parseInt(value, 10);
-              if (!isNaN(newLimit) && newLimit > 0) {
-                tab.limit = newLimit;
-              }
-            },
-          }),
+          m(
+            'label.pf-bt-run-bar__limit',
+            m('span', 'Limit'),
+            m(TextInput, {
+              type: 'number',
+              value: String(tab.limit),
+              placeholder: 'Limit',
+              disabled: tab.isLoading,
+              onInput: (value: string) => {
+                const newLimit = parseInt(value, 10);
+                if (!isNaN(newLimit) && newLimit > 0) {
+                  tab.limit = newLimit;
+                }
+              },
+            }),
+          ),
         ],
       ]),
     ]),
