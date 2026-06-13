@@ -17,7 +17,10 @@
 $border-1: 1px solid var(--pf-color-border-secondary);
 $border-2: 1px solid var(--pf-color-border-secondary);
 $border-3: 2px solid var(--pf-color-border);
-$inline-padding: 10px;
+// Keep the original horizontal cell padding: a wider inline value clips
+// width-sensitive numeric columns (the modernization's row comfort comes from
+// $block-padding + the body row min-height, not from eating column width).
+$inline-padding: 0.5em;
 $block-padding: 6px;
 $indent-size: 16px;
 $indent-guide-offset: 12px;
@@ -136,6 +139,9 @@ $indent-guide-offset: 12px;
     .pf-grid-cell__content {
       order: 3;
       text-align: right;
+      // Right-aligned numeric content needs trailing headroom so the last
+      // glyph isn't clipped at the column edge (esp. with wide digit fonts).
+      padding-right: 2px;
     }
   }
 
