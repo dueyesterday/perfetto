@@ -170,8 +170,20 @@ export class PollingController {
       ?.getQueryExecution(tab.queryUuid!, tab.lifecycle.signal)
       .then((details: RawQueryExecution) => {
         const endMs = isoToEpochMs(details.endTime);
-        if (endMs !== undefined && tab.queryUuid) {
-          queryStore.update(tab.queryUuid, {endTime: endMs});
+        if (tab.queryUuid) {
+          // Propagate the materialized-table identity here (not just via a
+          // history-list refresh): the results panel keys "results available"
+          // off tableName, and in the single-page tree the Runs list may not
+          // be mounted to trigger that refresh.
+          queryStore.update(tab.queryUuid, {
+            ...(endMs !== undefined ? {endTime: endMs} : {}),
+            ...(details.tableName !== undefined
+              ? {tableName: details.tableName}
+              : {}),
+            ...(details.tableLink !== undefined
+              ? {tableLink: details.tableLink}
+              : {}),
+          });
         }
         if (isFailed && tab.queryResult !== undefined) {
           tab.queryResult.error = details.errorMessage || 'Query failed';

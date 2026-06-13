@@ -17,8 +17,7 @@ import m from 'mithril';
 import {classNames} from '../../base/classnames';
 import {Omnibox} from './omnibox';
 import {getBigtraceEndpoint} from '../settings/endpoint_storage';
-import {setRoute} from '../router';
-import {Routes} from '../routes';
+import {selectBackendNode} from '../pages/miller_workspace';
 
 interface TopbarAttrs {
   sidebarVisible: boolean;
@@ -69,7 +68,7 @@ class ConnectionStatus implements m.ClassComponent {
       {
         className: `pf-bt-conn--${this.state}`,
         title: `BigTrace backend: ${getBigtraceEndpoint() || 'not set'} — click to change`,
-        onclick: () => setRoute(Routes.SETTINGS),
+        onclick: () => selectBackendNode?.(),
       },
       m('span.pf-bt-conn__dot'),
       m('span.pf-bt-conn__label', label),

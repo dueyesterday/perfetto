@@ -1243,3 +1243,190 @@ pre.pf-bt-history-item-query--standalone {
     margin: 0;
   }
 }
+
+// ---------- Miller-column workspace (single-page tree) ----------
+// The whole app: cascading columns that drill left -> right. Column 0 is the
+// root tree; each selection opens a column to its right; the rightmost column
+// is the content (editor + results, trace grid, history, schema, backend form).
+
+.pf-bt-miller {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--pf-color-background);
+}
+
+.pf-bt-miller__col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--pf-color-border-secondary);
+  overflow: hidden;
+}
+
+// Column 0: the root tree. Narrow, tinted, always present.
+.pf-bt-miller__col--root {
+  flex: 0 0 192px;
+  background: var(--pf-color-background-secondary);
+}
+
+// Column 1: an intermediate navigator (the open queries, etc.).
+.pf-bt-miller__col--nav {
+  flex: 0 0 248px;
+  background: var(--pf-color-background-secondary);
+}
+
+// Rightmost: the content. Takes all remaining width.
+.pf-bt-miller__col--content {
+  flex: 1 1 auto;
+  border-right: none;
+}
+
+.pf-bt-miller__col--pad {
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.pf-bt-miller__col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px 7px 14px;
+  border-bottom: 1px solid var(--pf-color-border-secondary);
+}
+
+.pf-bt-miller__col-title {
+  font-size: var(--pf-font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--pf-color-text-muted);
+}
+
+.pf-bt-miller__list {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 6px;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.pf-bt-miller__node {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--pf-border-radius);
+  background: transparent;
+  color: var(--pf-color-text);
+  font: inherit;
+  font-size: var(--pf-font-size-m);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 0.1s ease,
+    box-shadow 0.1s ease;
+
+  &:hover {
+    background: color-mix(in srgb, var(--pf-color-text) 7%, transparent);
+  }
+}
+
+.pf-bt-miller__node--selected,
+.pf-bt-miller__node--selected:hover {
+  background: color-mix(in srgb, var(--pf-color-accent) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--pf-color-accent);
+}
+
+.pf-bt-miller__node-icon {
+  color: var(--pf-color-text-muted);
+  flex-shrink: 0;
+}
+
+.pf-bt-miller__node--selected .pf-bt-miller__node-icon {
+  color: var(--pf-color-accent);
+}
+
+.pf-bt-miller__node-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-bt-miller__badge {
+  font-size: var(--pf-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--pf-color-text-muted);
+  background: var(--pf-color-background);
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: 100px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+}
+
+.pf-bt-miller__node-caret {
+  color: var(--pf-color-text-muted);
+  flex-shrink: 0;
+  font-size: 18px;
+}
+
+// Close button on a query node — revealed on hover.
+.pf-bt-miller__node-close {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.pf-bt-miller__node:hover .pf-bt-miller__node-close,
+.pf-bt-miller__node--selected .pf-bt-miller__node-close {
+  opacity: 0.65;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+// Content-column scaffolding for the simple panels (Scope / Backend).
+.pf-bt-miller__content-header h2 {
+  margin: 0 0 4px;
+  font-size: var(--pf-font-size-xl);
+  font-weight: 600;
+}
+
+.pf-bt-miller__hint {
+  color: var(--pf-color-text-muted);
+  font-size: var(--pf-font-size-s);
+  margin: 0 0 18px;
+  max-width: 64ch;
+  line-height: 1.5;
+}
+
+.pf-bt-miller__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 520px;
+  margin-bottom: 14px;
+}
+
+.pf-bt-miller__field-label {
+  font-size: var(--pf-font-size-s);
+  font-weight: 600;
+}
+
+.pf-bt-miller__history {
+  height: 100%;
+  overflow-y: auto;
+  padding: 8px 10px;
+}
+
+// The editor+results split must fill the content column.
+.pf-bt-miller__col--content .pf-bt-editor-tab {
+  height: 100%;
+}
