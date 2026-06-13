@@ -70,7 +70,7 @@
     li code {
       background-color: var(--pf-color-background);
       padding: 0.125rem 0.375rem;
-      border-radius: 3px;
+      border-radius: var(--pf-border-radius-small);
       font-size: 0.8125rem;
       border: 1px solid var(--pf-color-border);
     }
@@ -100,7 +100,7 @@
 
   .pf-exp-node-panel__comment {
     border: 1px solid var(--pf-color-border);
-    border-radius: 4px;
+    border-radius: var(--pf-border-radius);
     background-color: var(--pf-color-background);
     resize: vertical;
     font-family: var(--pf-font);
@@ -152,7 +152,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem;
-  border-radius: 4px;
+  border-radius: var(--pf-border-radius);
   gap: 0.5rem;
 
   &:hover {

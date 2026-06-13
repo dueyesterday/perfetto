@@ -105,24 +105,23 @@
     }
   }
 
+  // SQL query mode: stay a floating pill (consistent with command mode) but
+  // signal "code" via an accent border + monospace input, instead of the old
+  // black terminal bar.
   &--query-mode {
-    background-color: #111;
-    border-radius: 0;
-    width: 100%;
-    max-width: 100%;
-    margin-top: 0;
-    height: var(--topbar-height);
-    border: none;
+    max-width: 820px;
+    background-color: var(--pf-color-background);
+    border-color: var(--pf-color-accent);
 
     input {
-      color: #9ddc67;
+      color: var(--pf-color-text);
       font-family: var(--pf-font-monospace);
       padding-left: 0;
     }
 
     &:before {
       content: "attach_money";
-      color: #9ddc67;
+      color: var(--pf-color-accent);
       font-size: 26px;
       padding-top: 5px;
     }

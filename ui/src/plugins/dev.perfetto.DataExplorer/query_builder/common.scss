@@ -62,11 +62,11 @@
   width: 40px;
   height: 40px;
   font-size: var(--pf-font-size-xxl);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--pf-shadow-1);
   transition: box-shadow 0.2s ease;
 
   &:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--pf-shadow-2);
   }
 }
 

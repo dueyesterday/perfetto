@@ -102,7 +102,7 @@
   font-size: 13px;
 
   &:hover {
-    background: var(--pf-color-background-hover);
+    background: color-hover-surface(var(--pf-color-background-secondary));
   }
 
   .pf-icon {
@@ -460,7 +460,7 @@
   }
 
   &:hover {
-    background: var(--pf-color-background-hover);
+    background: color-hover-surface(var(--pf-color-background-secondary));
   }
 }
 

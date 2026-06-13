@@ -22,35 +22,35 @@
 
   &__row {
     &--emergency {
-      color: log-level-color(hsl(291, 100%, 50%), 20%);
+      color: log-level-color(var(--pf-chart-color-7), 20%);
     }
 
     &--alert {
-      color: log-level-color(hsl(291, 100%, 50%), 20%);
+      color: log-level-color(var(--pf-chart-color-7), 20%);
     }
 
     &--critical {
-      color: log-level-color(hsl(291, 100%, 50%), 20%);
+      color: log-level-color(var(--pf-chart-color-7), 20%);
     }
 
     &--error {
-      color: log-level-color(hsl(0, 86%, 60%), 20%);
+      color: log-level-color(var(--pf-chart-color-2), 20%);
     }
 
     &--warning {
-      color: log-level-color(hsl(38, 100%, 58%), 20%);
+      color: log-level-color(var(--pf-chart-color-3), 20%);
     }
 
     &--notice {
-      color: log-level-color(hsl(95, 52%, 45%), 30%);
+      color: log-level-color(var(--pf-chart-color-4), 30%);
     }
 
     &--info {
-      color: log-level-color(hsl(217, 100%, 60%), 30%);
+      color: log-level-color(var(--pf-chart-color-1), 30%);
     }
 
     &--debug {
-      color: log-level-color(hsl(0, 0%, 60%), 30%);
+      color: log-level-color(var(--pf-color-neutral), 30%);
     }
 
     &--highlighted {

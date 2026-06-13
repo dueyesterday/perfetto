@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+@import "../../assets/theme";
 @import "./query_builder/builder.scss";
 @import "./query_builder/results_panel.scss";
 @import "./dashboard/dashboard.scss";
@@ -105,7 +106,7 @@
   code {
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
-    font-family: var(--monospace-font);
+    font-family: var(--pf-font-monospace);
     font-size: 0.9em;
   }
 
@@ -212,7 +213,7 @@
   }
 
   &__column {
-    color: var(--pf-color-text-secondary);
+    color: var(--pf-color-text-muted);
   }
 }
 
@@ -320,7 +321,7 @@
     transition: background 0.15s ease;
 
     &:hover {
-      background: var(--pf-color-hover);
+      background: color-hover-surface(var(--pf-color-background-secondary));
     }
   }
 
@@ -414,7 +415,7 @@
     // Label text (the span)
     > span {
       font-size: var(--pf-font-size-s);
-      color: var(--pf-color-text-secondary);
+      color: var(--pf-color-text-muted);
       font-weight: 500;
       white-space: nowrap;
     }
@@ -488,7 +489,7 @@
     user-select: none;
 
     &:hover {
-      background: var(--pf-color-hover);
+      background: color-hover-surface(var(--pf-color-background-secondary));
     }
   }
 
@@ -496,7 +497,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--pf-color-text-secondary);
+    color: var(--pf-color-text-muted);
   }
 
   &__info {
@@ -591,7 +592,7 @@
 
   &__filter-label {
     font-size: var(--pf-font-size-xs);
-    color: var(--pf-color-text-secondary);
+    color: var(--pf-color-text-muted);
   }
 
   &__filters {
@@ -636,8 +637,8 @@
 
     &:hover {
       border-color: var(--pf-color-primary);
-      background: var(--pf-color-surface-highlight);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      background: var(--pf-color-background-secondary);
+      box-shadow: var(--pf-shadow-1);
     }
 
     &:focus-visible {
@@ -651,7 +652,7 @@
 
     &.pf-selected {
       border-color: var(--pf-color-primary);
-      background: var(--pf-color-surface-highlight);
+      background: var(--pf-color-background-secondary);
       box-shadow: 0 0 0 1px var(--pf-color-primary);
     }
   }

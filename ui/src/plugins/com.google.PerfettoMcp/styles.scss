@@ -27,7 +27,7 @@
       margin-bottom: 1rem;
       max-width: 80%;
       padding: 0.5rem 1rem;
-      border-radius: 12px;
+      border-radius: var(--pf-border-radius-large);
       line-height: 1.5;
 
       &--role-label {
@@ -60,8 +60,12 @@
       }
 
       &--thought {
-        background-color: #fff3cd;
-        color: #856404;
+        background-color: color-mix(
+          in srgb,
+          var(--pf-color-warning) 15%,
+          transparent
+        );
+        color: var(--pf-color-warning);
         font-style: italic;
         font-size: 0.9em;
       }

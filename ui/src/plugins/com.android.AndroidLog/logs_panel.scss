@@ -22,11 +22,11 @@
 
   &__row {
     &--debug {
-      color: log-level-color(hsl(155, 79%, 51%), 30%);
+      color: log-level-color(var(--pf-chart-color-4), 30%);
     }
 
     &--verbose {
-      color: log-level-color(hsl(88, 81%, 48%), 30%);
+      color: log-level-color(var(--pf-chart-color-3), 30%);
     }
 
     &--info {
@@ -34,15 +34,15 @@
     }
 
     &--warn {
-      color: log-level-color(hsl(45, 73%, 50%), 20%);
+      color: log-level-color(var(--pf-chart-color-3), 20%);
     }
 
     &--error {
-      color: log-level-color(hsl(4, 100%, 50%), 20%);
+      color: log-level-color(var(--pf-chart-color-2), 20%);
     }
 
     &--fatal {
-      color: log-level-color(hsl(291, 100%, 50%), 20%);
+      color: log-level-color(var(--pf-chart-color-7), 20%);
     }
 
     &--highlighted {

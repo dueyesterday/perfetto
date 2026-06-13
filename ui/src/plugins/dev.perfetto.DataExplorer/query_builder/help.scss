@@ -35,7 +35,7 @@
 
     &:hover {
       transform: translateY(-5px);
-      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 4px 8px var(--pf-color-box-shadow);
     }
 
     h4 {
@@ -74,7 +74,7 @@
     }
 
     .pf-importance-chip {
-      color: white;
+      color: var(--pf-color-text-on-primary);
       font-size: 0.7rem;
       font-weight: 500;
     }
@@ -102,6 +102,6 @@
   }
 
   .pf-search {
-    @extend .pf-exp-input;
+    @extend .pf-exp-input !optional;
   }
 }

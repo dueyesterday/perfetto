@@ -25,7 +25,7 @@
 // Title styling for nodes
 .pf-exp-node-details-title {
   font-weight: 600;
-  font-size: var(--pf-exp-font-size-base);
+  font-size: var(--pf-font-size-m);
 }
 
 // Message styling for informational text (e.g., "No columns added")
@@ -54,7 +54,7 @@
   font-size: 0.9em;
   font-weight: 600;
   background-color: var(--pf-color-background-secondary);
-  border-radius: 3px;
+  border-radius: var(--pf-border-radius-small);
   color: var(--pf-color-text);
 }
 
@@ -77,7 +77,7 @@
   font-size: var(--pf-font-size-s);
   background-color: var(--pf-color-background-secondary);
   padding: 0.5rem;
-  border-radius: 4px;
+  border-radius: var(--pf-border-radius);
   display: block;
   white-space: pre-wrap;
   word-break: break-all;

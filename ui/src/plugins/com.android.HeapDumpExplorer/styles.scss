@@ -185,7 +185,7 @@
 
 .pf-hde-bitmap-card {
   border: 1px solid var(--pf-color-border);
-  border-radius: 3px;
+  border-radius: var(--pf-border-radius-small);
   overflow: hidden;
   margin-bottom: 1rem;
 }
@@ -450,7 +450,7 @@
 }
 
 .pf-hde-col-header__info {
-  color: var(--pf-color-fg-muted, #888);
+  color: var(--pf-color-text-muted);
   font-size: 14px;
   cursor: help;
   opacity: 0;
@@ -462,5 +462,5 @@
 }
 
 .pf-hde-col-header__info:hover {
-  color: var(--pf-color-fg, #333);
+  color: var(--pf-color-text);
 }

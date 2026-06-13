@@ -102,10 +102,10 @@
       width: 60px;
       height: 60px;
       font-size: 28px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      box-shadow: var(--pf-shadow-2);
 
       &:hover {
-        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        box-shadow: var(--pf-shadow-3);
         transform: scale(1.05);
       }
     }
@@ -128,12 +128,12 @@
     height: 48px;
     border-radius: 50%;
     background-color: var(--pf-color-danger);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--pf-shadow-2);
     transition: all 0.2s ease;
     cursor: pointer;
 
     &:hover {
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+      box-shadow: var(--pf-shadow-3);
       transform: scale(1.05);
     }
 
@@ -502,5 +502,5 @@
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: var(--pf-font-family-monospace, "Roboto Mono", monospace);
+  font-family: var(--pf-font-monospace);
 }

@@ -95,10 +95,10 @@
 .pf-join-source-card__column-item {
   font-size: 13px;
   color: var(--pf-color-text);
-  font-family: "Roboto Mono", monospace;
+  font-family: var(--pf-font-monospace);
   padding: 4px 8px;
   background: var(--pf-color-background-secondary);
-  border-radius: 3px;
+  border-radius: var(--pf-border-radius-small);
 }
 
 // Join condition preview (shown when both columns are selected)
@@ -111,7 +111,7 @@
 }
 
 .pf-join-condition-preview__code {
-  font-family: "Roboto Mono", monospace;
+  font-family: var(--pf-font-monospace);
   font-size: var(--pf-font-size-m);
   color: var(--pf-color-text);
   display: flex;
@@ -138,7 +138,7 @@
   padding: 4px 8px;
   background: var(--pf-color-background-secondary);
   border-radius: 4px;
-  font-family: "Roboto Mono", monospace;
+  font-family: var(--pf-font-monospace);
   font-size: 13px;
 
   .pf-join-column-ref {
@@ -205,7 +205,7 @@
 .pf-exp-join-equals {
   color: var(--pf-color-text-muted);
   font-weight: 600;
-  font-family: "Roboto Mono", monospace;
+  font-family: var(--pf-font-monospace);
 }
 
 // Filter during clip row

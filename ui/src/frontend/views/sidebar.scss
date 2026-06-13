@@ -377,7 +377,10 @@ li.pf-sidebar__item {
     flex-direction: column;
     align-items: center;
     margin: 1px 0;
-    background: var(--pf-sidebar-surface-secondary);
+    // A delineated chip so it stays legible on the now-transparent sidebar
+    // over the desktop layer (esp. near-black dark mode).
+    background: var(--pf-color-background-tertiary);
+    border: 1px solid var(--pf-color-border-secondary);
     border-radius: $border-radius;
     font-size: var(--pf-font-size-s);
     text-align: center;

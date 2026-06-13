@@ -42,7 +42,7 @@
   font-family: var(--pf-font-monospace);
 
   &:hover {
-    background-color: hover_color(transparent);
+    background-color: color_hover(transparent);
   }
 }
 

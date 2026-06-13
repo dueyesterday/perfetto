@@ -28,8 +28,8 @@
     box-shadow 0.2s ease-in-out;
 
   &:hover {
-    border-color: #bdbdbd;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    border-color: var(--pf-color-border);
+    box-shadow: 0 4px 8px var(--pf-color-box-shadow);
   }
 
   &__selected {

@@ -90,12 +90,12 @@
   }
 
   &__code {
-    background-color: var(--pf-color-surface-1);
+    background-color: var(--pf-color-background-secondary);
     border: 1px solid var(--pf-color-border);
-    border-radius: 4px;
+    border-radius: var(--pf-border-radius);
     padding: 0.75rem;
     margin: 0;
-    font-family: var(--pf-font-family-mono);
+    font-family: var(--pf-font-monospace);
     font-size: 0.75rem;
     line-height: 1.4;
     overflow-x: auto;

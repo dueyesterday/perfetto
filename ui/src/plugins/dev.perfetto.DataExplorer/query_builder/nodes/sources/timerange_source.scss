@@ -16,7 +16,7 @@
 .pf-timerange-section-title {
   font-size: var(--pf-font-size-m);
   font-weight: 600;
-  color: var(--primary-foreground-color);
+  color: var(--pf-color-text-muted);
   margin: 0 0 12px 0;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -26,9 +26,9 @@
 .pf-timerange-mode-section {
   padding: 16px;
   margin-bottom: 20px;
-  background: var(--apc-selection-fill-secondary-color, rgba(0, 0, 0, 0.02));
-  border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.08));
-  border-radius: 4px;
+  background: var(--pf-color-background-secondary);
+  border: 1px solid var(--pf-color-border-secondary);
+  border-radius: var(--pf-border-radius);
 }
 
 // Mode selection row (switch + button)
@@ -60,7 +60,7 @@
 .pf-timerange-duration-display {
   font-family: var(--pf-font-monospace);
   font-size: 13px;
-  color: var(--primary-foreground-color);
+  color: var(--pf-color-text-muted);
   padding: 4px 0;
 }
 
@@ -68,7 +68,7 @@
 .pf-timerange-info-title {
   font-size: var(--pf-font-size-l);
   font-weight: 600;
-  color: var(--primary-foreground-color);
+  color: var(--pf-color-text-muted);
   margin: 0 0 16px 0;
 }
 
@@ -76,13 +76,13 @@
 .pf-timerange-info-mode {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--divider-color, rgba(0, 0, 0, 0.08));
+  border-top: 1px solid var(--pf-color-border-secondary);
   font-size: var(--pf-font-size-s);
-  color: var(--secondary-foreground-color);
+  color: var(--pf-color-text-muted);
 }
 
 .pf-node-info-empty {
-  color: var(--disabled-foreground-color, #999);
+  color: var(--pf-color-text-disabled);
   font-style: italic;
   padding: 8px 0;
 }

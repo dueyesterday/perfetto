@@ -65,7 +65,7 @@
   font-size: var(--pf-font-size-m);
   font-weight: 600;
   color: var(--pf-color-text);
-  font-family: "Roboto Mono", monospace;
+  font-family: var(--pf-font-monospace);
 }
 
 .pf-exp-list-item-description {
@@ -494,7 +494,7 @@
     flex: 1;
     font-size: var(--pf-font-size-m);
     color: var(--pf-color-text-muted);
-    font-family: "Roboto Mono", monospace;
+    font-family: var(--pf-font-monospace);
   }
 
   .pf-text-input {
@@ -662,7 +662,7 @@
 
 // Error / loading states centered inside the result box
 .pf-metrics-error {
-  color: var(--md-sys-color-error);
+  color: var(--pf-color-danger);
   padding: 16px;
 }
 
@@ -718,10 +718,10 @@
   }
 
   &.pf-drop-rejected {
-    border-color: var(--md-sys-color-error);
+    border-color: var(--pf-color-danger);
     background-color: color-mix(
       in srgb,
-      var(--md-sys-color-error) 8%,
+      var(--pf-color-danger) 8%,
       transparent
     );
   }
@@ -744,7 +744,7 @@
 
 .pf-metrics-v2-empty-hint {
   padding: 12px;
-  color: var(--pf-color-text-secondary);
+  color: var(--pf-color-text-muted);
   font-size: var(--pf-font-size-s);
   text-align: center;
   font-style: italic;
@@ -780,7 +780,7 @@
 }
 
 .pf-metrics-v2-drag-handle {
-  color: var(--pf-color-text-secondary);
+  color: var(--pf-color-text-muted);
   font-size: 14px;
   cursor: grab;
   flex-shrink: 0;
@@ -797,7 +797,7 @@
 
 .pf-metrics-v2-col-type {
   font-size: var(--pf-font-size-xs);
-  color: var(--pf-color-text-secondary);
+  color: var(--pf-color-text-muted);
   font-style: italic;
   flex-shrink: 0;
 }
@@ -858,7 +858,7 @@
 
 .pf-trace-summary-metric-badge {
   font-size: 11px;
-  color: var(--md-sys-color-outline);
+  color: var(--pf-color-text-muted);
 }
 
 .pf-trace-summary-metric-detail {
@@ -878,13 +878,13 @@
 .pf-trace-summary-detail-label {
   font-weight: 500;
   font-size: 11px;
-  color: var(--md-sys-color-outline);
+  color: var(--pf-color-text-muted);
   min-width: 70px;
   text-transform: uppercase;
 }
 
 .pf-trace-summary-detail-none {
-  color: var(--md-sys-color-outline);
+  color: var(--pf-color-text-muted);
   font-style: italic;
 }
 
@@ -897,5 +897,5 @@
 
 .pf-trace-summary-value-meta {
   font-size: 11px;
-  color: var(--md-sys-color-outline);
+  color: var(--pf-color-text-muted);
 }

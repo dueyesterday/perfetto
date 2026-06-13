@@ -73,7 +73,7 @@
     }
 
     &:hover {
-      background: var(--pf-color-background-hover);
+      background: color-hover-surface(var(--pf-color-background-secondary));
     }
   }
 
@@ -113,20 +113,20 @@
   &__pct-bar-bg {
     position: absolute;
     inset: 0;
-    background: #4ca0dc;
+    background: var(--pf-chart-color-1);
     opacity: 0.15;
   }
 
   &__pct-bar-fill {
     position: absolute;
     inset: 0;
-    background: #4ca0dc;
+    background: var(--pf-chart-color-1);
   }
 
   &__pct-bar-fill--baseline {
     position: absolute;
     inset: 0;
-    background: #22c55e;
+    background: var(--pf-chart-color-4);
   }
 
   &__pct-bar-label {
@@ -230,7 +230,7 @@
     }
 
     &:hover {
-      background: var(--pf-color-background-hover);
+      background: color-hover-surface(var(--pf-color-background-secondary));
     }
   }
 
@@ -258,16 +258,16 @@
     display: inline-block;
     width: 12px;
     height: 12px;
-    border-radius: 2px;
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15) inset;
+    border-radius: var(--pf-border-radius-small);
+    box-shadow: 0 0 0 1px var(--pf-color-box-shadow) inset;
   }
 
   &__toolbar-swatch--current {
-    background: #4ca0dc;
+    background: var(--pf-chart-color-1);
   }
 
   &__toolbar-swatch--baseline {
-    background: #22c55e;
+    background: var(--pf-chart-color-4);
   }
 
   &__toolbar-row-label {

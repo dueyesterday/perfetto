@@ -96,7 +96,7 @@
   flex-direction: column;
   gap: 2px;
   font-size: var(--pf-font-size-s);
-  color: var(--pf-color-text-secondary);
+  color: var(--pf-color-text-muted);
 
   &__line {
     display: flex;
@@ -116,7 +116,7 @@
 .pf-filter-and-header {
   margin-bottom: 8px;
   font-size: 11px;
-  color: var(--pf-color-text-secondary);
+  color: var(--pf-color-text-muted);
   font-weight: 500;
   display: flex;
   align-items: center;
@@ -162,7 +162,7 @@
   &__column {
     font-size: var(--pf-font-size-s);
     font-weight: 500;
-    color: var(--pf-color-text-secondary);
+    color: var(--pf-color-text-muted);
   }
 }
 
@@ -273,7 +273,7 @@
 
 // Separator between filter options
 .pf-filter-or-separator {
-  color: var(--md-sys-color-outline);
+  color: var(--pf-color-text-muted);
   font-size: var(--pf-font-size-m);
   font-weight: 500;
   flex-shrink: 0;
