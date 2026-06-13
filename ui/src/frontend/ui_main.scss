@@ -40,11 +40,21 @@
   &__page-container {
     grid-area: page;
     overflow: auto;
-    // The floating workspace card.
-    margin: 2px 8px 8px 4px;
+    // The floating workspace card (document-style pages).
+    margin: 2px 8px 8px 6px;
     background: var(--pf-color-background);
     border: 1px solid var(--pf-color-border-secondary);
     border-radius: var(--pf-border-radius-large);
     box-shadow: var(--pf-shadow-1);
+
+    // The timeline is a full-bleed precision canvas: its ruler, minimap and
+    // track edges are anchored to the container bounds, so a rounded/inset
+    // card would clip real trace pixels. Opt it out — square, edge to edge.
+    &:has(.pf-timeline-page) {
+      margin: 0;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+    }
   }
 }
