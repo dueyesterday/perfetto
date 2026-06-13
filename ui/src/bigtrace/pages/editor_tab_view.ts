@@ -18,6 +18,7 @@ import {Button, ButtonVariant} from '../../widgets/button';
 import {Callout} from '../../widgets/callout';
 import {Intent} from '../../widgets/common';
 import {Editor} from '../../widgets/editor';
+import {Icon} from '../../widgets/icon';
 import {HotkeyGlyphs} from '../../widgets/hotkey_glyphs';
 import {SplitPanel} from '../../widgets/split_panel';
 import {Stack, StackAuto} from '../../widgets/stack';
@@ -45,13 +46,16 @@ export interface EditorTabViewAttrs {
   readonly tabsState: QueryTabsState;
   readonly runner: QueryRunner;
   readonly useBigtraceBackend: boolean;
+  // Opens the Scope node in the workspace tree (the "Ran with" strip links to
+  // it so the run's trace selection is one click away from the query).
+  readonly onOpenScope?: () => void;
 }
 
 // Split pane with editor on top, results on bottom.
 // Rendering lives in results_panel.ts and status_box.ts.
 export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
   view({attrs}: m.Vnode<EditorTabViewAttrs>): m.Children {
-    const {tab, tabsState, runner, useBigtraceBackend} = attrs;
+    const {tab, tabsState, runner, useBigtraceBackend, onOpenScope} = attrs;
 
     // Tabs reopened from history wire up their dataSource on first render.
     if (tab.queryUuid && !tab.dataSource) {
@@ -74,6 +78,7 @@ export class EditorTabView implements m.ClassComponent<EditorTabViewAttrs> {
           tabsState,
           runner,
           useBigtraceBackend,
+          onOpenScope,
         ),
         secondPanel: renderResultsPanel(tab, tabsState),
       }),
@@ -146,6 +151,7 @@ function renderEditorPanel(
   tabsState: QueryTabsState,
   runner: QueryRunner,
   useBigtraceBackend: boolean,
+  onOpenScope?: () => void,
 ): m.Children {
   return m('.pf-bt-query-page__editor-panel', [
     m(Box, {className: 'pf-bt-query-page__toolbar'}, [
@@ -223,6 +229,7 @@ function renderEditorPanel(
         ],
       ]),
     ]),
+    useBigtraceBackend && renderRanWith(tab, onOpenScope),
     tab.editorText.includes('"') &&
       m(
         Callout,
@@ -247,6 +254,51 @@ function renderEditorPanel(
       },
     }),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// "Ran with" strip: the trace scope + settings this query executes against,
+// surfaced inline so a reopened query shows its config without hunting. Links
+// to the Scope node in the workspace tree.
+// ---------------------------------------------------------------------------
+
+function renderRanWith(
+  tab: BigTraceEditorTab,
+  onOpenScope?: () => void,
+): m.Children {
+  const filterCount = tab.traceFilters.length;
+  const metaCols = tab.traceMetadataColumns?.length ?? 0;
+  const matched = scopeCount.matched;
+  return m(
+    '.pf-bt-ranwith',
+    {
+      className: onOpenScope ? 'pf-bt-ranwith--clickable' : '',
+      title: 'Trace scope this query runs against — click to edit',
+      onclick: onOpenScope,
+    },
+    m('span.pf-bt-ranwith__key', 'Scope'),
+    m(
+      'span.pf-bt-ranwith__chip',
+      matched !== undefined ? `${matched.toLocaleString()} traces` : '… traces',
+    ),
+    m(
+      'span.pf-bt-ranwith__chip',
+      filterCount === 0
+        ? 'no filter'
+        : `${filterCount} filter${filterCount === 1 ? '' : 's'}`,
+    ),
+    metaCols > 0 &&
+      m(
+        'span.pf-bt-ranwith__chip',
+        `${metaCols} metadata col${metaCols === 1 ? '' : 's'}`,
+      ),
+    onOpenScope &&
+      m(
+        'span.pf-bt-ranwith__edit',
+        m(Icon, {icon: 'tune'}),
+        'edit',
+      ),
+  );
 }
 
 // ---------------------------------------------------------------------------

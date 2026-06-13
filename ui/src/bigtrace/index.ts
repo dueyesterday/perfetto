@@ -23,7 +23,7 @@ import {initLiveReload} from '../core/live_reload';
 import {settingsStorage} from './settings/settings_storage';
 import {ThemeProvider} from '../frontend/theme_provider';
 import {OverlayContainer} from '../widgets/overlay_container';
-import {MillerWorkspace} from './pages/miller_workspace';
+import {BigtraceWorkspace} from './pages/workspace_tree';
 import {bigTraceSettingsStorage} from './settings/bigtrace_settings_storage';
 import {Topbar} from './layout/topbar';
 import {BigTraceApp as BigTraceAppSingleton} from './bigtrace_app';
@@ -167,7 +167,7 @@ class BigTraceRoot implements m.ClassComponent {
         HotkeyContext,
         {hotkeys, fillHeight: true, focusable: false},
         m(OverlayContainer, {fillHeight: true}, [
-          m(BigTraceLayout, m(MillerWorkspace, {useBigtraceBackend: true})),
+          m(BigTraceLayout, m(BigtraceWorkspace, {useBigtraceBackend: true})),
         ]),
       ),
     ]);
