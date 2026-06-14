@@ -18,7 +18,12 @@ import {Button, ButtonVariant} from '../../widgets/button';
 import {Callout} from '../../widgets/callout';
 import {Intent} from '../../widgets/common';
 import {Editor} from '../../widgets/editor';
-import {perfettoSqlCompletions} from '../query/sql_completion';
+import {Icon} from '../../widgets/icon';
+import {
+  perfettoSqlCompletions,
+  detectMissingIncludes,
+  addIncludes,
+} from '../query/sql_completion';
 import {HotkeyGlyphs} from '../../widgets/hotkey_glyphs';
 import {Stack, StackAuto} from '../../widgets/stack';
 import {Switch} from '../../widgets/switch';
@@ -124,6 +129,9 @@ export function renderEditorPanel(
   runner: QueryRunner,
   useBigtraceBackend: boolean,
 ): m.Children {
+  const missingIncludes = useBigtraceBackend
+    ? detectMissingIncludes(tab.editorText)
+    : [];
   return m('.pf-bt-query-page__editor-panel', [
     m(Box, {className: 'pf-bt-query-page__toolbar'}, [
       m(Stack, {orientation: 'horizontal', className: 'pf-bt-run-bar'}, [
@@ -200,6 +208,26 @@ export function renderEditorPanel(
         ],
       ]),
     ]),
+    missingIncludes.length > 0 &&
+      m(
+        '.pf-bt-include-hint',
+        m(Icon, {className: 'pf-bt-include-hint__icon', icon: 'extension'}),
+        m('span.pf-bt-include-hint__text', [
+          `Needs ${missingIncludes.length} stdlib module`,
+          missingIncludes.length > 1 ? 's' : '',
+          ' not yet included: ',
+          m('code', missingIncludes.join(', ')),
+        ]),
+        m(Button, {
+          label: missingIncludes.length > 1 ? 'Add includes' : 'Add include',
+          icon: 'add',
+          className: 'pf-bt-include-hint__add',
+          onclick: () => {
+            tab.editorText = addIncludes(tab.editorText, missingIncludes);
+            tabsState.markDirty();
+          },
+        }),
+      ),
     tab.editorText.includes('"') &&
       m(
         Callout,

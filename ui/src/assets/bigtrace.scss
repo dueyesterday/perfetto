@@ -1584,3 +1584,36 @@ pre.pf-bt-history-item-query--standalone {
   font-variant-numeric: tabular-nums;
   color: var(--pf-color-text-muted);
 }
+
+// ----- Missing INCLUDE PERFETTO MODULE hint (above the editor) -----
+
+.pf-bt-include-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: var(--pf-font-size-s);
+  color: var(--pf-color-text);
+  background: color-mix(in srgb, var(--pf-color-warning) 12%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--pf-color-warning) 30%, transparent);
+
+  &__icon {
+    color: var(--pf-color-warning);
+    flex-shrink: 0;
+  }
+
+  &__text {
+    flex: 1;
+    min-width: 0;
+
+    code {
+      font-family: var(--pf-font-monospace);
+      color: var(--pf-color-accent);
+    }
+  }
+
+  &__add {
+    flex-shrink: 0;
+  }
+}

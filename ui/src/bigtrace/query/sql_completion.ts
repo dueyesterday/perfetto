@@ -211,3 +211,59 @@ function buildResult(
 // The singleton completion source wired into the BigTrace editor.
 export const perfettoSqlCompletions: EditorCompletionSource = (ctx) =>
   buildResult(ctx, sqlTablesLoader.modules);
+
+// ---------------------------------------------------------------------------
+// Missing INCLUDE PERFETTO MODULE detection.
+//
+// Stdlib tables require their module to be included first
+// (`INCLUDE PERFETTO MODULE android.startup.startups;`). Forgetting that is the
+// most common cause of "no such table" errors. Detect, from the schema, which
+// modules a query references but hasn't included, so the UI can offer to add
+// them.
+// ---------------------------------------------------------------------------
+
+function alreadyIncluded(key: string, included: ReadonlySet<string>): boolean {
+  const k = key.toLowerCase();
+  if (included.has(k)) return true;
+  // A wildcard include (`android.*`) covers everything under that prefix.
+  for (const inc of included) {
+    if (inc.endsWith('*') && k.startsWith(inc.slice(0, -1))) return true;
+  }
+  return false;
+}
+
+// Returns the module include-keys a query references but hasn't included yet
+// (deduped, in first-referenced order). Empty when the schema isn't loaded.
+export function detectMissingIncludes(
+  query: string,
+  modules: SqlModules | undefined = sqlTablesLoader.modules,
+): string[] {
+  if (!modules) return [];
+
+  const included = new Set<string>();
+  const incRe = /include\s+perfetto\s+module\s+([\w.]+\*?)/gi;
+  let inc: RegExpExecArray | null;
+  while ((inc = incRe.exec(query)) !== null) {
+    included.add(inc[1].toLowerCase());
+  }
+
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  const {tables} = scanReferencedTables(query);
+  for (const name of tables) {
+    const table = modules.getTable(name);
+    const key = table?.includeKey; // undefined for prelude / built-in tables
+    if (key === undefined) continue;
+    if (alreadyIncluded(key, included)) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    missing.push(key);
+  }
+  return missing;
+}
+
+// Prepends the needed INCLUDE statements to a query.
+export function addIncludes(query: string, modules: string[]): string {
+  const stmts = modules.map((m) => `INCLUDE PERFETTO MODULE ${m};`).join('\n');
+  return `${stmts}\n\n${query}`;
+}
