@@ -28,6 +28,34 @@ import {classNames} from '../base/classnames';
 
 type EditorLanguage = 'perfetto-sql' | 'javascript';
 
+// Minimal structural mirror of CodeMirror's autocomplete API, so callers can
+// supply a completion source without depending on @codemirror/autocomplete
+// directly (basicSetup already runs the autocompletion extension; we just feed
+// it a source via languageData).
+export interface CompletionContextLike {
+  readonly pos: number;
+  readonly explicit: boolean;
+  readonly state: EditorState;
+  matchBefore(expr: RegExp): {from: number; to: number; text: string} | null;
+}
+export interface CompletionOption {
+  readonly label: string;
+  readonly type?: string;
+  readonly detail?: string;
+  readonly info?: string;
+  readonly apply?: string;
+  readonly boost?: number;
+}
+export interface CompletionResultLike {
+  readonly from: number;
+  readonly to?: number;
+  readonly options: ReadonlyArray<CompletionOption>;
+  readonly validFor?: RegExp;
+}
+export type EditorCompletionSource = (
+  ctx: CompletionContextLike,
+) => CompletionResultLike | null;
+
 export interface EditorAttrs extends HTMLAttrs {
   // Content of the editor. If defined, the editor operates in controlled mode,
   // otherwise it operates in uncontrolled mode.
@@ -61,6 +89,10 @@ export interface EditorAttrs extends HTMLAttrs {
 
   // Callback for every change to the editor's content.
   onUpdate?: (text: string) => void;
+
+  // Optional autocomplete source (e.g. schema-aware SQL completion). Fed into
+  // the autocompletion extension that basicSetup already provides.
+  readonly completions?: EditorCompletionSource;
 }
 
 export class Editor implements m.ClassComponent<EditorAttrs> {
@@ -163,6 +195,15 @@ export class Editor implements m.ClassComponent<EditorAttrs> {
       return [];
     })();
 
+    // Feed the autocompletion extension (already in basicSetup) a completion
+    // source via languageData, when one is supplied. The source closure reads
+    // live state, so it can return more options as e.g. a schema finishes
+    // loading without re-creating the editor.
+    const completions = attrs.completions;
+    const completion = completions
+      ? EditorState.languageData.of(() => [{autocomplete: completions}])
+      : undefined;
+
     this.editorView = new EditorView({
       doc: attrs.text,
       extensions: removeFalsyValues([
@@ -171,6 +212,7 @@ export class Editor implements m.ClassComponent<EditorAttrs> {
         oneDark,
         basicSetup,
         lang,
+        completion,
       ]),
       parent: dom,
       dispatch,

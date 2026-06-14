@@ -18,6 +18,7 @@ import {Button, ButtonVariant} from '../../widgets/button';
 import {Callout} from '../../widgets/callout';
 import {Intent} from '../../widgets/common';
 import {Editor} from '../../widgets/editor';
+import {perfettoSqlCompletions} from '../query/sql_completion';
 import {HotkeyGlyphs} from '../../widgets/hotkey_glyphs';
 import {Stack, StackAuto} from '../../widgets/stack';
 import {Switch} from '../../widgets/switch';
@@ -211,6 +212,7 @@ export function renderEditorPanel(
       text: tab.editorText,
       language: 'perfetto-sql',
       autofocus: true,
+      completions: perfettoSqlCompletions,
       onSave: () => {},
       onUpdate: (text: string) => {
         tab.editorText = text;

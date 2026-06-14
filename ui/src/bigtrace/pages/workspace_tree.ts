@@ -46,6 +46,7 @@ import {queryState} from '../query/query_state';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {SettingsPage} from './settings_page';
 import {historyStore} from '../query/history_store';
+import {sqlTablesLoader} from '../query/sql_tables';
 import {formatCompact, TERMINAL_STATUSES} from '../query/query_store';
 
 interface WorkspaceAttrs {
@@ -126,6 +127,8 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
       bigTraceSettingsStorage.loadSettings();
     }
     historyStore.requestRefresh(this.historyRefreshSignal);
+    // Load the stdlib schema so the editor's SQL autocomplete has tables/columns.
+    sqlTablesLoader.load();
   }
 
   view(): m.Children {
