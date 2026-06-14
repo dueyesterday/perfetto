@@ -200,18 +200,46 @@ function buildResult(
 
   const options: CompletionOption[] = [];
 
-  // Keywords + functions (low priority).
+  // Keywords + SQL built-in functions (low priority).
   for (const k of KEYWORDS) {
     options.push({label: k, type: 'keyword', boost: -20});
   }
   for (const f of FUNCTIONS) {
-    options.push({label: f, type: 'function', boost: -15});
+    options.push({label: f, type: 'function', boost: -18});
   }
 
   if (modules) {
-    // Table names — ranked first when we're in a table position.
+    // Stdlib scalar functions + macros — with their signatures + docs.
+    for (const fn of modules.listFunctions()) {
+      options.push({
+        label: fn.name,
+        type: 'function',
+        detail: fn.returnType,
+        info: signatureInfo(fn.name, fn.args, fn.returnType, fn.description),
+        boost: -8,
+      });
+    }
+    for (const mac of modules.listMacros()) {
+      options.push({
+        label: mac.name,
+        type: 'function',
+        detail: 'macro',
+        info: signatureInfo(mac.name, mac.args, mac.returnType, mac.description),
+        boost: -10,
+      });
+    }
+    // Tables + table-valued functions — ranked first in a table position.
     for (const t of modules.listTables()) {
       options.push(tableOption(t, tablePos ? 60 : 0));
+    }
+    for (const tf of modules.listTableFunctions()) {
+      options.push({
+        label: tf.name,
+        type: 'class',
+        detail: 'table function',
+        info: signatureInfo(tf.name, tf.args, 'TABLE', tf.description),
+        boost: tablePos ? 55 : -8,
+      });
     }
     // Columns of the tables this query already references.
     if (!tablePos) {
@@ -224,6 +252,18 @@ function buildResult(
   }
 
   return {from, options, validFor: /[\w]*/};
+}
+
+// Renders a callable's signature + first line of docs for the completion popup.
+function signatureInfo(
+  name: string,
+  args: ReadonlyArray<{name: string; type: string}>,
+  ret: string,
+  description: string,
+): string {
+  const sig = `${name}(${args.map((a) => `${a.name} ${a.type}`).join(', ')}) → ${ret}`;
+  const firstLine = description.split('\n')[0].trim();
+  return firstLine ? `${sig}\n${firstLine}` : sig;
 }
 
 // The singleton completion source wired into the BigTrace editor.

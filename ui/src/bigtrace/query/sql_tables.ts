@@ -22,6 +22,7 @@ import type {
   SqlFunction,
   SqlTableFunction,
   SqlMacro,
+  SqlArgument,
 } from './sql_modules';
 import type {TableColumn} from '../../components/widgets/sql/table/table_column';
 import type {SqlTableDefinition} from '../../components/widgets/sql/table/table_description';
@@ -93,13 +94,20 @@ class SimpleSqlModule implements SqlModule {
   readonly tableFunctions: SqlTableFunction[];
   readonly macros: SqlMacro[];
 
-  constructor(includeKey: string, tags: string[], tables: SqlTable[]) {
+  constructor(
+    includeKey: string,
+    tags: string[],
+    tables: SqlTable[],
+    functions: SqlFunction[],
+    tableFunctions: SqlTableFunction[],
+    macros: SqlMacro[],
+  ) {
     this.includeKey = includeKey;
     this.tags = tags;
     this.tables = tables;
-    this.functions = [];
-    this.tableFunctions = [];
-    this.macros = [];
+    this.functions = functions;
+    this.tableFunctions = tableFunctions;
+    this.macros = macros;
   }
 
   getTable(tableName: string): SqlTable | undefined {
@@ -135,14 +143,57 @@ interface StdlibDataObject {
   importance?: 'core' | 'high' | 'mid' | 'low';
 }
 
+interface StdlibArg {
+  name: string;
+  type: string;
+  desc: string;
+}
+
+interface StdlibFunction {
+  name: string;
+  desc: string;
+  visibility?: string;
+  args: StdlibArg[];
+  return_type: string;
+  return_desc: string;
+}
+
+interface StdlibTableFunction {
+  name: string;
+  desc: string;
+  visibility?: string;
+  args: StdlibArg[];
+  cols: StdlibColumn[];
+}
+
+interface StdlibMacro {
+  name: string;
+  desc: string;
+  visibility?: string;
+  args: StdlibArg[];
+  return_type: string;
+}
+
 interface StdlibModule {
   module_name: string;
   tags?: string[];
   data_objects: StdlibDataObject[];
+  functions?: StdlibFunction[];
+  table_functions?: StdlibTableFunction[];
+  macros?: StdlibMacro[];
 }
 
 interface StdlibPackage {
   modules: StdlibModule[];
+}
+
+function mapArgs(args: StdlibArg[]): SqlArgument[] {
+  return args.map((a) => ({name: a.name, description: a.desc, type: a.type}));
+}
+
+// Private/internal callables aren't meant to be used directly.
+function isPublic(visibility?: string): boolean {
+  return visibility === undefined || visibility === 'public';
 }
 
 class SimpleSqlModules implements SqlModules {
@@ -170,8 +221,42 @@ class SimpleSqlModules implements SqlModules {
             obj.importance ?? undefined,
           );
         });
+        const functions: SqlFunction[] = (mod.functions ?? [])
+          .filter((f) => isPublic(f.visibility))
+          .map((f) => ({
+            name: f.name,
+            description: f.desc,
+            args: mapArgs(f.args),
+            returnType: f.return_type,
+            returnDesc: f.return_desc,
+          }));
+        const tableFunctions: SqlTableFunction[] = (mod.table_functions ?? [])
+          .filter((f) => isPublic(f.visibility))
+          .map((f) => ({
+            name: f.name,
+            description: f.desc,
+            args: mapArgs(f.args),
+            returnCols: f.cols.map(
+              (col) => new SimpleSqlColumn(col.name, col.type, col.desc, f.name),
+            ),
+          }));
+        const macros: SqlMacro[] = (mod.macros ?? [])
+          .filter((mac) => isPublic(mac.visibility))
+          .map((mac) => ({
+            name: mac.name,
+            description: mac.desc,
+            args: mapArgs(mac.args),
+            returnType: mac.return_type,
+          }));
         this.modules.push(
-          new SimpleSqlModule(includeKey, mod.tags ?? [], tables),
+          new SimpleSqlModule(
+            includeKey,
+            mod.tags ?? [],
+            tables,
+            functions,
+            tableFunctions,
+            macros,
+          ),
         );
       }
     }
@@ -187,6 +272,18 @@ class SimpleSqlModules implements SqlModules {
 
   listTablesNames(): string[] {
     return this.listTables().map((t) => t.name);
+  }
+
+  listFunctions(): SqlFunction[] {
+    return this.modules.flatMap((mod) => mod.functions);
+  }
+
+  listTableFunctions(): SqlTableFunction[] {
+    return this.modules.flatMap((mod) => mod.tableFunctions);
+  }
+
+  listMacros(): SqlMacro[] {
+    return this.modules.flatMap((mod) => mod.macros);
   }
 
   getTable(tableName: string): SqlTable | undefined {
