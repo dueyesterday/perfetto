@@ -1295,7 +1295,7 @@ pre.pf-bt-history-item-query--standalone {
 // ----- Connector edge between nodes -----
 
 .pf-bt-flow__edge {
-  flex: 0 0 30px;
+  flex: 0 0 76px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1305,27 +1305,92 @@ pre.pf-bt-history-item-query--standalone {
   }
 }
 
+// Connection ports where an edge meets a node — the node-graph cue.
+.pf-bt-flow__edge-port {
+  fill: color-mix(in srgb, var(--pf-color-accent) 60%, var(--pf-color-border));
+}
+
 .pf-bt-flow__edge-line {
   fill: none;
-  stroke: color-mix(in srgb, var(--pf-color-accent) 55%, var(--pf-color-border));
+  stroke: color-mix(in srgb, var(--pf-color-accent) 50%, var(--pf-color-border));
   stroke-width: 1.5;
 }
 
 .pf-bt-flow__edge-arrow {
   fill: none;
-  stroke: color-mix(in srgb, var(--pf-color-accent) 70%, var(--pf-color-border));
+  stroke: color-mix(in srgb, var(--pf-color-accent) 65%, var(--pf-color-border));
   stroke-width: 1.5;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 
-.pf-bt-flow__edge--live .pf-bt-flow__edge-line,
-.pf-bt-flow__edge--live .pf-bt-flow__edge-arrow {
-  stroke: var(--pf-color-accent);
-  filter: drop-shadow(
-    0 0 5px color-mix(in srgb, var(--pf-color-accent) 60%, transparent)
-  );
-  animation: pf-bt-live-pulse 1.4s ease-in-out infinite;
+// The data-volume label riding above the connector.
+.pf-bt-flow__edge-label {
+  fill: var(--pf-color-text-muted);
+  font-family: var(--pf-font-monospace);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+// Data-flow edges (Trace→Editor, Editor→Results): accent ports + a directional
+// marching-dash showing data moving rightward.
+.pf-bt-flow__edge--flow {
+  .pf-bt-flow__edge-port {
+    fill: var(--pf-color-accent);
+  }
+  .pf-bt-flow__edge-line {
+    stroke: color-mix(in srgb, var(--pf-color-accent) 70%, transparent);
+    stroke-dasharray: 3 5;
+    animation: pf-bt-flow-march 1.4s linear infinite;
+  }
+  .pf-bt-flow__edge-arrow {
+    stroke: var(--pf-color-accent);
+  }
+  .pf-bt-flow__edge-label {
+    fill: color-mix(in srgb, var(--pf-color-accent) 85%, var(--pf-color-text));
+  }
+}
+
+// Live (streaming) edge: brighter, faster flow, glowing.
+.pf-bt-flow__edge--live {
+  .pf-bt-flow__edge-line,
+  .pf-bt-flow__edge-arrow,
+  .pf-bt-flow__edge-port {
+    filter: drop-shadow(
+      0 0 5px color-mix(in srgb, var(--pf-color-accent) 60%, transparent)
+    );
+  }
+  .pf-bt-flow__edge-line {
+    stroke: var(--pf-color-accent);
+    animation-duration: 0.6s;
+  }
+}
+
+// Control edge (History → pipeline): a dim dashed navigation link, no flow.
+.pf-bt-flow__edge--control {
+  .pf-bt-flow__edge-line {
+    stroke: var(--pf-color-border);
+    stroke-dasharray: 2 4;
+  }
+  .pf-bt-flow__edge-arrow {
+    stroke: var(--pf-color-border);
+  }
+  .pf-bt-flow__edge-port {
+    fill: var(--pf-color-border);
+  }
+}
+
+// Dashes march toward the arrow (rightward) = the flow direction.
+@keyframes pf-bt-flow-march {
+  to {
+    stroke-dashoffset: -8;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-bt-flow__edge-line {
+    animation: none !important;
+  }
 }
 
 // ----- Node bodies -----

@@ -46,6 +46,7 @@ import {queryState} from '../query/query_state';
 import {bigTraceSettingsStorage} from '../settings/bigtrace_settings_storage';
 import {SettingsPage} from './settings_page';
 import {historyStore} from '../query/history_store';
+import {formatCompact, TERMINAL_STATUSES} from '../query/query_store';
 
 interface WorkspaceAttrs {
   useBigtraceBackend?: boolean;
@@ -66,6 +67,12 @@ export function openBigtraceSettings(focus?: 'general' | 'trace'): void {
     content: () => m('.pf-bt-settings-modal', m(SettingsPage)),
     buttons: [{text: 'Done'}],
   });
+}
+
+// Glanceable compact count for edge labels — drop the precision "~" prefix
+// (the node already shows the exact value).
+function compact(n: number): string {
+  return formatCompact(n).replace('~', '');
 }
 
 type CollapsibleId = 'history' | 'scope';
@@ -129,33 +136,79 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
       scopeCount.request(effectiveTabSettings(tab), tab.traceFilters);
     }
 
+    // Data-flow telemetry that rides on the connector edges: how many traces
+    // feed the query, and how many rows it has produced.
+    const streaming = Boolean(tab?.isLoading);
+    const terminal =
+      tab?.execution?.status !== undefined &&
+      TERMINAL_STATUSES.has(tab.execution.status);
+    const matched = scopeCount.matched;
+    const rowCount =
+      tab?.execution?.processedRows ?? tab?.queryResult?.rows.length ?? 0;
+    const hasRun = Boolean(tab?.queryUuid) || rowCount > 0;
+
     return m('.pf-bt-flow', [
       this.renderHistoryNode(),
-      this.edge(),
+      // History → pipeline: a control link (you load a past run), not data flow.
+      this.edge({control: true}),
       this.renderScopeNode(tab),
-      this.edge(),
+      // Trace selection → SQL editor: the matched trace set feeds the query.
+      this.edge({
+        label:
+          matched !== undefined
+            ? `${compact(matched)} trace${matched === 1 ? '' : 's'}`
+            : undefined,
+        flow: true,
+      }),
       this.renderEditorNode(),
-      this.edge(true),
+      // SQL editor → Results: rows the query produces; flows while streaming.
+      this.edge({
+        label:
+          hasRun && (rowCount > 0 || terminal)
+            ? `${compact(rowCount)} row${rowCount === 1 ? '' : 's'}`
+            : undefined,
+        flow: hasRun,
+        live: streaming,
+      }),
       this.renderResultsNode(tab),
     ]);
   }
 
   // ----- Flow scaffolding -----
 
-  // A connector between two stage nodes: a curved accent line + arrowhead,
-  // vertically centred. `live` adds the streaming pulse on the edge feeding
-  // Results.
-  private edge(live = false): m.Children {
+  // A connector between two stage nodes: input/output ports + a curved line and
+  // arrowhead, with an optional data-volume label above it. `flow` animates a
+  // directional marching-dash (data moving rightward); `live` brightens it
+  // while a query streams; `control` renders a dimmer dashed link (navigation,
+  // not data flow).
+  private edge(
+    opts: {label?: string; flow?: boolean; live?: boolean; control?: boolean} = {},
+  ): m.Children {
+    const {label, flow, live, control} = opts;
+    const cls = [
+      flow && 'pf-bt-flow__edge--flow',
+      live && 'pf-bt-flow__edge--live',
+      control && 'pf-bt-flow__edge--control',
+    ]
+      .filter(Boolean)
+      .join(' ');
     return m(
       '.pf-bt-flow__edge',
-      {className: live ? 'pf-bt-flow__edge--live' : '', 'aria-hidden': 'true'},
+      {className: cls, 'aria-hidden': 'true'},
       m(
         'svg',
-        {width: 34, height: 22, viewBox: '0 0 34 22', focusable: 'false'},
-        m('path.pf-bt-flow__edge-line', {
-          d: 'M0,11 C12,11 20,11 31,11',
-        }),
-        m('path.pf-bt-flow__edge-arrow', {d: 'M26,6 L33,11 L26,16'}),
+        {width: 76, height: 46, viewBox: '0 0 76 46', focusable: 'false'},
+        label !== undefined &&
+          m(
+            'text.pf-bt-flow__edge-label',
+            {x: 38, y: 13, 'text-anchor': 'middle'},
+            label,
+          ),
+        // Output port (left node) and input port (right node).
+        m('circle.pf-bt-flow__edge-port', {cx: 4, cy: 30, r: 3}),
+        m('circle.pf-bt-flow__edge-port', {cx: 72, cy: 30, r: 3}),
+        m('path.pf-bt-flow__edge-line', {d: 'M4,30 C28,30 48,30 68,30'}),
+        m('path.pf-bt-flow__edge-arrow', {d: 'M63,25 L70,30 L63,35'}),
       ),
     );
   }
