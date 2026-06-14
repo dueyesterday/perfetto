@@ -154,6 +154,25 @@ function buildResult(
   ctx: CompletionContextLike,
   modules: SqlModules | undefined,
 ): CompletionResultLike | null {
+  const textBefore = ctx.state.doc.toString().slice(0, ctx.pos);
+
+  // Mode 0: `INCLUDE PERFETTO MODULE <partial>` → stdlib module names (so you
+  // don't have to remember the exact dotted path).
+  const incMatch = /include\s+perfetto\s+module\s+([\w.]*)$/i.exec(textBefore);
+  if (incMatch) {
+    if (!modules) return null;
+    const partial = incMatch[1];
+    return {
+      from: ctx.pos - partial.length,
+      options: modules
+        .listModules()
+        .map((mod) => mod.includeKey)
+        .filter((k) => !k.startsWith('prelude'))
+        .map((k) => ({label: k, type: 'namespace', detail: 'module', boost: 30})),
+      validFor: /[\w.]*/,
+    };
+  }
+
   // Mode 1: `table.` or `alias.` → that table's columns.
   const dotted = ctx.matchBefore(/[A-Za-z_][\w]*\.[\w]*/);
   if (dotted) {
@@ -177,7 +196,6 @@ function buildResult(
   const word = ctx.matchBefore(/[\w]+/);
   if (!word && !ctx.explicit) return null;
   const from = word ? word.from : ctx.pos;
-  const textBefore = ctx.state.doc.toString().slice(0, ctx.pos);
   const tablePos = inTablePosition(textBefore);
 
   const options: CompletionOption[] = [];
