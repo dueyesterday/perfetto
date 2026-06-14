@@ -1722,3 +1722,115 @@ pre.pf-bt-history-item-query--standalone {
 .pf-bt-summary__nulls {
   color: var(--pf-color-warning);
 }
+
+// ----- Saved trace cohorts -----
+
+.pf-bt-flow__scope-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.pf-bt-cohorts {
+  min-width: 240px;
+  max-width: 340px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  &__save {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    background: transparent;
+    color: var(--pf-color-accent);
+    font: inherit;
+    font-size: var(--pf-font-size-m);
+    cursor: pointer;
+    border-radius: var(--pf-border-radius);
+    text-align: left;
+
+    &:hover {
+      background: color-mix(in srgb, var(--pf-color-accent) 12%, transparent);
+    }
+  }
+
+  &__divider {
+    height: 1px;
+    background: var(--pf-color-border-secondary);
+    margin: 4px 0;
+  }
+
+  &__empty {
+    padding: 8px 10px;
+    color: var(--pf-color-text-muted);
+    font-size: var(--pf-font-size-s);
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  &__apply {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: none;
+    background: transparent;
+    color: var(--pf-color-text);
+    font: inherit;
+    font-size: var(--pf-font-size-m);
+    cursor: pointer;
+    border-radius: var(--pf-border-radius);
+    text-align: left;
+
+    &:hover {
+      background: color-mix(in srgb, var(--pf-color-accent) 10%, transparent);
+    }
+  }
+
+  &__icon {
+    color: var(--pf-color-text-muted);
+    flex-shrink: 0;
+  }
+  &__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  &__meta {
+    font-size: var(--pf-font-size-xs);
+    color: var(--pf-color-text-muted);
+    flex-shrink: 0;
+  }
+  &__del {
+    flex-shrink: 0;
+    opacity: 0.5;
+
+    &:hover {
+      opacity: 1;
+    }
+  }
+}
+
+.pf-bt-cohort-save {
+  min-width: 320px;
+
+  p {
+    margin: 0 0 10px;
+    color: var(--pf-color-text-muted);
+    font-size: var(--pf-font-size-s);
+  }
+}

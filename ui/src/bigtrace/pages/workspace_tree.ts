@@ -40,6 +40,7 @@ import {
 } from './editor_tab_view';
 import {renderResultsPanel} from './results_panel';
 import {BigtraceSettingsBar} from './bigtrace_settings_bar';
+import {TraceSetPicker} from './trace_set_picker';
 import {QueryHistoryComponent} from '../query/query_history';
 import {scopeCount} from '../query/scope_count';
 import {queryState} from '../query/query_state';
@@ -294,23 +295,26 @@ export class BigtraceWorkspace implements m.ClassComponent<WorkspaceAttrs> {
       collapsible: true,
       className: 'pf-bt-flownode--scope',
       body: tab
-        ? m('.pf-bt-flow__scope', [
-            this.renderScopeCount(tab),
-            m(BigtraceSettingsBar, {
-              tab,
-              tabsState: this.tabsState,
-              bindings: buildTabBindings(tab, this.tabsState),
-            }),
-            this.renderTracePreview(),
-            m(Button, {
-              icon: 'open_in_full',
-              label: 'Default trace settings',
-              className: 'pf-bt-flow__scope-more',
-              onclick: () => openBigtraceSettings('trace'),
-            }),
-          ])
+        ? this.renderScopeBody(tab)
         : m('.pf-bt-flow__empty', 'No active query'),
     });
+  }
+
+  private renderScopeBody(tab: BigTraceEditorTab): m.Children {
+    const bindings = buildTabBindings(tab, this.tabsState);
+    return m('.pf-bt-flow__scope', [
+      this.renderScopeCount(tab),
+      m(BigtraceSettingsBar, {tab, tabsState: this.tabsState, bindings}),
+      this.renderTracePreview(),
+      m('.pf-bt-flow__scope-actions', [
+        m(TraceSetPicker, {bindings}),
+        m(Button, {
+          icon: 'open_in_full',
+          label: 'Default settings',
+          onclick: () => openBigtraceSettings('trace'),
+        }),
+      ]),
+    ]);
   }
 
   // A live preview of the traces currently in scope (from the scope-count
