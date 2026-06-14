@@ -54,19 +54,15 @@ interface WorkspaceAttrs {
   useBigtraceBackend?: boolean;
 }
 
-// Opens the global settings (general + default trace settings) as a modal —
-// invoked from the topbar button and the ⌘K commands. `focus` only retitles;
-// the page shows every section.
-export function openBigtraceSettings(focus?: 'general' | 'trace'): void {
+// Opens the settings as a modal. The topbar gear opens the full page; the Scope
+// node's "Default trace settings" deep-links to just the trace sections (focus
+// = 'trace'). `focus` undefined shows every section.
+export function openBigtraceSettings(focus?: 'trace'): void {
   const title =
-    focus === 'trace'
-      ? 'Default trace settings'
-      : focus === 'general'
-        ? 'General settings'
-        : 'BigTrace settings';
+    focus === 'trace' ? 'Default trace settings' : 'BigTrace settings';
   showModal({
     title,
-    content: () => m('.pf-bt-settings-modal', m(SettingsPage)),
+    content: () => m('.pf-bt-settings-modal', m(SettingsPage, {scope: focus})),
     buttons: [{text: 'Done'}],
   });
 }

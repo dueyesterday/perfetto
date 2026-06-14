@@ -16,8 +16,6 @@ import '../../frontend/topbar.scss';
 import m from 'mithril';
 import {classNames} from '../../base/classnames';
 import {Button} from '../../widgets/button';
-import {Popup, PopupPosition} from '../../widgets/popup';
-import {Menu, MenuItem} from '../../widgets/menu';
 import {Omnibox} from './omnibox';
 import {getBigtraceEndpoint} from '../settings/endpoint_storage';
 import {openBigtraceSettings} from '../pages/workspace_tree';
@@ -98,38 +96,16 @@ export class Topbar implements m.ClassComponent<TopbarAttrs> {
         ),
       },
       m(Omnibox),
-      m('.pf-topbar__right', [m(SettingsMenu), m(ConnectionStatus)]),
-    );
-  }
-}
-
-// Gear button → general / default-trace settings (these live here + as ⌘K
-// commands, not in the workflow graph).
-class SettingsMenu implements m.ClassComponent {
-  view() {
-    return m(
-      Popup,
-      {
-        position: PopupPosition.Bottom,
-        trigger: m(Button, {
+      m('.pf-topbar__right', [
+        // Gear → the full settings page (one click, no menu).
+        m(Button, {
           icon: 'settings',
           title: 'Settings',
           className: 'pf-bt-settings-btn',
+          onclick: () => openBigtraceSettings(),
         }),
-      },
-      m(
-        Menu,
-        m(MenuItem, {
-          label: 'General settings',
-          icon: 'tune',
-          onclick: () => openBigtraceSettings('general'),
-        }),
-        m(MenuItem, {
-          label: 'Default trace settings',
-          icon: 'database',
-          onclick: () => openBigtraceSettings('trace'),
-        }),
-      ),
+        m(ConnectionStatus),
+      ]),
     );
   }
 }

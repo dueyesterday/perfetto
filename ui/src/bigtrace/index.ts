@@ -193,15 +193,9 @@ function registerCommands() {
   });
 
   app.commands.registerCommand({
-    id: 'bigtrace.GeneralSettings',
-    name: 'General settings',
-    callback: () => openBigtraceSettings('general'),
-  });
-
-  app.commands.registerCommand({
-    id: 'bigtrace.DefaultTraceSettings',
-    name: 'Default trace settings',
-    callback: () => openBigtraceSettings('trace'),
+    id: 'bigtrace.Settings',
+    name: 'BigTrace settings',
+    callback: () => openBigtraceSettings(),
   });
 
   app.commands.registerCommand({

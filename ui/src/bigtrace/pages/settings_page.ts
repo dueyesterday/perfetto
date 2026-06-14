@@ -204,6 +204,12 @@ export interface SettingsPageAttrs {
   // The /settings route mounts without bindings; the Query page's "Bigtrace
   // Settings" sub-tab mounts with per-tab bindings.
   readonly bindings?: SettingsBindings;
+
+  // Restrict the page to a subset of sections:
+  //   'general' -> endpoint (General) + Query Options
+  //   'trace'   -> Trace Address (the trace-selection grid) + Trace Metadata
+  // Omitted shows every section (the /settings route).
+  readonly scope?: 'general' | 'trace';
 }
 
 // AIP-132 single-field order_by helpers. The DataGrid supports only one active
@@ -812,10 +818,19 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     const query = this.searchQuery.toLowerCase();
     const categories = new Map<string, BigTraceSetting<unknown>[]>();
 
+    // Optional section scoping (the topbar gear opens General vs Default-trace
+    // settings as distinct dialogs).
+    const scope = attrs.scope;
+    const inScope = (cat: string): boolean => {
+      if (scope === undefined) return true;
+      if (scope === 'general') return cat === 'General' || cat === 'Query Options';
+      return cat === TRACE_ADDRESS_DISPLAY || cat === 'Trace Metadata';
+    };
+
     // Show General (the endpoint) only on the standalone /settings route. The
     // endpoint is a connection, not a query, so it stays global and out of the
     // per-tab snapshot UI.
-    if (endpointSetting && !embedded) {
+    if (endpointSetting && !embedded && inScope('General')) {
       categories.set('General', []);
     }
 
@@ -829,6 +844,7 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
 
     for (const setting of settings) {
       const categoryName = this.displayCategory(setting.category || 'General');
+      if (!inScope(categoryName)) continue;
       if (!categories.has(categoryName)) {
         categories.set(categoryName, []);
       }
