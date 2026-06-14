@@ -35,6 +35,8 @@ export class ResultRowsLoader {
   columns: ReadonlyArray<string> = [];
   loading = false;
   error?: string;
+  // True when `rows` is only a capped page of a larger (async) result.
+  partial = false;
 
   private tabId?: string;
   private key = '';
@@ -69,8 +71,10 @@ export class ResultRowsLoader {
       }
       return;
     }
-    // Sync query: rows are inline; clear any error from a prior async tab.
+    // Sync query: rows are inline (the full result); clear any error from a
+    // prior async tab.
     this.error = undefined;
+    this.partial = false;
     this.rows = (tab.queryResult?.rows ?? []) as ResultRow[];
     this.columns = tab.queryResult?.columns ?? [];
   }
@@ -91,6 +95,7 @@ export class ResultRowsLoader {
       if (k !== this.key) return;
       this.rows = page.rows as ResultRow[];
       this.columns = page.columns;
+      this.partial = page.rows.length >= ANALYSIS_ROWS;
     } catch (e) {
       if (e instanceof QueryCancelledError || k !== this.key) return;
       this.error = 'Could not load result data';

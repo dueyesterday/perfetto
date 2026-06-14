@@ -22,6 +22,7 @@ import {renderStatusBox, formatDurationS} from './status_box';
 import {renderResultsGrid} from './results_grid';
 import {ChartTab} from './chart_tab';
 import {SummaryTab} from './summary_tab';
+import {ByTraceTab} from './by_trace_tab';
 
 // Owns its own setInterval since sync queries don't drive periodic redraws.
 class RunningQuerySpinner implements m.ClassComponent<{startMs: number}> {
@@ -175,6 +176,11 @@ function renderResultsTabs(
       key: 'summary',
       title: 'Summary',
       content: m(SummaryTab, {tab}),
+    },
+    {
+      key: 'bytrace',
+      title: 'By trace',
+      content: m(ByTraceTab, {tab}),
     },
     {
       key: 'chart',
