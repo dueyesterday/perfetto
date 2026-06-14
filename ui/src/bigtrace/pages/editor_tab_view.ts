@@ -250,6 +250,7 @@ export function renderEditorPanel(
             title: `INCLUDE PERFETTO MODULE ${errorFix.module}`,
             onclick: () => {
               tab.editorText = addIncludes(tab.editorText, [errorFix.module]);
+              if (tab.queryResult) tab.queryResult.error = undefined;
               tabsState.markDirty();
             },
           }),
@@ -264,6 +265,7 @@ export function renderEditorPanel(
                 errorFix.badTable,
                 errorFix.suggestion,
               );
+              if (tab.queryResult) tab.queryResult.error = undefined;
               tabsState.markDirty();
             },
           }),

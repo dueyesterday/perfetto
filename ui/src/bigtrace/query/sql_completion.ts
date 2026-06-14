@@ -104,17 +104,65 @@ const NON_ALIAS = new Set([
   'as',
 ]);
 
-// Scan the document for the tables (and aliases) referenced in FROM/JOIN
-// clauses, so column suggestions are scoped to what the query actually uses.
+// Blanks out SQL string literals and comments so a `from`/`join` (or `include`)
+// inside them isn't mistaken for real code. A small hand scanner — regexes
+// can't get the interleaving of strings/comments right.
+function stripSqlNoise(sql: string): string {
+  let out = '';
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i];
+    const c2 = sql[i + 1];
+    if (c === '-' && c2 === '-') {
+      while (i < n && sql[i] !== '\n') i++;
+      out += ' ';
+    } else if (c === '/' && c2 === '*') {
+      i += 2;
+      while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+      i += 2;
+      out += ' ';
+    } else if (c === "'") {
+      i++;
+      while (i < n && sql[i] !== "'") {
+        if (sql[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      out += "''";
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+// Names bound by a `WITH … AS (…)` clause — these are CTEs, not stdlib tables.
+function collectCteNames(cleanSql: string): Set<string> {
+  const names = new Set<string>();
+  const re =
+    /(?:\bwith\b|,)\s*(?:recursive\s+)?([a-z_]\w*)(?:\s*\([^)]*\))?\s+as\s*\(/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(cleanSql)) !== null) names.add(m[1].toLowerCase());
+  return names;
+}
+
+// Scan the query for the tables (and aliases) referenced in FROM/JOIN clauses,
+// so column suggestions + missing-include detection are scoped to what the
+// query actually uses. Ignores FROM/JOIN inside strings/comments and CTE names.
 function scanReferencedTables(
   doc: string,
 ): {tables: Set<string>; aliases: Map<string, string>} {
+  const clean = stripSqlNoise(doc);
+  const ctes = collectCteNames(clean);
   const tables = new Set<string>();
   const aliases = new Map<string, string>();
   const re = /(?:\bfrom|\bjoin)\s+([a-z_][\w]*)(?:\s+(?:as\s+)?([a-z_][\w]*))?/gi;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(doc)) !== null) {
+  while ((m = re.exec(clean)) !== null) {
     const table = m[1];
+    if (ctes.has(table.toLowerCase())) continue; // a CTE, not a stdlib table
     tables.add(table.toLowerCase());
     aliases.set(table.toLowerCase(), table);
     const alias = m[2];
@@ -298,12 +346,7 @@ export function detectMissingIncludes(
 ): string[] {
   if (!modules) return [];
 
-  const included = new Set<string>();
-  const incRe = /include\s+perfetto\s+module\s+([\w.]+\*?)/gi;
-  let inc: RegExpExecArray | null;
-  while ((inc = incRe.exec(query)) !== null) {
-    included.add(inc[1].toLowerCase());
-  }
+  const included = includedModules(query);
 
   const missing: string[] = [];
   const seen = new Set<string>();
@@ -320,9 +363,23 @@ export function detectMissingIncludes(
   return missing;
 }
 
-// Prepends the needed INCLUDE statements to a query.
+// The set of modules a query already includes (ignoring strings/comments).
+function includedModules(query: string): Set<string> {
+  const included = new Set<string>();
+  const re = /include\s+perfetto\s+module\s+([\w.]+\*?)/gi;
+  let m: RegExpExecArray | null;
+  const clean = stripSqlNoise(query);
+  while ((m = re.exec(clean)) !== null) included.add(m[1].toLowerCase());
+  return included;
+}
+
+// Prepends the needed INCLUDE statements to a query, skipping any already
+// present (idempotent — a double-click can't add duplicates).
 export function addIncludes(query: string, modules: string[]): string {
-  const stmts = modules.map((m) => `INCLUDE PERFETTO MODULE ${m};`).join('\n');
+  const already = includedModules(query);
+  const toAdd = modules.filter((mod) => !alreadyIncluded(mod, already));
+  if (toAdd.length === 0) return query;
+  const stmts = toAdd.map((m) => `INCLUDE PERFETTO MODULE ${m};`).join('\n');
   return `${stmts}\n\n${query}`;
 }
 

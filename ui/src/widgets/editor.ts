@@ -232,12 +232,15 @@ export class Editor implements m.ClassComponent<EditorAttrs> {
     const editorView = this.editorView;
     if (editorView && attrs.text !== this.latestText) {
       const state = editorView.state;
+      // Record the new text BEFORE dispatching: the dispatch override re-reads
+      // latestText to decide whether to fire onUpdate, and this is a
+      // caller-initiated replace, not a user edit — so it must be a no-op there.
+      this.latestText = attrs.text;
       editorView.dispatch(
         state.update({
           changes: {from: 0, to: state.doc.length, insert: attrs.text},
         }),
       );
-      this.latestText = attrs.text;
     }
   }
 

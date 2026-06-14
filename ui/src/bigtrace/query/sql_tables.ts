@@ -30,13 +30,12 @@ import {
   parsePerfettoSqlTypeFromString,
   type PerfettoSqlType,
 } from '../../trace_processor/perfetto_sql_type';
-import {unwrapResult} from '../../base/result';
 
 // SqlModules loaded from stdlib_docs.json, without a Trace object.
 
 class SimpleSqlColumn implements SqlColumn {
   readonly name: string;
-  readonly type: PerfettoSqlType;
+  readonly type?: PerfettoSqlType;
   readonly description: string;
 
   constructor(
@@ -46,13 +45,15 @@ class SimpleSqlColumn implements SqlColumn {
     tableName: string,
   ) {
     this.name = name;
-    this.type = unwrapResult(
-      parsePerfettoSqlTypeFromString({
-        type: typeStr,
-        table: tableName,
-        column: name,
-      }),
-    );
+    // One unrecognized type must not take down the whole schema load (which
+    // would silently disable autocomplete for every table) — drop the type info
+    // for that column instead.
+    const parsed = parsePerfettoSqlTypeFromString({
+      type: typeStr,
+      table: tableName,
+      column: name,
+    });
+    this.type = parsed.ok ? parsed.value : undefined;
     this.description = description;
   }
 }
@@ -262,8 +263,16 @@ class SimpleSqlModules implements SqlModules {
     }
   }
 
+  // `modules` is immutable after construction, so flatten each list once and
+  // reuse it — completion calls these on every keystroke.
+  private _tables?: SqlTable[];
+  private _tableNames?: string[];
+  private _functions?: SqlFunction[];
+  private _tableFunctions?: SqlTableFunction[];
+  private _macros?: SqlMacro[];
+
   listTables(): SqlTable[] {
-    return this.modules.flatMap((mod) => mod.tables);
+    return (this._tables ??= this.modules.flatMap((mod) => mod.tables));
   }
 
   listModules(): SqlModule[] {
@@ -271,19 +280,21 @@ class SimpleSqlModules implements SqlModules {
   }
 
   listTablesNames(): string[] {
-    return this.listTables().map((t) => t.name);
+    return (this._tableNames ??= this.listTables().map((t) => t.name));
   }
 
   listFunctions(): SqlFunction[] {
-    return this.modules.flatMap((mod) => mod.functions);
+    return (this._functions ??= this.modules.flatMap((mod) => mod.functions));
   }
 
   listTableFunctions(): SqlTableFunction[] {
-    return this.modules.flatMap((mod) => mod.tableFunctions);
+    return (this._tableFunctions ??= this.modules.flatMap(
+      (mod) => mod.tableFunctions,
+    ));
   }
 
   listMacros(): SqlMacro[] {
-    return this.modules.flatMap((mod) => mod.macros);
+    return (this._macros ??= this.modules.flatMap((mod) => mod.macros));
   }
 
   getTable(tableName: string): SqlTable | undefined {

@@ -86,16 +86,19 @@ export class ResultRowsLoader {
     this.loading = true;
     this.error = undefined;
     try {
+      // Fetch one extra row so length > ANALYSIS_ROWS means there's genuinely
+      // more (a result of exactly ANALYSIS_ROWS isn't "partial").
       const page = await tab.queryClient.fetchResults(
         tab.queryUuid,
-        ANALYSIS_ROWS,
+        ANALYSIS_ROWS + 1,
         0,
         this.ac.signal,
       );
       if (k !== this.key) return;
-      this.rows = page.rows as ResultRow[];
+      const rows = page.rows as ResultRow[];
+      this.partial = rows.length > ANALYSIS_ROWS;
+      this.rows = this.partial ? rows.slice(0, ANALYSIS_ROWS) : rows;
       this.columns = page.columns;
-      this.partial = page.rows.length >= ANALYSIS_ROWS;
     } catch (e) {
       if (e instanceof QueryCancelledError || k !== this.key) return;
       this.error = 'Could not load result data';
