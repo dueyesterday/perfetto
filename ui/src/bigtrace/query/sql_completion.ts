@@ -285,3 +285,75 @@ export function addIncludes(query: string, modules: string[]): string {
   const stmts = modules.map((m) => `INCLUDE PERFETTO MODULE ${m};`).join('\n');
   return `${stmts}\n\n${query}`;
 }
+
+// ---------------------------------------------------------------------------
+// Turn a run error into an actionable, schema-aware fix.
+// ---------------------------------------------------------------------------
+
+export type ErrorFix =
+  // The query hit a stdlib table whose module isn't included.
+  | {readonly kind: 'include'; readonly module: string; readonly table: string}
+  // The query referenced a table that looks like a typo of a known one.
+  | {readonly kind: 'rename'; readonly badTable: string; readonly suggestion: string};
+
+function editDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+function closestTable(target: string, names: ReadonlyArray<string>): string | undefined {
+  let best: string | undefined;
+  let bestD = Infinity;
+  const t = target.toLowerCase();
+  for (const n of names) {
+    const d = editDistance(t, n.toLowerCase());
+    if (d < bestD) {
+      bestD = d;
+      best = n;
+    }
+  }
+  // Only suggest a rename when it's genuinely close (a likely typo).
+  const threshold = Math.max(2, Math.floor(target.length / 3));
+  return best !== undefined && bestD > 0 && bestD <= threshold ? best : undefined;
+}
+
+// Given a run's error message, suggest a one-click fix if the schema implies
+// one. Recognises "no such table: X" (the most common failure).
+export function suggestFixForError(
+  error: string,
+  modules: SqlModules | undefined = sqlTablesLoader.modules,
+): ErrorFix | undefined {
+  if (!modules) return undefined;
+  const m = /no such (?:table|view):?\s*([a-z_][\w.]*)/i.exec(error);
+  if (!m) return undefined;
+  const ref = m[1];
+  const bad = ref.includes('.') ? (ref.split('.').pop() ?? ref) : ref;
+
+  const table = modules.getTable(bad);
+  if (table?.includeKey) {
+    return {kind: 'include', module: table.includeKey, table: bad};
+  }
+  if (!table) {
+    const near = closestTable(bad, modules.listTablesNames());
+    if (near) return {kind: 'rename', badTable: bad, suggestion: near};
+  }
+  return undefined;
+}
+
+// Replaces a (likely-mistyped) table identifier with the suggested one.
+export function applyRename(query: string, from: string, to: string): string {
+  return query.replace(new RegExp(`\\b${from}\\b`, 'g'), to);
+}

@@ -23,6 +23,8 @@ import {
   perfettoSqlCompletions,
   detectMissingIncludes,
   addIncludes,
+  suggestFixForError,
+  applyRename,
 } from '../query/sql_completion';
 import {HotkeyGlyphs} from '../../widgets/hotkey_glyphs';
 import {Stack, StackAuto} from '../../widgets/stack';
@@ -132,6 +134,10 @@ export function renderEditorPanel(
   const missingIncludes = useBigtraceBackend
     ? detectMissingIncludes(tab.editorText)
     : [];
+  // Surface the last run's error in the editor (where you fix it), with a
+  // schema-aware one-click fix when we can infer one.
+  const runError = useBigtraceBackend ? tab.queryResult?.error : undefined;
+  const errorFix = runError ? suggestFixForError(runError) : undefined;
   return m('.pf-bt-query-page__editor-panel', [
     m(Box, {className: 'pf-bt-query-page__toolbar'}, [
       m(Stack, {orientation: 'horizontal', className: 'pf-bt-run-bar'}, [
@@ -227,6 +233,40 @@ export function renderEditorPanel(
             tabsState.markDirty();
           },
         }),
+      ),
+    runError !== undefined &&
+      m(
+        '.pf-bt-error-banner',
+        m(Icon, {className: 'pf-bt-error-banner__icon', icon: 'error'}),
+        m(
+          'span.pf-bt-error-banner__text',
+          runError.replace(/\\n/g, '\n').split('\n')[0].slice(0, 160),
+        ),
+        errorFix?.kind === 'include' &&
+          m(Button, {
+            label: 'Add INCLUDE',
+            icon: 'add',
+            className: 'pf-bt-error-banner__fix',
+            title: `INCLUDE PERFETTO MODULE ${errorFix.module}`,
+            onclick: () => {
+              tab.editorText = addIncludes(tab.editorText, [errorFix.module]);
+              tabsState.markDirty();
+            },
+          }),
+        errorFix?.kind === 'rename' &&
+          m(Button, {
+            label: `Rename to ${errorFix.suggestion}`,
+            icon: 'edit',
+            className: 'pf-bt-error-banner__fix',
+            onclick: () => {
+              tab.editorText = applyRename(
+                tab.editorText,
+                errorFix.badTable,
+                errorFix.suggestion,
+              );
+              tabsState.markDirty();
+            },
+          }),
       ),
     tab.editorText.includes('"') &&
       m(

@@ -1617,3 +1617,35 @@ pre.pf-bt-history-item-query--standalone {
     flex-shrink: 0;
   }
 }
+
+// ----- Run-error banner (above the editor, with a smart fix) -----
+
+.pf-bt-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: var(--pf-font-size-s);
+  color: var(--pf-color-text);
+  background: color-mix(in srgb, var(--pf-color-danger) 12%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--pf-color-danger) 30%, transparent);
+
+  &__icon {
+    color: var(--pf-color-danger);
+    flex-shrink: 0;
+  }
+
+  &__text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--pf-font-monospace);
+  }
+
+  &__fix {
+    flex-shrink: 0;
+  }
+}
