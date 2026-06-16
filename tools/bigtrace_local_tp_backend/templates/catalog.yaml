@@ -1,0 +1,65 @@
+# BigTrace analysis templates served by POST /query_templates.
+#
+# Edit this file live — the backend re-reads it on every request, so changes
+# show up on a page refresh with no restart. Each entry needs `id` and `name`,
+# and exactly one of `sql` (inline) or `sql_file` (a .sql file in this dir).
+# Optional: description, category (groups templates in the UI), icon,
+# settings ({id: value}), traceFilters, traceMetadataColumns, traceOrderBy,
+# limit, materialize.
+
+- id: lmk_events
+  name: LMK events
+  description: Low-memory-killer kills, worst oom_score_adj first.
+  category: Memory
+  icon: search
+  sql: |
+    INCLUDE PERFETTO MODULE android.memory.lmk;
+
+    SELECT *
+    FROM android_lmk_events
+    WHERE oom_score_adj <= 200
+    ORDER BY oom_score_adj
+    LIMIT 1;
+
+- id: top_cpu_consumers
+  name: Top CPU consumers
+  description: Processes ranked by total CPU time.
+  category: CPU
+  icon: timer
+  sql: |
+    SELECT
+      p.name,
+      sum(s.dur) / 1e9 AS cpu_sec
+    FROM sched s
+    JOIN thread t USING (utid)
+    JOIN process p USING (upid)
+    GROUP BY p.name
+    ORDER BY cpu_sec DESC
+    LIMIT 10;
+
+- id: binder_txns
+  name: Slowest binder transactions
+  description: Binder transactions ordered by duration.
+  category: Latency
+  icon: swap_horiz
+  # Skip traces without binder data instead of failing the whole run.
+  settings:
+    treat_trace_errors_as_warning: true
+  materialize: true
+  sql: |
+    INCLUDE PERFETTO MODULE android.binder;
+
+    SELECT *
+    FROM android_binder_txns
+    ORDER BY dur DESC
+    LIMIT 50;
+
+- id: anrs
+  name: ANRs
+  description: Application Not Responding events.
+  category: Latency
+  icon: warning
+  settings:
+    treat_trace_errors_as_warning: true
+  # SQL kept in a sibling .sql file to exercise the sql_file path.
+  sql_file: anrs.sql

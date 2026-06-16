@@ -42,6 +42,7 @@ from typing import Any
 import duckdb
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+import yaml
 
 # Local modules. The script is intended to run with cwd == this directory
 # (or with this directory on sys.path), which is how server.py in the mock
@@ -1329,6 +1330,130 @@ async def trace_metadata_settings(request: Request) -> dict[str, Any]:
   # values based on the request body (which carries the user's currently-
   # active filters); we don't have the indexer to do that here.
   return {'setting': TRACE_METADATA_SETTINGS}
+
+
+# ---------------------------------------------------------------------------
+# Endpoints: analysis templates
+# ---------------------------------------------------------------------------
+
+# Default catalog bundled with the backend; override with BIGTRACE_TEMPLATES_PATH
+# to point a deployment at its own file. Read fresh on every request (below) so
+# edits show up on a page refresh with no restart.
+_TEMPLATES_PATH = os.environ.get(
+    'BIGTRACE_TEMPLATES_PATH',
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), 'templates', 'catalog.yaml'
+    ),
+)
+
+# setting_id -> category, so a template's `settings` shorthand ({id: value}) can
+# be expanded to the wire shape ({setting_id, values, category}) the rest of the
+# API uses. Unknown ids are dropped (they'd be ignored downstream anyway).
+_SETTING_CATEGORY = {s['id']: s.get('category', '') for s in EXECUTION_SETTINGS}
+
+
+def _expand_template_settings(raw: Any) -> list[dict[str, Any]]:
+  if not isinstance(raw, dict):
+    return []
+  out: list[dict[str, Any]] = []
+  for sid, val in raw.items():
+    category = _SETTING_CATEGORY.get(sid)
+    if category is None:
+      log.warning('template references unknown setting %r; ignoring', sid)
+      continue
+    values = val if isinstance(val, list) else [val]
+    out.append({
+        'setting_id': sid,
+        'values': [_value_to_wire(v) for v in values],
+        'category': category,
+    })
+  return out
+
+
+def _resolve_template_sql(entry: dict[str, Any], base_dir: str,
+                          tid: str) -> Optional[str]:
+  """Inline `sql` wins; else read `sql_file`, confined to the catalog dir."""
+  inline = entry.get('sql')
+  if isinstance(inline, str) and inline.strip():
+    return inline
+  ref = entry.get('sql_file')
+  if isinstance(ref, str) and ref:
+    full = os.path.normpath(os.path.join(base_dir, ref))
+    if os.path.commonpath([base_dir, full]) != base_dir:
+      log.warning('template %r: sql_file %r escapes the catalog dir', tid, ref)
+      return None
+    try:
+      with open(full, 'r') as f:
+        return f.read()
+    except OSError as e:
+      log.warning('template %r: sql_file %r unreadable: %s', tid, ref, e)
+      return None
+  return None
+
+
+def _coerce_template(entry: Any, base_dir: str) -> Optional[dict[str, Any]]:
+  """Map one catalog entry to the wire shape, or None if unusable (logged).
+  Kept deliberately lenient — a recipe's real errors surface when it's run."""
+  if not isinstance(entry, dict):
+    log.warning('template entry is not a mapping; skipping')
+    return None
+  tid = entry.get('id')
+  name = entry.get('name')
+  if not (isinstance(tid, str) and tid and isinstance(name, str) and name):
+    log.warning('template missing id/name; skipping (id=%r)', entry.get('id'))
+    return None
+  sql = _resolve_template_sql(entry, base_dir, tid)
+  if not sql:
+    log.warning('template %r has no usable sql/sql_file; skipping', tid)
+    return None
+  try:
+    return {
+        'id': tid,
+        'name': name,
+        'description': str(entry.get('description', '')),
+        'category': str(entry.get('category', '')),
+        'icon': str(entry.get('icon', '')),
+        'sql': sql,
+        'settings': _expand_template_settings(entry.get('settings')),
+        'traceFilters': entry.get('traceFilters') or [],
+        'traceMetadataColumns': entry.get('traceMetadataColumns') or [],
+        'traceOrderBy': str(entry.get('traceOrderBy', '') or ''),
+        'limit': int(entry.get('limit', 0) or 0),
+        # Templates are saved analyses — persistent (materialized) by default.
+        'materialize': bool(entry.get('materialize', True)),
+    }
+  except (TypeError, ValueError) as e:
+    log.warning('template %r has a malformed field; skipping: %s', tid, e)
+    return None
+
+
+def _load_templates() -> list[dict[str, Any]]:
+  """Read the YAML catalog fresh so live edits need no restart. Unreadable or
+  non-list files yield an empty catalog; malformed entries are skipped."""
+  try:
+    with open(_TEMPLATES_PATH, 'r') as f:
+      raw = yaml.safe_load(f)
+  except FileNotFoundError:
+    return []
+  except (OSError, yaml.YAMLError) as e:
+    log.warning('templates catalog %s unreadable: %s', _TEMPLATES_PATH, e)
+    return []
+  if not isinstance(raw, list):
+    if raw is not None:
+      log.warning('templates catalog must be a list; got %s',
+                  type(raw).__name__)
+    return []
+  base_dir = os.path.dirname(os.path.abspath(_TEMPLATES_PATH))
+  coerced = [_coerce_template(e, base_dir) for e in raw]
+  return [t for t in coerced if t is not None]
+
+
+@app.post('/query_templates')
+async def query_templates() -> dict[str, Any]:
+  # Re-read the catalog each call so edits to the file show up without a
+  # restart. Bad entries are skipped (see _load_templates); a recipe's own
+  # SQL errors surface when it's actually run, not here.
+  return {'templates': _load_templates()}
 
 
 # ---------------------------------------------------------------------------

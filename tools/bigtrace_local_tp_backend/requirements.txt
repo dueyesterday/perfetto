@@ -3,6 +3,10 @@ uvicorn>=0.29
 protobuf>=3.20
 numpy>=1.23
 duckdb>=1.0
+# Parses the analysis-templates catalog (templates/catalog.yaml) served by
+# /query_templates. Already present transitively via datasette; pinned here so
+# a plain `pip install -r requirements.txt` is self-sufficient.
+pyyaml>=6.0
 # pyarrow unlocks DuckDB's bulk-insert fast path. executemany() is
 # orders of magnitude slower for parameterized inserts; Arrow ingests
 # 1M rows in <1s where executemany takes ~10 minutes.

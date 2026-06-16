@@ -2329,6 +2329,29 @@ def main() -> int:
     print('    default picks first-alpha; `desc` picks last-alpha; '
           'snapshot echoes verbatim; bad order_by -> 400')
 
+    print('[28] /query_templates serves the analysis-templates catalog')
+    _, tpl_resp = http('POST', '/query_templates', {})
+    assert isinstance(tpl_resp, dict) and isinstance(
+        tpl_resp.get('templates'), list), f'unexpected shape: {tpl_resp}'
+    tpls = {t['id']: t for t in tpl_resp['templates']}
+    assert tpls, 'bundled catalog should be non-empty'
+    # Every template carries the full wire shape the UI consumes.
+    for t in tpl_resp['templates']:
+      for key in ('id', 'name', 'description', 'category', 'icon', 'sql',
+                  'settings', 'traceFilters', 'traceMetadataColumns',
+                  'traceOrderBy', 'limit', 'materialize'):
+        assert key in t, f'template {t.get("id")!r} missing {key}'
+      assert t['sql'].strip(), f'template {t["id"]!r} has empty sql'
+    # sql_file is resolved server-side (anrs's SQL lives in a sibling .sql).
+    assert 'android.anrs' in tpls['anrs']['sql'], 'sql_file not inlined'
+    # settings shorthand expands to the wire {setting_id, values, category}.
+    assert tpls['binder_txns']['settings'] == [{
+        'setting_id': 'treat_trace_errors_as_warning',
+        'values': ['true'],
+        'category': 'BIGTRACE_QUERY_OPTIONS',
+    }], f'unexpected settings: {tpls["binder_txns"]["settings"]}'
+    print(f'    {len(tpls)} templates; sql_file resolved; settings expanded')
+
     print('\nALL CHECKS PASSED')
   except AssertionError as e:
     print(f'\nFAIL: {e}')

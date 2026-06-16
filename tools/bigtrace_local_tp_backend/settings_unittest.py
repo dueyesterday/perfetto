@@ -32,6 +32,7 @@ from settings import (
     _first_setting_value,
     trace_directory,
     trace_limit,
+    treat_trace_errors_as_warning,
 )
 
 
@@ -211,17 +212,57 @@ class TraceDirectoryTest(unittest.TestCase):
     )
 
 
+class TreatTraceErrorsAsWarningTest(unittest.TestCase):
+  """The BIGTRACE_QUERY_OPTIONS boolean. Booleans ride the
+    always-strings wire as 'true'/'false'; a real bool is accepted too."""
+
+  @staticmethod
+  def _body(value: object) -> list[dict[str, object]]:
+    return [{
+        'setting_id': 'treat_trace_errors_as_warning',
+        'values': [value],
+        'category': 'BIGTRACE_QUERY_OPTIONS',
+    }]
+
+  def test_true_string_enables(self):
+    self.assertTrue(treat_trace_errors_as_warning(self._body('true')))
+
+  def test_mixed_case_true_enables(self):
+    self.assertTrue(treat_trace_errors_as_warning(self._body('True')))
+
+  def test_false_string_disables(self):
+    self.assertFalse(treat_trace_errors_as_warning(self._body('false')))
+
+  def test_real_bool_true_accepted(self):
+    self.assertTrue(treat_trace_errors_as_warning(self._body(True)))
+
+  def test_absent_defaults_false(self):
+    self.assertFalse(treat_trace_errors_as_warning([]))
+
+  def test_non_list_body_is_false(self):
+    self.assertFalse(treat_trace_errors_as_warning(None))
+
+
 class ExecutionSettingsSchemaTest(unittest.TestCase):
   """The static schema returned from `/bigtrace_execution_config`.
     A real backend stores this differently; the local TP backend
     hardcodes it. Pin the structural invariants the UI depends on."""
 
-  def test_includes_two_known_settings(self):
+  def test_includes_known_settings(self):
     # `trace_filters` is deliberately absent — it was promoted to a
     # top-level structured field on /execute_* + /trace_metadata, not
     # a setting. The smoke + ResolveTracesForTest pin that path.
     ids = {s['id'] for s in EXECUTION_SETTINGS}
-    self.assertEqual(ids, {'trace_directory', 'trace_limit'})
+    self.assertEqual(
+        ids,
+        {'trace_directory', 'trace_limit', 'treat_trace_errors_as_warning'},
+    )
+
+  def test_treat_trace_errors_as_warning_is_a_boolean_query_option(self):
+    s = next(s for s in EXECUTION_SETTINGS
+             if s['id'] == 'treat_trace_errors_as_warning')
+    self.assertEqual(s['category'], 'BIGTRACE_QUERY_OPTIONS')
+    self.assertEqual(s['booleanOptions']['defaultValue'], False)
 
   def test_trace_directory_has_empty_default(self):
     # No CLI fallback — the client must supply trace_directory on

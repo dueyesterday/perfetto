@@ -60,6 +60,23 @@ EXECUTION_SETTINGS: list[dict[str, Any]] = [
             'max': 10000
         },
     },
+    {
+        # A boolean BigTrace query option. When on, a trace that fails to
+        # load (or whose SQL errors) is logged as a warning and skipped
+        # instead of surfacing as the query error; with it off (the
+        # default), a query whose every trace fails reports the first
+        # error. See query_executor.RunContext.treat_errors_as_warning.
+        'id': 'treat_trace_errors_as_warning',
+        'name': 'Treat trace errors as warnings',
+        'description':
+            ('When enabled, a trace that fails to load or errors during the '
+             'query is skipped with a warning instead of failing the query.'),
+        'disabled': False,
+        'category': 'BIGTRACE_QUERY_OPTIONS',
+        'booleanOptions': {
+            'defaultValue': False
+        },
+    },
 ]
 
 # A real BigTrace deployment populates this from an indexer that pre-extracts
@@ -114,3 +131,19 @@ def trace_directory(settings: list[dict[str, Any]]) -> str:
     """
   v = _first_setting_value(settings, 'trace_directory')
   return str(v) if v is not None else ''
+
+
+def treat_trace_errors_as_warning(settings: list[dict[str, Any]]) -> bool:
+  """Whether per-trace load/query failures are downgraded to warnings.
+
+    The BIGTRACE_QUERY_OPTIONS boolean of the same id. Booleans ride the
+    always-strings wire as 'true'/'false'; a real bool is accepted too.
+    Missing / anything else (incl. a non-list body) → False, the default:
+    a failing trace surfaces as the query error when every trace fails.
+    """
+  if not isinstance(settings, list):
+    return False
+  v = _first_setting_value(settings, 'treat_trace_errors_as_warning')
+  if isinstance(v, bool):
+    return v
+  return isinstance(v, str) and v.strip().lower() == 'true'

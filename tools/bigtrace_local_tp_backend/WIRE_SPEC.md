@@ -34,6 +34,7 @@
     - [9.10 POST /trace_metadata_schema](#910-post-traces_schema)
     - [9.11 POST /bigtrace_execution_config](#911-post-bigtrace_execution_config)
     - [9.12 POST /trace_metadata_settings](#912-post-trace_metadata_settings)
+    - [9.13 POST /query_templates](#913-post-query_templates)
 10. [Top-level trace-selection fields](#10-top-level-trace-selection-fields)
     - [10.1 trace_filters](#101-trace_filters)
     - [10.2 trace_metadata_columns](#102-trace_metadata_columns)
@@ -84,6 +85,7 @@ The wire-level features below are NEW in `bt_ui_ref_backend_exp_bigtrace_setting
 | 13 | `is null` / `is not null` ops in `Filter[]` | MUST | [§12.2](#122-op-categories) |
 | 14 | `glob` / `not glob` ops in `Filter[]` | MUST | [§12.2](#122-op-categories) |
 | 15 | `in` / `not in` ops in `Filter[]` (multi-value) | MUST | [§12.2](#122-op-categories) |
+| 16 | `POST /query_templates` endpoint (analysis templates) | optional | [§9.13](#913-post-query_templates) |
 
 ---
 
@@ -973,7 +975,7 @@ Type-specific schemas:
 Notes:
 
 - `trace_filters`, `trace_metadata_columns`, `trace_order_by` are NOT in the catalog — they're top-level fields on `/execute_*`.
-- `trace_limit` IS in the catalog on this branch. A separate branch promotes it to a top-level field; in that branch `trace_limit` would be removed from the catalog.
+- `trace_limit` IS in the catalog — it's a setting (read from the `settings` array at execute time), not a top-level field. See [§16.1](#161-whats-a-setting-vs-a-top-level-field).
 - Other backends (especially those with an indexer) MAY add more settings — the UI auto-generates the form from this response.
 
 ### 9.12 POST /trace_metadata_settings
@@ -994,11 +996,72 @@ Same shape as [§9.11](#911-post-bigtrace_execution_config).
 
 Backends without a metadata index MUST return `{"setting": []}`. The UI will collapse the "Trace Metadata" section.
 
+### 9.13 POST /query_templates
+
+**Purpose:** Catalog of analysis templates the UI offers as launchable cards on the home page and as a settings preset. Each template is display metadata plus a frozen execution snapshot — effectively a pre-filled `/execute_*` request the UI drops into a query tab. A backend that doesn't implement templates MUST return `{"templates": []}` (or 404 / omit the route); the UI treats absent/empty as "no templates" and hides the section.
+
+**Request body:** `{}`. A backend MAY accept `{"settings": [{"setting_id", "values", "category"}, ...]}` to vary the catalog by trace source (like [§9.10](#910-post-traces_schema)); simple backends ignore the body.
+
+**Response (200):**
+
+```json
+{"templates": [Template, ...]}
+```
+
+Each `Template`. The **Default** column is what the *client* applies when the field is absent (or `0` for `limit`), so a minimal backend may emit only the MUST fields:
+
+| Field | Type | Required? | Default | Notes |
+|---|---|---|---|---|
+| `id` | string | MUST | — | Stable key (UI key / analytics); never branched on. |
+| `category` | string | MUST | — | Groups templates into CUJ tabs (`""` → "Other"). |
+| `name` | string | MUST | — | Card title. |
+| `description` | string | MUST | — | One-line card subtitle. |
+| `sql` | string | MUST | — | PerfettoSQL seeded into the editor. |
+| `icon` | string | no | generic glyph | Material Symbols name; absent/malformed → generic. |
+| `settings` | `{setting_id, values, category}[]` | no | `[]` | Option settings to apply. Same inner shape as the `/execute_*` body `settings` (snake_case `setting_id`, always-string `values`). The trace-fan-out cap rides here as the `trace_limit` setting. |
+| `traceFilters` | `Filter[]` | no | `[]` | Trace-selection filter ([§12](#12-filter-grammar)). |
+| `traceMetadataColumns` | `string[]` | no | `[]` | Metadata columns to attach ([§10.2](#102-trace_metadata_columns)). |
+| `traceOrderBy` | string | no | `""` | AIP-132 order ([§13](#13-order_by-grammar-aip-132-§ordering-subset)). |
+| `limit` | number | no | `1000` | Result row cap. `0` / absent → the client's template default (1000). |
+| `materialize` | bool | no | `true` | Persistent (results to History) vs ephemeral. |
+
+The snapshot fields (`settings`, `traceFilters`, `traceMetadataColumns`, `traceOrderBy`) plus `sql` / `limit` / `materialize` are exactly the `/execute_*` request a Run submits — see [§9.1](#91-post-execute_bigtrace_query_async) and [§15](#15-per-query-snapshot). There is **no** `traceLimit` field: the trace-fan-out cap is the `trace_limit` setting inside `settings` ([§16](#16-settings-catalog)), same as on `/execute_*`.
+
+Casing: top-level snapshot fields are camelCase (matching `GET /query_executions/{uuid}`); the **one exception** is each `settings` entry, which keeps the `/execute_*` snake_case inner shape (`setting_id`, `values`, `category`).
+
+Notes:
+
+- **Trust + degrade:** the UI applies a template without per-`id` logic, but reconciles `traceMetadataColumns` / `settings` against the live `/trace_metadata_schema` / `/bigtrace_execution_config` — unknown columns / settings are dropped, so a stale template can't strand the UI.
+- **Deployment-aware:** a backend that knows its schema/corpus MAY return only templates valid for it (e.g. omit "by device" recipes when it has no `device_name`). Simple backends return everything.
+
+**Example:**
+
+```json
+{
+  "templates": [
+    {
+      "id": "binder_txns",
+      "category": "Latency",
+      "name": "Slowest binder transactions",
+      "description": "Binder transactions ordered by duration.",
+      "icon": "swap_horiz",
+      "sql": "INCLUDE PERFETTO MODULE android.binder;\nSELECT * FROM android_binder_txns ORDER BY dur DESC LIMIT 50;",
+      "settings": [{"setting_id": "treat_trace_errors_as_warning", "values": ["true"], "category": "BIGTRACE_QUERY_OPTIONS"}],
+      "traceFilters": [],
+      "traceMetadataColumns": [],
+      "traceOrderBy": "",
+      "limit": 0,
+      "materialize": true
+    }
+  ]
+}
+```
+
 ---
 
 ## 10. Top-level trace-selection fields
 
-These three fields are NEW in this branch. Together with `trace_limit` (still a setting on this branch — see [backlog](#16-settings-catalog)), they form the trace-selection pipeline.
+These three fields are NEW in this branch. Together with the `trace_limit` setting ([§16](#16-settings-catalog)), they form the trace-selection pipeline.
 
 ### 10.1 `trace_filters`
 
@@ -1602,7 +1665,7 @@ This branch's design philosophy:
 - **Settings** are backend CONFIG (e.g. "where to find traces"). Live in `/bigtrace_execution_config`. UI auto-generates a form from the catalog. Shipped to `/execute_*` inside the `settings` array.
 - **Top-level fields** are per-query SELECTION knobs (`trace_filters`, `trace_order_by`, `trace_metadata_columns`). Shipped as siblings of `perfetto_sql` on `/execute_*`. NOT in the catalog.
 
-`trace_limit` is anomalous on this branch — it's per-query but lives in the catalog as a setting. A separate branch promotes it to a top-level field to fix the anomaly. The wire contract on THIS branch keeps `trace_limit` as a setting; a re-implementer can choose either.
+`trace_limit` is a **setting** even though it's a per-query knob: it lives in the catalog and ships inside the `settings` array, and the backend reads the cap from there (`trace_limit(settings)`) at execute time. It is NOT a top-level field.
 
 ### 16.2 Settings categories
 
@@ -1615,7 +1678,7 @@ This branch's design philosophy:
 
 ### 16.3 Conformance
 
-A compliant backend MUST expose at LEAST `trace_directory` as a TRACE_ADDRESS plainString setting. Other settings (including `trace_limit` on this branch) are RECOMMENDED but not strictly required.
+A compliant backend MUST expose at LEAST `trace_directory` as a TRACE_ADDRESS plainString setting. Other settings (including `trace_limit`) are RECOMMENDED but not strictly required.
 
 ---
 

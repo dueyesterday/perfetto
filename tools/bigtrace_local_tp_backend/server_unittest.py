@@ -892,5 +892,67 @@ class RunAsyncQueryErrorMessageTest(unittest.TestCase):
     self.assertEqual(snap.error_message, 'RuntimeError: unexpected')
 
 
+class QueryTemplatesTest(unittest.TestCase):
+  """The /query_templates catalog loader: the bundled file parses to the wire
+    shape, settings shorthand expands, sql_file is resolved + confined, and
+    malformed entries are skipped rather than failing the whole catalog (a
+    recipe's real errors surface when it's run, not at load)."""
+
+  _WIRE_KEYS = ('id', 'name', 'description', 'category', 'icon', 'sql',
+                'settings', 'traceFilters', 'traceMetadataColumns',
+                'traceOrderBy', 'limit', 'materialize')
+
+  def _base_dir(self) -> str:
+    return os.path.dirname(os.path.abspath(server_mod._TEMPLATES_PATH))
+
+  def test_bundled_catalog_loads_with_full_wire_shape(self):
+    tpls = server_mod._load_templates()
+    self.assertTrue(tpls, 'bundled catalog should be non-empty')
+    self.assertIn('lmk_events', {t['id'] for t in tpls})
+    for t in tpls:
+      for key in self._WIRE_KEYS:
+        self.assertIn(key, t)
+      self.assertTrue(t['sql'].strip())
+
+  def test_sql_file_is_resolved_and_inlined(self):
+    tpls = {t['id']: t for t in server_mod._load_templates()}
+    self.assertIn('anrs', tpls)  # the starter 'anrs' template uses sql_file
+    self.assertIn('android.anrs', tpls['anrs']['sql'])
+
+  def test_coerce_skips_unusable_entries(self):
+    base = self._base_dir()
+    self.assertIsNone(server_mod._coerce_template('not-a-mapping', base))
+    self.assertIsNone(server_mod._coerce_template({'name': 'no id'}, base))
+    self.assertIsNone(server_mod._coerce_template({'id': 'no_name'}, base))
+    self.assertIsNone(  # no sql / sql_file
+        server_mod._coerce_template({'id': 'x', 'name': 'X'}, base))
+
+  def test_coerce_good_inline_entry_defaults_and_types(self):
+    t = server_mod._coerce_template(
+        {'id': 'x', 'name': 'X', 'sql': 'SELECT 1'}, self._base_dir())
+    self.assertEqual(t['settings'], [])
+    self.assertEqual(t['traceFilters'], [])
+    self.assertEqual(t['traceMetadataColumns'], [])
+    self.assertEqual(t['traceOrderBy'], '')
+    self.assertEqual(t['limit'], 0)
+    self.assertIs(t['materialize'], True)
+
+  def test_settings_shorthand_expands_to_wire_shape(self):
+    out = server_mod._expand_template_settings({
+        'treat_trace_errors_as_warning': True,
+        'definitely_not_a_real_setting': 'x',  # unknown -> dropped
+    })
+    self.assertEqual(out, [{
+        'setting_id': 'treat_trace_errors_as_warning',
+        'values': ['true'],
+        'category': 'BIGTRACE_QUERY_OPTIONS',
+    }])
+
+  def test_sql_file_traversal_is_rejected(self):
+    self.assertIsNone(
+        server_mod._resolve_template_sql(
+            {'sql_file': '../../../etc/passwd'}, self._base_dir(), 'evil'))
+
+
 if __name__ == '__main__':
   unittest.main(verbosity=2)
