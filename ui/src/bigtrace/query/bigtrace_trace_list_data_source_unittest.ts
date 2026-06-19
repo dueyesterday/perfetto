@@ -14,7 +14,10 @@
 
 import {beforeEach, describe, expect, test, vi} from 'vitest';
 import m from 'mithril';
-import {BigtraceTraceListDataSource} from './bigtrace_trace_list_data_source';
+import {
+  BigtraceTraceListDataSource,
+  clearTraceMetadataResponseCache,
+} from './bigtrace_trace_list_data_source';
 import {
   type BigtraceQueryClient,
   QueryCancelledError,
@@ -95,6 +98,9 @@ describe('BigtraceTraceListDataSource', () => {
     // The data source calls m.redraw() around each fetch; no component is
     // mounted in the test, so stub it out.
     vi.spyOn(m, 'redraw').mockImplementation(() => {});
+    // Instances share the module-level response cache; clear it so one test's
+    // rows can't satisfy another's fetch.
+    clearTraceMetadataResponseCache();
   });
 
   test('first render fetches with the fallback page size when limit is 0', async () => {

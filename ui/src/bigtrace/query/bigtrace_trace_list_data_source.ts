@@ -44,6 +44,34 @@ function traceSourceSettingsKey(
   return JSON.stringify(settings.filter((s) => s.category === 'TRACE_ADDRESS'));
 }
 
+// One cached /trace_metadata window: the rows, the post-filter total, and the
+// column set the backend returned for that exact request.
+interface CachedTraceWindow {
+  readonly rows: Row[];
+  readonly total: number | undefined;
+  readonly cols: string[];
+}
+
+// Response cache shared across all data-source instances, keyed by the whole
+// /trace_metadata request (see `requestKey`). Mithril destroys and rebuilds the
+// Settings page on every navigation / modal open, resetting a data source's
+// instance fields — without this, the grid would re-hit the backend on each
+// visit. Trace metadata is effectively static between visits, so a remount
+// serves the same window from here, synchronously, with no blink. The Refresh
+// button forces past it (and refreshes the entry).
+const traceMetadataResponseCache = new Map<string, CachedTraceWindow>();
+
+// Bound the cache so a long session of source / filter / sort edits can't grow
+// it without limit. Distinct request shapes are few in practice, so this is a
+// safety ceiling; the oldest entry is evicted once past it.
+const MAX_CACHED_WINDOWS = 32;
+
+// Test hook: instances share the module-level cache above, so a test that left
+// an entry behind would leak rows into the next. Cleared in `beforeEach`.
+export function clearTraceMetadataResponseCache(): void {
+  traceMetadataResponseCache.clear();
+}
+
 // DataSource adapter paging `/trace_metadata` into the DataGrid widget — the
 // sibling of `BigtraceAsyncDataSource`. Same sort / filter / pagination model,
 // but pointed at /trace_metadata instead of a query's results, and re-reading
@@ -86,6 +114,8 @@ export class BigtraceTraceListDataSource implements DataSource {
     private readonly getSettings: () => ReadonlyArray<SettingFilter>,
     private readonly signal?: AbortSignal,
     private readonly onOrderByChange?: (orderBy: string) => void,
+    // Distinguishes cache entries across backends; '' for tests that don't care.
+    private readonly endpoint: string = '',
   ) {}
 
   useRows(model: DataSourceModel): DataSourceRows {
@@ -104,10 +134,16 @@ export class BigtraceTraceListDataSource implements DataSource {
 
     const sortChanged = wantedOrderBy !== this.currentOrderBy;
     const filterChanged = wantedFilterKey !== this.currentFilterKey;
+    // The grid re-requests its window on every (re)mount and as it measures its
+    // viewport, so refetch only when the wanted window reaches OUTSIDE what's
+    // already loaded. A narrower or equal window is served from the cached rows
+    // — trace metadata is static, so there's no value in a roundtrip for data we
+    // already hold (this is what stops the refetch on every settings visit).
+    const loadedEnd = this.loadedOffset + this.loadedLimit;
+    const wantedEnd = wantedLimit > 0 ? wantedOffset + wantedLimit : loadedEnd;
     const rangeChanged =
       this.hasInitialFetchCompleted &&
-      (wantedOffset !== this.loadedOffset ||
-        (wantedLimit > 0 && wantedLimit !== this.loadedLimit));
+      (wantedOffset < this.loadedOffset || wantedEnd > loadedEnd);
     const settingsChanged =
       this.hasInitialFetchCompleted &&
       wantedSettingsKey !== this.lastSettingsKey;
@@ -160,20 +196,61 @@ export class BigtraceTraceListDataSource implements DataSource {
 
   // Re-fetch the current window with the latest settings. Called by the
   // Settings page when a setting edit doesn't change the grid model, so
-  // useRows change-detection wouldn't catch it.
+  // useRows change-detection wouldn't catch it. Forces past the response cache.
   async refresh(): Promise<void> {
     if (this.isFetching) return;
     const offset = this.loadedOffset;
     const limit = this.loadedLimit > 0 ? this.loadedLimit : 100;
-    await this.fetchWindow(offset, limit, this.getSettings());
+    await this.fetchWindow(offset, limit, this.getSettings(), true);
+  }
+
+  // Cache key for one window: every input that changes the rows the backend
+  // returns — backend, trace source, order, filter, projection, and the window
+  // itself. Two requests with the same key get the same rows.
+  private requestKey(
+    settings: ReadonlyArray<SettingFilter>,
+    offset: number,
+    limit: number,
+  ): string {
+    return JSON.stringify([
+      this.endpoint,
+      traceSourceSettingsKey(settings),
+      this.currentOrderBy,
+      this.currentFilterKey,
+      this.currentColumnsKey,
+      offset,
+      limit,
+    ]);
   }
 
   private async fetchWindow(
     offset: number,
     limit: number,
     settings: ReadonlyArray<SettingFilter>,
+    force = false,
   ): Promise<void> {
     if (this.signal?.aborted) return;
+    const key = this.requestKey(settings, offset, limit);
+    // Serve a cached window synchronously. This runs in fetchWindow's sync
+    // prefix (before any await), so the loadedRows assignment lands before the
+    // calling useRows() returns — even on a freshly-remounted data source: no
+    // network, no isFetching flip, no blink. Refresh sets `force` to bypass.
+    if (!force) {
+      const cached = traceMetadataResponseCache.get(key);
+      if (cached !== undefined) {
+        traceMetadataResponseCache.delete(key);
+        traceMetadataResponseCache.set(key, cached); // mark most-recently-used
+        this.error = null;
+        this.loadedRows = cached.rows;
+        this.loadedOffset = offset;
+        this.loadedLimit = limit;
+        this._filteredTotalRows = cached.total;
+        if (cached.cols.length > 0) this.columns = cached.cols;
+        this.lastSettingsKey = traceSourceSettingsKey(settings);
+        this.hasInitialFetchCompleted = true;
+        return;
+      }
+    }
     this.error = null;
     this.isFetching = true;
     this.lastSettingsKey = traceSourceSettingsKey(settings);
@@ -195,6 +272,17 @@ export class BigtraceTraceListDataSource implements DataSource {
       this._filteredTotalRows = result.totalFilteredRows;
       if (result.columns.length > 0) {
         this.columns = [...result.columns];
+      }
+      // Cache the window (also on the force path, so Refresh updates it).
+      traceMetadataResponseCache.delete(key);
+      traceMetadataResponseCache.set(key, {
+        rows: this.loadedRows,
+        total: this._filteredTotalRows,
+        cols: this.columns,
+      });
+      if (traceMetadataResponseCache.size > MAX_CACHED_WINDOWS) {
+        const lru = traceMetadataResponseCache.keys().next().value;
+        if (lru !== undefined) traceMetadataResponseCache.delete(lru);
       }
     } catch (e) {
       if (e instanceof QueryCancelledError) return;

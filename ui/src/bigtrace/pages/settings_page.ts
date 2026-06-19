@@ -245,12 +245,6 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   private activePresetCuj?: string;
   // Captured on every view() so private methods read it without threading attrs.
   private bindings: SettingsBindings | undefined;
-  // Trace-list grid state. Rebuilt whenever the endpoint changes (its
-  // BigtraceQueryClient binds to one endpoint at construction). With bindings
-  // set, the data source's `getSettings` callback routes through them so
-  // /trace_metadata sees the per-tab snapshot, not the global defaults.
-  private traceListDataSource: BigtraceTraceListDataSource | undefined;
-  private traceListEndpoint: string | undefined;
   private traceFilterss: readonly Filter[] = [];
   // Sort state for the trace grid. The DataGrid carries sort on the `Column`
   // object, so controlled-mode `columns` splices it back onto the matching
@@ -270,6 +264,11 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
   // One schema fetch at a time. A key change mid-flight is picked up once the
   // fetch settles, so rapid source edits coalesce instead of racing.
   private schemaFetching = false;
+  // Trace-list data source for the current mount, recreated on endpoint change.
+  // Its rows survive remounts via the module-level response cache, not this
+  // field (Mithril resets it on every navigation / modal open).
+  private traceListDataSource?: BigtraceTraceListDataSource;
+  private traceListEndpoint?: string;
   oninit({attrs}: m.Vnode<SettingsPageAttrs>) {
     this.bindings = attrs.bindings;
     this.traceFilterss = this.readTraceFilters();
@@ -347,10 +346,12 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
     return SettingsPage.CATEGORY_DISPLAY_NAMES.get(raw) ?? raw;
   }
 
-  // Lazily build/rebuild the trace-list data source. BigtraceQueryClient binds
-  // to one endpoint at construction, so an endpoint change needs a fresh
-  // DataSource (the caller keys the DataGrid on the endpoint so Mithril
-  // rebuilds it).
+  // The trace-list data source for the current endpoint. Recreated only when
+  // the endpoint changes (or on first use after a remount), reused across
+  // renders otherwise. The rows it shows survive remounts via the module-level
+  // response cache (traceMetadataResponseCache) rather than by holding the
+  // instance: a fresh source serves the same window synchronously on the first
+  // render. Settings are read live so an in-place trace-source edit refetches.
   private getTraceListDataSource(
     endpoint: string,
   ): BigtraceTraceListDataSource | undefined {
@@ -364,10 +365,12 @@ export class SettingsPage implements m.ClassComponent<SettingsPageAttrs> {
       this.traceListEndpoint !== endpoint
     ) {
       const client = new BigtraceQueryClient(endpoint);
-      // `getSettings` runs on every fetch, so a per-tab caller sees latest
-      // snapshot edits without rebuilding the data source.
-      this.traceListDataSource = new BigtraceTraceListDataSource(client, () =>
-        this.effectiveSettings(),
+      this.traceListDataSource = new BigtraceTraceListDataSource(
+        client,
+        () => this.effectiveSettings(),
+        undefined,
+        undefined,
+        endpoint,
       );
       this.traceListEndpoint = endpoint;
     }
