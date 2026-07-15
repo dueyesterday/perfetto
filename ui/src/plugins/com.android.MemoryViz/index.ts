@@ -74,7 +74,7 @@ export default class MemoryViz implements PerfettoPlugin {
       name: 'Memory: Visualize (over selection)',
       callback: async () => {
         await ctx.engine.query(`
-          INCLUDE PERFETTO MODULE intervals.intersect;
+          INCLUDE PERFETTO MODULE intervals.self_intersect;
           INCLUDE PERFETTO MODULE android.memory.memory_breakdown;
         `);
         const window = await getTimeSpanOfSelectionOrVisibleWindow(ctx);
@@ -570,7 +570,7 @@ export default class MemoryViz implements PerfettoPlugin {
     const whereClause =
       whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
     return `
-      SELECT iss.ts, SUM(IIF(iss.interval_ends_at_ts = FALSE, m.zygote_adjusted_value, 0)) as value FROM interval_self_intersect!((
+      SELECT iss.ts, SUM(IIF(iss.interval_ends_at_ts = FALSE, m.zygote_adjusted_value, 0)) as value FROM _interval_self_intersect!((
         SELECT
           id,
           MAX(ts, ${window.start}) as ts,
