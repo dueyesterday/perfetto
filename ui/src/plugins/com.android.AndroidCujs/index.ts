@@ -14,8 +14,15 @@
 
 import {addDebugSliceTrack} from '../../components/tracks/debug_tracks';
 import type {Trace} from '../../public/trace';
+import type {App} from '../../public/app';
 import type {PerfettoPlugin} from '../../public/plugin';
 import QueryPagePlugin from '../dev.perfetto.QueryPage';
+import ProcessThreadGroupsPlugin from '../dev.perfetto.ProcessThreadGroups';
+import {
+  type CujDeeplinkArgs,
+  getCujArgsFromRouteArgs,
+  selectCujFromDeeplink,
+} from './deeplink';
 
 /**
  * Adds the Debug Slice Track for given Jank CUJ name
@@ -257,9 +264,16 @@ function generateCujTrackConfig(
   };
 }
 
-export default class implements PerfettoPlugin {
+let cujArgs: CujDeeplinkArgs = {};
+
+export default class AndroidCujs implements PerfettoPlugin {
   static readonly id = 'com.android.AndroidCujs';
-  static readonly dependencies = [QueryPagePlugin];
+  static readonly dependencies = [QueryPagePlugin, ProcessThreadGroupsPlugin];
+
+  static onActivate(app: App): void {
+    cujArgs = getCujArgsFromRouteArgs(app.initialRouteArgs, AndroidCujs.id);
+  }
+
   async onTraceLoad(ctx: Trace): Promise<void> {
     ctx.commands.registerCommand({
       id: 'com.android.PinJankCUJs',
@@ -316,6 +330,8 @@ export default class implements PerfettoPlugin {
         );
       },
     });
+
+    await selectCujFromDeeplink(ctx, cujArgs);
   }
 
   async pinJankCujs(ctx: Trace) {
