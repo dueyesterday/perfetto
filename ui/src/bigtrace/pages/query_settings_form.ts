@@ -21,6 +21,7 @@ import {linkify} from '../../widgets/anchor';
 import {Intent} from '../../widgets/common';
 import m from 'mithril';
 import {Switch} from '../../widgets/switch';
+import {TextInput} from '../../widgets/text_input';
 import {
   type MultiSelectDiff,
   type MultiSelectOption,
@@ -62,7 +63,6 @@ import {effectiveQueryColumns} from '../settings/trace_selection_state';
 import {
   isTraceSelectionSetting,
   parseTraceUuids,
-  TRACE_LIMIT_SETTING_ID,
   TRACE_UUIDS_SETTING_ID,
   traceUuidsDeclared,
   traceUuidsState,
@@ -843,15 +843,13 @@ export class QuerySettingsForm implements m.ClassComponent<QuerySettingsFormAttr
     );
   }
 
-  // How the query runs: the trace cap first (a run control, whatever its
-  // category), then every remaining setting grouped as declared.
+  // How the query runs: the trace cap first — a top-level request field like
+  // the row limit, not a backend setting — then every remaining setting
+  // grouped as declared.
   private renderQueryOptionSections(): m.Children {
-    const all = bigTraceSettingsStorage.getAllSettings();
-    const traceLimit = all.find((s) => s.id === TRACE_LIMIT_SETTING_ID);
     const categories = new Map<string, BigTraceSetting<unknown>[]>();
-    for (const setting of all) {
+    for (const setting of bigTraceSettingsStorage.getAllSettings()) {
       if (isTraceSelectionSetting(setting)) continue;
-      if (setting.id === TRACE_LIMIT_SETTING_ID) continue;
       const categoryName = this.displayCategory(setting.category || 'General');
       if (!categories.has(categoryName)) {
         categories.set(categoryName, []);
@@ -859,11 +857,25 @@ export class QuerySettingsForm implements m.ClassComponent<QuerySettingsFormAttr
       categories.get(categoryName)!.push(setting);
     }
     return [
-      traceLimit !== undefined &&
-        m(
-          '.pf-bt-settings-page__plugin-section',
-          m(CardStack, [this.renderBigTraceSettingCard(traceLimit)]),
-        ),
+      m(
+        '.pf-bt-settings-page__plugin-section',
+        m(CardStack, [
+          m(BigTraceSettingsCard, {
+            title: 'Trace limit',
+            description:
+              'Maximum number of traces this query fans out to, applied ' +
+              'after the trace selection.',
+            controls: m(TextInput, {
+              type: 'number',
+              value: String(this.bindings.getTraceLimit()),
+              onInput: (value: string) => {
+                const n = parseInt(value, 10);
+                if (!isNaN(n) && n > 0) this.bindings.setTraceLimit(n);
+              },
+            }),
+          }),
+        ]),
+      ),
       Array.from(categories.entries()).map(([category, catSettings]) =>
         m(
           '.pf-bt-settings-page__plugin-section',

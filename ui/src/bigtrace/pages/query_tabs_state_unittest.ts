@@ -25,12 +25,10 @@ import {
   traceUuidsActive,
   disabledSettingsFromSnapshot,
   effectiveTabSettings,
-  effectiveTraceLimit,
   MODE_DEFAULTS,
   openSettings,
   QueryTabsState,
   restoreTabConfig,
-  setTraceLimit,
   snapshotTabConfig,
   type BigTraceEditorTab,
 } from './query_tabs_state';
@@ -57,6 +55,7 @@ function reg(
 function fakeTab(over: Partial<BigTraceEditorTab>): BigTraceEditorTab {
   return {
     limit: MODE_DEFAULTS.ephemeral.rowLimit,
+    traceLimit: MODE_DEFAULTS.ephemeral.traceLimit,
     materialize: false,
     querySettings: [],
     traceFilters: [],
@@ -92,22 +91,22 @@ describe('effectiveTabSettings (per-tab settings)', () => {
 
   test('excludes per-tab-disabled settings WITHOUT changing the global state', () => {
     const dir = reg('trace_directory', '/global', 'string');
-    const limit = reg('trace_limit', 100, 'number');
-    const tab = fakeTab({disabledSettings: ['trace_limit']});
+    const limit = reg('cpu_filter', 100, 'number');
+    const tab = fakeTab({disabledSettings: ['cpu_filter']});
     const ids = effectiveTabSettings(tab).map((s) => s.settingId);
     expect(ids).toContain('trace_directory');
-    expect(ids).not.toContain('trace_limit'); // dropped for this tab
+    expect(ids).not.toContain('cpu_filter'); // dropped for this tab
     // Independence: the GLOBAL settings stay enabled.
     expect(limit.isDisabled()).toBe(false);
     expect(dir.isDisabled()).toBe(false);
   });
 
   test('a globally-disabled setting can be re-enabled per-tab', () => {
-    const limit = reg('trace_limit', 100, 'number');
+    const limit = reg('cpu_filter', 100, 'number');
     limit.setDisabled(true); // globally OFF
     const tab = fakeTab({disabledSettings: []}); // tab leaves it on
     expect(effectiveTabSettings(tab).map((s) => s.settingId)).toContain(
-      'trace_limit',
+      'cpu_filter',
     );
   });
 });
@@ -135,9 +134,9 @@ describe('disabledSettingsFromSnapshot (history reopen)', () => {
     localStorage.clear();
     bigTraceSettingsStorage.clear();
     reg('trace_directory', '/global', 'string');
-    reg('trace_limit', 100, 'number');
-    // A tab that turned trace_limit OFF — this is what a run submits.
-    const tab = fakeTab({disabledSettings: ['trace_limit']});
+    reg('cpu_filter', 100, 'number');
+    // A tab that turned cpu_filter OFF — this is what a run submits.
+    const tab = fakeTab({disabledSettings: ['cpu_filter']});
     const snapshot = effectiveTabSettings(tab); // == submit-time settings
     const allCategoried = bigTraceSettingsStorage
       .buildSettingFilters({includeDisabled: true})
@@ -148,7 +147,7 @@ describe('disabledSettingsFromSnapshot (history reopen)', () => {
         snapshot.map((s) => s.settingId),
         allCategoried,
       ),
-    ).toEqual(['trace_limit']);
+    ).toEqual(['cpu_filter']);
   });
 });
 
@@ -185,90 +184,78 @@ describe('per-mode row and trace limits', () => {
   });
 
   test('a new ephemeral tab gets the quick-look caps', () => {
-    reg('trace_limit', 100, 'number');
     const tabs = new QueryTabsState();
     const tab = tabs.addNewTab(undefined, '', undefined, undefined, false);
     expect(tab.limit).toBe(MODE_DEFAULTS.ephemeral.rowLimit);
-    expect(effectiveTraceLimit(tab)).toBe(MODE_DEFAULTS.ephemeral.traceLimit);
+    expect(tab.traceLimit).toBe(MODE_DEFAULTS.ephemeral.traceLimit);
   });
 
   test('a new persistent tab gets the full-sweep caps', () => {
-    reg('trace_limit', 100, 'number');
     const tabs = new QueryTabsState();
     const tab = tabs.addNewTab(undefined, '', undefined, undefined, true);
     expect(tab.limit).toBe(MODE_DEFAULTS.persistent.rowLimit);
-    expect(effectiveTraceLimit(tab)).toBe(MODE_DEFAULTS.persistent.traceLimit);
+    expect(tab.traceLimit).toBe(MODE_DEFAULTS.persistent.traceLimit);
   });
 
-  test('a caller-supplied row cap wins over the mode default', () => {
+  test('caller-supplied caps win over the mode defaults', () => {
     const tabs = new QueryTabsState();
-    const tab = tabs.addNewTab(undefined, '', 42, undefined, true);
+    const tab = tabs.addNewTab(
+      undefined,
+      '',
+      42,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      77,
+    );
     expect(tab.limit).toBe(42);
-  });
-
-  test('the run ships the mode cap when the tab sets none', () => {
-    reg('trace_limit', 100, 'number');
-    const settings = effectiveTabSettings(fakeTab({materialize: true}));
-    expect(settings.find((s) => s.settingId === 'trace_limit')?.values).toEqual(
-      [String(MODE_DEFAULTS.persistent.traceLimit)],
-    );
-  });
-
-  test('a trace cap disabled on the tab is not shipped at all', () => {
-    reg('trace_limit', 100, 'number');
-    const settings = effectiveTabSettings(
-      fakeTab({materialize: true, disabledSettings: ['trace_limit']}),
-    );
-    expect(settings.map((s) => s.settingId)).not.toContain('trace_limit');
+    expect(tab.traceLimit).toBe(77);
   });
 
   test('switching mode moves caps the user never touched', () => {
-    reg('trace_limit', 100, 'number');
     const tab = fakeTab({materialize: false});
     applyModeDefaults(tab, true);
     expect(tab.materialize).toBe(true);
     expect(tab.limit).toBe(MODE_DEFAULTS.persistent.rowLimit);
-    expect(effectiveTraceLimit(tab)).toBe(MODE_DEFAULTS.persistent.traceLimit);
+    expect(tab.traceLimit).toBe(MODE_DEFAULTS.persistent.traceLimit);
     applyModeDefaults(tab, false);
     expect(tab.limit).toBe(MODE_DEFAULTS.ephemeral.rowLimit);
-    expect(effectiveTraceLimit(tab)).toBe(MODE_DEFAULTS.ephemeral.traceLimit);
+    expect(tab.traceLimit).toBe(MODE_DEFAULTS.ephemeral.traceLimit);
   });
 
   test('switching mode leaves hand-edited caps alone', () => {
-    reg('trace_limit', 100, 'number');
     const tab = fakeTab({materialize: false, limit: 7});
-    setTraceLimit(tab, 25);
+    tab.traceLimit = 25;
     applyModeDefaults(tab, true);
     expect(tab.limit).toBe(7);
-    expect(effectiveTraceLimit(tab)).toBe(25);
+    expect(tab.traceLimit).toBe(25);
   });
 
   test('a cap that matches the new mode default still moves with the mode', () => {
-    reg('trace_limit', 100, 'number');
     // Explicitly set to the ephemeral default, then switch: it reads as
     // untouched, which is the documented trade-off of the equality check.
     const tab = fakeTab({materialize: false});
-    setTraceLimit(tab, MODE_DEFAULTS.ephemeral.traceLimit);
+    tab.traceLimit = MODE_DEFAULTS.ephemeral.traceLimit;
     applyModeDefaults(tab, true);
-    expect(effectiveTraceLimit(tab)).toBe(MODE_DEFAULTS.persistent.traceLimit);
+    expect(tab.traceLimit).toBe(MODE_DEFAULTS.persistent.traceLimit);
   });
 
-  test('caps are clamped to the bounds the backend declared', () => {
-    reg('trace_limit', 100, 'number', {min: 1, max: 10000});
-    const tab = fakeTab({materialize: true});
-    // The persistent default (100k) exceeds this backend's ceiling.
-    expect(effectiveTraceLimit(tab)).toBe(10000);
-    setTraceLimit(tab, 999999);
-    expect(effectiveTraceLimit(tab)).toBe(10000);
-    setTraceLimit(tab, 0);
-    expect(effectiveTraceLimit(tab)).toBe(1);
-  });
-
-  test('with no trace_limit setting registered nothing is shipped or set', () => {
-    const tab = fakeTab({materialize: true});
-    setTraceLimit(tab, 500);
-    expect(tab.querySettings).toEqual([]);
-    expect(effectiveTabSettings(tab)).toEqual([]);
+  test('the trace cap round-trips through storage', () => {
+    const tabs = new QueryTabsState();
+    const tab = tabs.addNewTab(
+      undefined,
+      'select 1',
+      undefined,
+      undefined,
+      true,
+    );
+    tab.traceLimit = 123;
+    (tabs as unknown as {saveToStorage: () => void}).saveToStorage();
+    const restored = new QueryTabsState().tabs.find(
+      (t) => t.editorText === 'select 1',
+    )!;
+    expect(restored.traceLimit).toBe(123);
   });
 });
 
@@ -306,6 +293,7 @@ describe('cloneTab', () => {
     expect(clone.id).not.toBe(src.id);
     expect(clone.editorText).toBe('select * from slice');
     expect(clone.limit).toBe(src.limit);
+    expect(clone.traceLimit).toBe(src.traceLimit);
     expect(clone.materialize).toBe(true);
     expect(clone.configured).toBe(true);
     expect(clone.traceFilters).toEqual(src.traceFilters);
@@ -408,6 +396,7 @@ describe('Settings session (Cancel restores, Apply keeps)', () => {
     tab.traceMetadataColumns = null;
     tab.traceOrderBy = '';
     tab.limit = 10;
+    tab.traceLimit = 11;
     tab.materialize = false;
   }
 
@@ -437,6 +426,7 @@ describe('Settings session (Cancel restores, Apply keeps)', () => {
     expect(tab.querySettings[0].values).toEqual(['/other']);
     expect(tab.traceFilters).toEqual([]);
     expect(tab.limit).toBe(10);
+    expect(tab.traceLimit).toBe(11);
     expect(tab.settingsSession).toBeUndefined();
     expect(tab.configured).toBe(true);
   });
@@ -492,7 +482,7 @@ describe('Settings session (Cancel restores, Apply keeps)', () => {
 });
 
 describe('isTraceSelectionSetting', () => {
-  test('the source and metadata categories are selection; the cap is not', () => {
+  test('the source and metadata categories are selection; options are not', () => {
     expect(
       isTraceSelectionSetting({
         id: 'trace_directory',
@@ -505,9 +495,6 @@ describe('isTraceSelectionSetting', () => {
         category: 'TRACE_METADATA',
       }),
     ).toBe(true);
-    expect(
-      isTraceSelectionSetting({id: 'trace_limit', category: 'TRACE_ADDRESS'}),
-    ).toBe(false);
     expect(
       isTraceSelectionSetting({
         id: 'warn',
