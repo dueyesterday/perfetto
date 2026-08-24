@@ -663,7 +663,7 @@ export class QuerySettingsForm implements m.ClassComponent<QuerySettingsFormAttr
         },
       },
       m(PopupMultiSelect, {
-        label: 'Shown columns',
+        label: 'Query result columns',
         icon: 'view_column',
         showNumSelected: true,
         showSelectAllButton: true,

@@ -225,7 +225,7 @@ function renderEditorPanel(
           'or press',
           m(HotkeyGlyphs, {hotkey: 'Mod+Enter'}),
         ),
-        m(StackAuto),
+        m('span.pf-bt-toolbar-divider', {'aria-hidden': 'true'}),
         // Icon-only to keep the toolbar lean; the editor binds the same chord.
         m(Button, {
           icon: 'format_align_left',
@@ -233,6 +233,7 @@ function renderEditorPanel(
           disabled: !hasQueryText(tab.editorText),
           onclick: () => void formatTabQuery(tab, tabsState, tab.editorText),
         }),
+        m(StackAuto),
         useBigtraceBackend && renderRunControls(tab, tabsState),
       ]),
     ]),
@@ -269,7 +270,6 @@ function renderRunControls(
   tabsState: QueryTabsState,
 ): m.Children {
   return [
-    m('span.pf-bt-toolbar-divider', {'aria-hidden': 'true'}),
     m(Switch, {
       label: 'Persistent',
       title:
@@ -301,8 +301,8 @@ function renderRunControls(
     m(Button, {
       icon: 'settings',
       title:
-        'Query settings — the trace cap and the query options. Applied ' +
-        'from the next run.',
+        'Advanced query settings — the trace cap and the query options. ' +
+        'Applied from the next run.',
       disabled: tab.isLoading,
       onclick: () =>
         void openQuerySettingsModal(
