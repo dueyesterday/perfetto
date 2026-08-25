@@ -621,3 +621,102 @@ describe('BigtraceQueryClient experiments', () => {
     expect(bodyFrom(fetchMock).experiment_filter).toBeUndefined();
   });
 });
+
+describe('BigtraceQueryClient result tables', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function captureFetch(payload: unknown): ReturnType<typeof vi.fn> {
+    const fakeResp = {
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify(payload)),
+      json: () => Promise.resolve(payload),
+    };
+    const fn = vi.fn().mockResolvedValue(fakeResp);
+    global.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function callOf(fetchMock: ReturnType<typeof vi.fn>) {
+    const call = fetchMock.mock.calls[0] as unknown[];
+    const init = call[1] as RequestInit;
+    return {
+      url: call[0] as string,
+      method: init.method,
+      body: init.body === undefined ? {} : JSON.parse(init.body as string),
+    };
+  }
+
+  const EXEC = {queryUuid: 'uid', columnNames: [], rows: []};
+
+  test('a named table and its lifetime ride on the run', async () => {
+    const fetchMock = captureFetch(EXEC);
+    const client = new BigtraceQueryClient('http://example');
+    await client.executeAsync('select 1', 100, [], undefined, {
+      tableName: 'jank_by_device',
+      tableTtlDays: 30,
+    });
+    const {body} = callOf(fetchMock);
+    expect(body.table_name).toBe('jank_by_device');
+    expect(body.table_ttl_days).toBe(30);
+  });
+
+  test('an unnamed run says nothing about a table', async () => {
+    const fetchMock = captureFetch(EXEC);
+    const client = new BigtraceQueryClient('http://example');
+    await client.executeAsync('select 1', 100, []);
+    const {body} = callOf(fetchMock);
+    expect(body.table_name).toBeUndefined();
+    expect(body.table_ttl_days).toBeUndefined();
+  });
+
+  test('an empty name asks the backend to choose, so it is not sent', async () => {
+    const fetchMock = captureFetch(EXEC);
+    const client = new BigtraceQueryClient('http://example');
+    await client.executeAsync('select 1', 100, [], undefined, {
+      tableName: '',
+      tableTtlDays: 30,
+    });
+    const {body} = callOf(fetchMock);
+    expect(body.table_name).toBeUndefined();
+    // The lifetime still applies: the backend names the table, but it is
+    // still this run's table.
+    expect(body.table_ttl_days).toBe(30);
+  });
+
+  test('checkTableExists asks about a name and reads back the resolved one', async () => {
+    const fetchMock = captureFetch({
+      exists: true,
+      resolvedTableName: 'ns_jank',
+    });
+    const client = new BigtraceQueryClient('http://example');
+    const got = await client.checkTableExists('jank');
+
+    const {url, method, body} = callOf(fetchMock);
+    expect(url).toBe('http://example/check_table_exists');
+    expect(method).toBe('POST');
+    expect(body).toEqual({table_name: 'jank'});
+    expect(got).toEqual({exists: true, resolvedTableName: 'ns_jank'});
+  });
+
+  test('a backend that resolves nothing leaves the name as asked', async () => {
+    captureFetch({exists: false});
+    const client = new BigtraceQueryClient('http://example');
+    expect(await client.checkTableExists('jank')).toEqual({
+      exists: false,
+      resolvedTableName: 'jank',
+    });
+  });
+
+  test('deleting an execution takes its table with it', async () => {
+    const fetchMock = captureFetch({});
+    const client = new BigtraceQueryClient('http://example');
+    await client.deleteQueryExecution('uid-1');
+    const {url, method} = callOf(fetchMock);
+    expect(url).toBe('http://example/query_executions/uid-1?drop_table=true');
+    expect(method).toBe('DELETE');
+  });
+});

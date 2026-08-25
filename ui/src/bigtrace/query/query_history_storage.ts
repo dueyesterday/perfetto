@@ -119,6 +119,7 @@ export class QueryHistoryStorage {
     );
   }
 
+  // Takes the query's table with it; see deleteQueryExecution.
   async deleteQuery(uuid: string): Promise<void> {
     await this.client().deleteQueryExecution(uuid);
   }
