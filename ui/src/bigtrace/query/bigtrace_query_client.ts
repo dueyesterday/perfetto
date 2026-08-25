@@ -56,6 +56,44 @@ export interface TracesSchemaResponse {
   readonly columns: ReadonlyArray<TraceColumnDescriptor>;
 }
 
+// Which experiment/control pair a query runs over, and which arm of it.
+// Ids are numbers on the wire in both directions, so they stay numbers here —
+// no coercion, nothing to get out of step.
+export interface ExperimentFilterSpec {
+  readonly experimentId: number;
+  readonly controlId: number;
+  // true = the experiment (treatment) arm, false = the control arm.
+  readonly isTreatment: boolean;
+}
+
+// One entry of the experiment catalog: both arms, named, each flagged when it
+// isn't available in Telemetry datasets.
+export interface ExperimentMetadataItem {
+  readonly experimentId: number;
+  readonly experimentName: string;
+  readonly controlId: number;
+  readonly controlName: string;
+  readonly isExperimentDenied: boolean;
+  readonly isControlDenied: boolean;
+}
+
+// The catalog search is paged, but the picker shows one page of matches and
+// asks the user to narrow instead of scrolling a corpus-sized list.
+const EXPERIMENT_SEARCH_LIMIT = 50;
+
+// Narrows a filter to what travels: display names picked up along the way
+// never reach the wire, a preset, or a setup comparison.
+export function toExperimentFilterSpec(
+  filter: ExperimentFilterSpec | undefined,
+): ExperimentFilterSpec | undefined {
+  if (filter === undefined) return undefined;
+  return {
+    experimentId: filter.experimentId,
+    controlId: filter.controlId,
+    isTreatment: filter.isTreatment,
+  };
+}
+
 // The submit-time trace-selection snapshot shipped as top-level fields on
 // /execute_*. Each is omitted from the wire when empty / default, so a query
 // run with no trace selection sends just the base limit/perfetto_sql/settings.
@@ -70,6 +108,8 @@ export interface ExecuteOptions {
   // Cap on how many traces the query fans out to, applied after the trace
   // selection. A first-class field like `limit`, not a setting.
   readonly traceLimit?: number;
+  // Experiment/control pair and arm the query runs over.
+  readonly experimentFilter?: ExperimentFilterSpec;
 }
 
 // One analysis preset from `GET /trace_presets`: display metadata plus a
@@ -95,6 +135,9 @@ export interface TracePreset {
   readonly traceFilters?: ReadonlyArray<Filter>;
   readonly traceMetadataColumns?: ReadonlyArray<string>;
   readonly traceOrderBy?: string;
+  // Ids and arm only — a preset never carries display names, which the UI
+  // resolves from the catalog when the preset is applied.
+  readonly experimentFilter?: ExperimentFilterSpec;
   readonly limit?: number;
   readonly materialized?: boolean;
 }
@@ -250,6 +293,46 @@ export class BigtraceQueryClient {
 
   // The analysis-presets catalog. Backends that don't implement it 404;
   // callers treat that (and any failure) as "no presets".
+  // Catalog search behind the trace grid's experiment picker. Never called
+  // with an empty query: matching the whole corpus is a round-trip the user
+  // can't use.
+  async listExperiments(
+    searchQuery: string,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyArray<ExperimentMetadataItem>> {
+    const result = await this.requestJson<{
+      experiments?: ExperimentMetadataItem[];
+    }>('/experiments', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        search_query: searchQuery,
+        limit: EXPERIMENT_SEARCH_LIMIT,
+        offset: 0,
+      }),
+      signal,
+    });
+    return result.experiments ?? [];
+  }
+
+  // One experiment by id, to put names on a filter restored from ids alone
+  // (history, a preset, a reloaded tab). An id the backend doesn't know is
+  // not an error: the response simply carries no experiment.
+  async getExperimentMetadata(
+    experimentId: number,
+    signal?: AbortSignal,
+  ): Promise<ExperimentMetadataItem | undefined> {
+    const result = await this.requestJson<{
+      experiment?: ExperimentMetadataItem;
+    }>('/experiment_metadata', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({experiment_id: experimentId}),
+      signal,
+    });
+    return result.experiment;
+  }
+
   async listTracePresets(
     signal?: AbortSignal,
   ): Promise<ReadonlyArray<TracePreset>> {
@@ -286,12 +369,16 @@ export class BigtraceQueryClient {
     orderBy?: string,
     filter?: ReadonlyArray<Filter>,
     columns?: ReadonlyArray<string>,
+    experimentFilter?: ExperimentFilterSpec,
   ): Promise<QueryResultPage> {
     const body: Record<string, unknown> = {
       settings: this.settingsToWire(settings),
       limit,
       offset,
     };
+    if (experimentFilter !== undefined) {
+      body.experiment_filter = experimentFilterToWire(experimentFilter);
+    }
     if (orderBy && orderBy.length > 0) {
       body.order_by = orderBy;
     }
@@ -360,6 +447,9 @@ export class BigtraceQueryClient {
     }
     if (options?.traceLimit !== undefined && options.traceLimit > 0) {
       body.trace_limit = options.traceLimit;
+    }
+    if (options?.experimentFilter !== undefined) {
+      body.experiment_filter = experimentFilterToWire(options.experimentFilter);
     }
     const result = await this.requestJson<QueryResponsePayload>(path, {
       method: 'POST',
@@ -439,6 +529,15 @@ export class BigtraceQueryClient {
 // ids/timestamps past 2^53), and SQL NULL arrives as JSON null. Do NOT
 // special-case the literal string "NULL" — that would corrupt a genuine "NULL"
 // string value into SQL NULL.
+// camelCase spec -> the snake_case triple every request body carries.
+function experimentFilterToWire(filter: ExperimentFilterSpec) {
+  return {
+    experiment_id: filter.experimentId,
+    control_id: filter.controlId,
+    is_treatment: filter.isTreatment,
+  };
+}
+
 export function parseQueryResponse(
   result: QueryResponsePayload,
 ): QueryResultPage {
