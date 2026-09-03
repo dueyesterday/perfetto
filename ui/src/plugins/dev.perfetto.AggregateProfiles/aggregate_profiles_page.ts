@@ -14,6 +14,7 @@
 
 import m from 'mithril';
 import {assertExists, assertIsInstance} from '../../base/assert';
+import {elementIsEditable} from '../../base/dom_utils';
 import {Memo} from '../../base/memo';
 import {maybeUndefined} from '../../base/utils';
 import {TreeExplorerPanel} from '../../components/tree_explorer_panel';
@@ -43,8 +44,21 @@ export interface AggregateProfilesPageAttrs {
 
 export class AggregateProfilesPage implements m.ClassComponent<AggregateProfilesPageAttrs> {
   private readonly memo = new Memo<TreeExplorerState>();
+  // The last rendered attrs and root element, for the window key handler.
+  private attrs?: AggregateProfilesPageAttrs;
+  private rootEl?: HTMLElement;
+
+  oncreate({dom}: m.CVnodeDOM<AggregateProfilesPageAttrs>): void {
+    this.rootEl = dom as HTMLElement;
+    window.addEventListener('keydown', this.onKeyDown);
+  }
+
+  onremove(): void {
+    window.removeEventListener('keydown', this.onKeyDown);
+  }
 
   view({attrs}: m.CVnode<AggregateProfilesPageAttrs>): m.Children {
+    this.attrs = attrs;
     // Use the selected profile from the state or just use the first one if none
     // supplied, or if we can't find a match.
     const selectedProfile =
@@ -72,6 +86,52 @@ export class AggregateProfilesPage implements m.ClassComponent<AggregateProfiles
       ],
     );
   }
+
+  private selectProfile(
+    attrs: AggregateProfilesPageAttrs,
+    profile: AggregateProfile,
+  ): void {
+    attrs.onStateChange({
+      selectedProfileId: profile.id,
+      flamegraphState: updateTreeExplorerState(
+        attrs.state.flamegraphState,
+        profile.metrics,
+      ),
+    });
+  }
+
+  private readonly onKeyDown = (e: KeyboardEvent): void => {
+    const step = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+    const attrs = this.attrs;
+    if (step === 0 || attrs === undefined || attrs.profiles.length < 2) {
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) {
+      return;
+    }
+    // A focused select steps through its own options with the arrow keys.
+    if (
+      elementIsEditable(e.target) ||
+      (e.target instanceof Element && e.target.closest('select') !== null)
+    ) {
+      return;
+    }
+    // Pages stay mounted while another page is on screen.
+    if (this.rootEl?.offsetParent == null) {
+      return;
+    }
+    // view() falls back to the first profile when the state names none.
+    const current = attrs.profiles.findIndex(
+      (p) => p.id === attrs.state.selectedProfileId,
+    );
+    const next = maybeUndefined(attrs.profiles[Math.max(current, 0) + step]);
+    if (next === undefined) {
+      return;
+    }
+    e.preventDefault();
+    this.selectProfile(attrs, next);
+    m.redraw();
+  };
 
   private renderFlamegraph(
     selectedProfile: AggregateProfile,
@@ -223,15 +283,7 @@ export class AggregateProfilesPage implements m.ClassComponent<AggregateProfiles
               (p) => p.id === newProfileId,
             );
             assertExists(newProfile); // Assume this profile actually exists
-            const currentFlamegraphState = attrs.state.flamegraphState;
-            const newFlamegraphState = updateTreeExplorerState(
-              currentFlamegraphState,
-              newProfile.metrics,
-            );
-            attrs.onStateChange({
-              selectedProfileId: newProfileId,
-              flamegraphState: newFlamegraphState,
-            });
+            this.selectProfile(attrs, newProfile);
           },
         },
         attrs.profiles.map((profile) =>
